@@ -37,7 +37,7 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
  .../sql/optimizer/rule/RuleType.java          |   2 +
  .../FlightScanImplementationRule.java         |  38 ++
- .../FlightAggregationPushdownRule.java        | 252 ++++++++++
+ .../FlightAggregationPushdownRule.java        | 256 ++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
@@ -48,7 +48,7 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  .../flight/FlightSqlRendererTest.java         | 123 +++++
  .../flight/FlightTypeMapperTest.java          | 116 +++++
  .../FlightAggregationPushdownRuleTest.java    |  67 +++
- 43 files changed, 3303 insertions(+), 4 deletions(-)
+ 43 files changed, 3307 insertions(+), 4 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -3025,10 +3025,10 @@ index 00000000..5a9aeab3
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
 new file mode 100644
-index 00000000..54e295fa
+index 00000000..d8b34f3b
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
-@@ -0,0 +1,252 @@
+@@ -0,0 +1,256 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -3257,7 +3257,11 @@ index 00000000..54e295fa
 +    static String renderAggregate(String fn, ScalarOperator arg, Type resultType,
 +                                          FlightSqlRenderer.Columns cols) {
 +        if (FunctionSet.COUNT.equals(fn)) {
-+            if (arg == null || (arg instanceof ConstantOperator && !arg.isConstantNull())) {
++            if (arg != null && arg.isConstantNull()) {
++                // count(NULL) is 0; rare, left to StarRocks
++                return null;
++            }
++            if (arg == null || arg instanceof ConstantOperator) {
 +                return "count(*)";
 +            }
 +            String in = FlightSqlRenderer.aggregateInput(arg, cols);
