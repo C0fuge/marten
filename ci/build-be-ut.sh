@@ -28,7 +28,8 @@ cat >> be/CMakeLists.txt <<CMAKE
 # CI only (ci/build-be-ut.sh): $TEST in the Release tree, linked like starrocks_be
 add_executable($TEST \${CMAKE_CURRENT_SOURCE_DIR}/test/connector/$TEST.cpp)
 target_link_libraries($TEST \${TEST_LINK_LIBS})
-set_target_properties($TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY \${CMAKE_BINARY_DIR}/ut)
+# same compile flag as upstream ADD_BE_TEST
+set_target_properties($TEST PROPERTIES COMPILE_FLAGS "-fno-access-control" RUNTIME_OUTPUT_DIRECTORY \${CMAKE_BINARY_DIR}/ut)
 CMAKE
 ccache --zero-stats >/dev/null
 start=$(date +%s)
