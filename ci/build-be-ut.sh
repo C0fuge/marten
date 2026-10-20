@@ -3,7 +3,8 @@
 #
 # The upstream UT build (run-be-ut.sh: MAKE_TEST=ON, BE_TEST defines, ASAN) shares nothing with our Release
 # ccache and would be a full rebuild. Instead the test is added to the Release tree (CI only, appended to
-# be/CMakeLists.txt here) and linked like starrocks_be; only the test and the changed sources compile.
+# be/CMakeLists.txt here) and linked like starrocks_be; only the test and the changed sources compile, the rest
+# comes from ccache.
 #
 # Env: JOBS, GTEST_FILTER (default *). Exit: 0 = tests passed; 3 = test binary not built; other = test failure.
 set -uo pipefail
@@ -31,10 +32,10 @@ set_target_properties($TEST PROPERTIES RUNTIME_OUTPUT_DIRECTORY \${CMAKE_BINARY_
 CMAKE
 ccache --zero-stats >/dev/null
 start=$(date +%s)
-# --module builds only this target and the libraries it needs (no starrocks_be link); build.sh's packaging
-# steps afterwards expect starrocks_be and fail, so success is judged by the test binary.
-./build.sh --be --without-java-ext -j "$JOBS" --module "$TEST"
-echo "build.sh exit code $? after $(( ($(date +%s) - start) / 60 )) min (packaging errors without starrocks_be are expected)"
+# A full Release build (the test target is part of "all"); build.sh --module cannot be used: its getopt spec
+# declares "module" without an argument.
+./build.sh --be --without-java-ext -j "$JOBS"
+echo "build.sh exit code $? after $(( ($(date +%s) - start) / 60 )) min"
 ccache --show-stats || true
 bin=be/build_Release/ut/$TEST
 if [ ! -x "$bin" ]; then
