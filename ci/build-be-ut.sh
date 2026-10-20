@@ -45,10 +45,20 @@ if [ ! -x "$bin" ]; then
 fi
 ls -la "$bin"
 mkdir -p /workspace/ut-report
-# starrocks_be links libjvm.so dynamically (JNI connectors); start_backend.sh puts it on the path the same way
-jvm_dir=$(dirname "$(find "${JAVA_HOME:-/usr/lib/jvm}/" /usr/lib/jvm/ -name libjvm.so 2>/dev/null | head -1)")
-export LD_LIBRARY_PATH="$jvm_dir:${LD_LIBRARY_PATH:-}"
-echo "libjvm.so from $jvm_dir"
+# starrocks_be links some libraries dynamically (libjvm.so, libjemalloc.so.2, ...); start_backend.sh puts
+# their directories on the library path. Do the same for whatever ldd cannot resolve.
+search=(/workspace/output/be/lib /workspace/be/output/lib "${STARROCKS_THIRDPARTY:-/var/local/thirdparty}"
+        "${JAVA_HOME:-/usr/lib/jvm}/" /usr/lib/jvm/)
+for lib in $(ldd "$bin" | awk '/not found/ {print $1}' | sort -u); do
+    f=$(find "${search[@]}" -name "$lib" 2>/dev/null | head -1)
+    if [ -n "$f" ]; then
+        echo "$lib from $(dirname "$f")"
+        export LD_LIBRARY_PATH="$(dirname "$f"):${LD_LIBRARY_PATH:-}"
+    else
+        echo "::warning::$lib not found"
+    fi
+done
+ldd "$bin" | grep 'not found' || true
 "$bin" --gtest_filter="${GTEST_FILTER:-*}" --gtest_output=xml:/workspace/ut-report/$TEST.xml 2>&1 |
     tee /workspace/ut-report/$TEST.log
 exit "${PIPESTATUS[0]}"
