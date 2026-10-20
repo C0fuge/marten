@@ -7,7 +7,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 
 | M | Content | State |
 |---|---|---|
-| M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | FE done (run 39408957469, 12 min). BE run 39408952022 in progress (started 2026-10-20 10:35 UTC) |
+| M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | FE done (run 39408957469, 12 min). BE run 39408952022 (started 10:35 UTC) is most likely the resumability PROBE (budget 10 min × 2 parts: part1 took 13 min); check its result, then start the full M0 BE build |
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | code written, **not compiled yet** (patch 0002, WIP) |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift part done (patch 0001); BE code todo |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | FE parts started inside patch 0002 (FlightSqlRenderer, FlightAggregationPushdown); todo |
@@ -44,7 +44,7 @@ Split 0002 into "FE connector" and "FE optimizer/planner" once it compiles.
 
 ## Next steps
 
-1. Wait for BE M0 to finish (do not push BE/thrift patch changes while it runs). Record time and minutes.
+1. When probe run 39408952022 is finished and shows ccache resume worked, start the full unmodified M0 BE build. NOTE: `be.yml` builds the CURRENT patch series (0001 thrift is in it), so a build now is "4.1.4 + thrift patch", not unmodified — that is fine and more useful (it warms ccache for the patched tree); request it via `ci/dispatch.txt` with `be parts=4 budget_min=0`. Record time and minutes. Do not push BE/thrift patch changes while it runs.
 2. Make patch 0002 compile: FE CI build (push the patch; the push triggers `fe`). Fix errors from STATUS-CI.md.
 3. Add FlightScanNode (FE planner) + FE unit tests (type mapping, masking, SQL renderer, pushdown), run them via
    `ci/dispatch.txt` (`fe tests=...`).
