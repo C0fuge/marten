@@ -9,7 +9,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 |---|---|---|
 | M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | **done**: FE run 39408957469; full BE (4.1.4 + thrift patch) run 39412648088, one job, Build BE 11:10–12:40 UTC (90 min, 4 vCPU, partly warm ccache); incremental BE with patch 0003: run 39447876098, Build BE 7 min |
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
-| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **10/10 green** (be-ut run 39489468073); functional check is M4 |
+| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
 | M4 | Bench tests on the maintainer's local stand | not in the cloud; test SQL prepared in `docs/M4-TESTS.md` |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` (run 39500542342); publish after M4 |
@@ -24,7 +24,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | 0004 fe optimizer/planner | `planner/FlightScanNode`; Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, **FlightAggregationPushdownRule** (rewriteOnce in QueryOptimizer after RewriteSimpleAggToHDFSScanRule), edits in OperatorType, visitors, RuleSet/RuleType, MultiOpPattern, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, PlanFragmentBuilder, Explain, LogicalPlanPrinter; SessionVariable `flight_filter_pushdown`, `flight_aggregate_pushdown` | compiles |
 | 0005 fe | PushDownTopNToPreAggRule: ORDER BY must cover all GROUP BY keys; PushDownTopNToPreAggRuleTest | test passes (run 39453420117) |
 | 0006 fe tests | FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest, FlightScanPlanTest (+ MockedFlightSqlMetadataClient: Flight SQL metadata without a server), FlightSqlMetadataClientTest (in-process Java Flight server: failover from a silent / refused URI, no failover on server errors) | all pass (FE run 39484391882) |
-| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts | 10/10 pass (be-ut run 39489468073) |
+| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts; basic auth (handshake → bearer, wrong password not leaked), TLS with a self-signed cert generated at test time (root certs + override hostname, TLS + basic auth, hostname mismatch, untrusted cert, `tls_verify=false`, plain client vs TLS server) | 18/18 pass (be-ut run 39514450368) |
 
 The split (2026-10-20) left the patched source tree byte-identical; 0001 and 0003 files are unchanged. Patches 0002
 and 0004 are only built as part of the whole series (0002 alone has no reference to 0004's classes).
@@ -113,14 +113,22 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   yet) with fe-jars tar, starrocks_be.zst (sha256 60e1a2bc…), patches tar.gz, INSTALL.md, build-info files,
   SHA256SUMS; FE from run 39484391882, BE from run 39499533941. INSTALL.md describes the release assets. No patch
   changed (no source preparation needed).
+- 2026-10-20 23:15–23:35 UTC (cloud session): Next step 1 (BE auth/TLS tests) done. Patch 0007 gained 8 cases:
+  a Basic-auth server middleware (Handshake `authorization: Basic …` → `Bearer` header) checks the user/password
+  handshake path and that a wrong password fails before DoGet without appearing in the status; TLS uses an EC
+  P-256 self-signed cert generated with OpenSSL at test time (no key material in the repo): root certs + override
+  hostname OK, with basic auth OK, hostname mismatch and untrusted cert fail, `tls_verify=false` OK without
+  root certs, plain client vs TLS server fails. TLS errors arrive as UNAVAILABLE, so with several locations a
+  misconfigured TLS location is failed over like an unreachable one (acceptable; noted for M4). Pre-checked locally
+  against pyarrow 19.0.1's libarrow_flight. CI: be-ut run 39514450368 18/18 green on the first run; BE run
+  39514450436 green (Build BE 81 s, ccache-only). No connector code changed.
 
 ## Next steps
 
-1. Optional hardening while M4 is pending: BE test cases for basic auth (user/password handshake) and TLS
-   (`grpc+tls` with a generated self-signed cert and `tls_root_certs` / `tls_verify=false`); reuse
-   `flight_connector_test` (only patch 0007 changes → BE build is a ccache-only rebuild, be-ut ~4 min). Note: a
-   0007 change alters the series hash, so a later release needs `fe force=true` too (version string).
-2. React to M4 results from the maintainer (failures go here as new steps).
+1. React to M4 results from the maintainer (failures go here as new steps).
+2. Before the next release (draft or final): the 0007 change of 2026-10-20 23:21 UTC altered the series hash; BE
+   is already rebuilt for it (run 39514450436), FE needs `fe force=true` (version string only) before
+   `release` passes its consistency check.
 3. After M4 passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false prerelease=false` (or
    publish a draft by hand); delete the `v4.1.4-flight.0-dryrun` draft.
 
