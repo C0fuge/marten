@@ -1,0 +1,121 @@
+# One resumable slice of the BE build (called by be.yml up to 4 times in a chain).
+# Restores the newest ccache, builds until the time budget is spent, saves ccache. The slice that
+# finishes the build packages starrocks_be.
+name: be-part
+on:
+  workflow_call:
+    inputs:
+      part: {type: number, required: true}
+      hash: {type: string, required: true}
+      commit_hash: {type: string, required: true}
+      budget_min: {type: number, default: 0}
+    outputs:
+      done:
+        value: ${{ jobs.build.outputs.done }}
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    name: build (part ${{ inputs.part }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    outputs:
+      done: ${{ steps.build.outputs.done }}
+    steps:
+      - id: start
+        run: echo "t=$(date +%s)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+      - name: Runner setup
+        run: ci/runner-setup.sh
+      - name: Pull builder image
+        run: |
+          . ci/env.sh
+          docker pull --quiet "$DEV_IMAGE" &
+          scripts/prepare-source.sh "$WORK/src"
+          wait
+          docker images
+      - name: Restore ccache
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-ccache
+          key: ccache-be-none
+          restore-keys: ccache-be-
+      - name: Build BE
+        id: build
+        run: |
+          . ci/env.sh
+          mkdir -p /home/runner/sr-ccache
+          now=$(date +%s)
+          budget=$(( 350 * 60 - (now - ${{ steps.start.outputs.t }}) - 22 * 60 ))
+          if [ "${{ inputs.budget_min }}" -gt 0 ] && [ $(( ${{ inputs.budget_min }} * 60 )) -lt "$budget" ]; then
+            budget=$(( ${{ inputs.budget_min }} * 60 ))
+          fi
+          echo "part ${{ inputs.part }}: restored cache '${{ steps.restore.outputs.cache-matched-key }}', budget $((budget / 60)) min"
+          set +e
+          docker run --rm --init --name sr-be \
+            -v "$WORK/src:/workspace" -v "$PWD/ci:/ci:ro" -v "/home/runner/sr-ccache:/ccache" \
+            -e JOBS="$(nproc)" -e BUDGET_SEC="$budget" -e STARROCKS_COMMIT_HASH="${{ inputs.commit_hash }}" \
+            "$DEV_IMAGE" /ci/build-be.sh
+          rc=$?
+          set -e
+          sudo chown -R "$(id -u):$(id -g)" /home/runner/sr-ccache "$WORK/src" || true
+          df -h "$WORK" /
+          du -sh /home/runner/sr-ccache "$WORK/src/be/build_Release" 2>/dev/null || true
+          if [ $rc -eq 0 ]; then echo "done=true" >> "$GITHUB_OUTPUT";
+          elif [ $rc -eq 124 ]; then echo "done=false" >> "$GITHUB_OUTPUT";
+          else echo "::error::BE build failed (exit $rc)"; exit $rc; fi
+      - name: Save ccache
+        if: always() && steps.restore.outcome == 'success'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/sr-ccache
+          key: ccache-be-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.part }}
+      - name: Delete older ccache entries
+        if: always() && steps.restore.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          keep=ccache-be-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.part }}
+          if gh cache list --repo "$GITHUB_REPOSITORY" --key "$keep" --json key --jq '.[].key' | grep -qx "$keep"; then
+            gh cache list --repo "$GITHUB_REPOSITORY" --key ccache-be- --limit 100 --json id,key --jq '.[] | "\(.id) \(.key)"' |
+              while read -r id key; do [ "$key" = "$keep" ] || gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true; done
+          fi
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 100
+      - name: Package starrocks_be
+        if: steps.build.outputs.done == 'true'
+        run: |
+          mkdir -p /home/runner/sr-out
+          cd "$WORK/src/output/be/lib"
+          ls -la
+          file starrocks_be || true
+          zstd -q -T0 -12 starrocks_be -o /home/runner/sr-out/starrocks_be.zst
+          cd /home/runner/sr-out
+          {
+            echo "hash=${{ inputs.hash }}"
+            echo "commit_hash=${{ inputs.commit_hash }}"
+            echo "repo_commit=$GITHUB_SHA"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "built=$(date -u +%FT%TZ)"
+            git -C "$WORK/src" log --oneline 4.1.4..HEAD | sed 's/^/patch: /'
+            sha256sum "$WORK/src/output/be/lib/starrocks_be" | sed 's/^/starrocks_be sha256: /'
+          } > be-build-info.txt
+          cat be-build-info.txt
+          ls -la
+      - name: Save BE output cache
+        if: steps.build.outputs.done == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/sr-out
+          key: be-out-${{ inputs.hash }}
+      - name: Upload starrocks_be
+        if: steps.build.outputs.done == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: starrocks_be-${{ inputs.hash }}
+          path: /home/runner/sr-out/
+          compression-level: 0
+          retention-days: 7

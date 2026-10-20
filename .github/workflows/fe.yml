@@ -1,0 +1,128 @@
+# FE build (starrocks-fe.jar, fe-core and the other fe-* jars) in the official dev-env image.
+# Skipped when a build for the same input hash is already cached (unless forced).
+name: fe
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "rebuild even if an output for this input hash is cached"
+        type: boolean
+        default: false
+      tests:
+        description: "fe-core test classes to run after the build (comma-separated, optional)"
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "patches/*-thrift-*"
+      - "patches/*-fe-*"
+      - "ci/env.sh"
+      - "ci/build-fe.sh"
+      - ".github/workflows/fe.yml"
+
+concurrency:
+  group: fe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare source
+        run: scripts/prepare-source.sh "$RUNNER_TEMP/src"
+      - name: Input hash
+        id: hash
+        run: |
+          . ci/env.sh
+          h=$(scripts/input-hash.sh "$RUNNER_TEMP/src" fe)
+          if ls patches/*.patch >/dev/null 2>&1; then
+            ch="$STARROCKS_BASE_HASH-fl$(cat patches/*.patch | sha256sum | cut -c1-6)"
+          else
+            ch="$STARROCKS_BASE_HASH"
+          fi
+          poms=$(cd "$RUNNER_TEMP/src" && git ls-files '*pom.xml' | xargs sha256sum | sha256sum | cut -c1-16)
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          echo "poms=$poms" >> "$GITHUB_OUTPUT"
+          echo "commit_hash=$ch" >> "$GITHUB_OUTPUT"
+          echo "FE input hash $h, version 4.1.4-$ch"
+      - name: Look for a cached build
+        id: lookup
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-fe-out
+          key: fe-out-${{ steps.hash.outputs.hash }}
+          lookup-only: true
+      - name: Decide
+        id: decide
+        run: |
+          build=true
+          if [ "${{ steps.lookup.outputs.cache-hit }}" = "true" ] && [ "${{ inputs.force }}" != "true" ] && [ -z "${{ inputs.tests }}" ]; then build=false; fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "cached: ${{ steps.lookup.outputs.cache-hit }}, build: $build"
+      - name: Runner setup
+        if: steps.decide.outputs.build == 'true'
+        run: ci/runner-setup.sh light
+      - name: Restore Maven repository
+        if: steps.decide.outputs.build == 'true'
+        id: m2
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/.m2/repository
+          key: m2-${{ steps.hash.outputs.poms }}
+          restore-keys: m2-
+      - name: Build FE
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          . ci/env.sh
+          docker pull --quiet "$DEV_IMAGE"
+          mkdir -p /home/runner/.m2/repository
+          docker run --rm --init --name sr-fe \
+            -v "$RUNNER_TEMP/src:/workspace" -v "$PWD/ci:/ci:ro" -v /home/runner/.m2:/root/.m2 \
+            -e JOBS="$(nproc)" -e STARROCKS_COMMIT_HASH="${{ steps.hash.outputs.commit_hash }}" \
+            -e FE_TESTS="${{ inputs.tests }}" \
+            "$DEV_IMAGE" /ci/build-fe.sh
+          sudo chown -R "$(id -u):$(id -g)" /home/runner/.m2 "$RUNNER_TEMP/src" || true
+          du -sh /home/runner/.m2/repository
+      - name: Save Maven repository
+        if: always() && steps.decide.outputs.build == 'true' && steps.m2.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/.m2/repository
+          key: m2-${{ steps.hash.outputs.poms }}
+      - name: Package
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          out=/home/runner/sr-fe-out
+          mkdir -p "$out"
+          lib="$RUNNER_TEMP/src/output/fe/lib"
+          cp "$lib"/starrocks-fe.jar "$lib"/fe-*-4.1.4.jar "$lib"/starrocks-hadoop-ext.jar "$out"/
+          cd "$out"
+          {
+            echo "hash=${{ steps.hash.outputs.hash }}"
+            echo "commit_hash=${{ steps.hash.outputs.commit_hash }}"
+            echo "repo_commit=$GITHUB_SHA"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "built=$(date -u +%FT%TZ)"
+            git -C "$RUNNER_TEMP/src" log --oneline 4.1.4..HEAD | sed 's/^/patch: /'
+            sha256sum *.jar
+          } > fe-build-info.txt
+          cat fe-build-info.txt
+      - name: Save FE output cache
+        if: steps.decide.outputs.build == 'true' && steps.lookup.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/sr-fe-out
+          key: fe-out-${{ steps.hash.outputs.hash }}
+      - name: Upload FE jars
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe-jars-${{ steps.hash.outputs.hash }}
+          path: /home/runner/sr-fe-out/
+          retention-days: 7

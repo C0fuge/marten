@@ -1,0 +1,113 @@
+# BE build (starrocks_be, Release, no debug info) for linux/amd64 in the official dev-env image.
+# Runs only when BE inputs changed (thrift/be patches or BE CI scripts); skipped when a build for the
+# same input hash is already cached. The build is split into up to 4 chained jobs of <6 h each; ccache
+# carries the progress from one job to the next.
+name: be
+on:
+  workflow_dispatch:
+    inputs:
+      budget_min:
+        description: "build minutes per part (0 = as much as fits in a 6 h job)"
+        default: "0"
+      parts:
+        description: "maximum number of chained build jobs (1-4)"
+        default: "4"
+      force:
+        description: "rebuild even if an output for this input hash is cached"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "patches/*-thrift-*"
+      - "patches/*-be-*"
+      - "ci/env.sh"
+      - "ci/build-be.sh"
+      - "ci/ccache-g0.sh"
+      - ".github/workflows/be.yml"
+      - ".github/workflows/be-part.yml"
+
+concurrency:
+  group: be-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+      commit_hash: ${{ steps.hash.outputs.commit_hash }}
+      skip: ${{ steps.decide.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare source
+        run: scripts/prepare-source.sh "$RUNNER_TEMP/src"
+      - name: Input hash
+        id: hash
+        run: |
+          . ci/env.sh
+          h=$(scripts/input-hash.sh "$RUNNER_TEMP/src" be)
+          if ls patches/*.patch >/dev/null 2>&1; then
+            ch="$STARROCKS_BASE_HASH-fl$(cat patches/*.patch | sha256sum | cut -c1-6)"
+          else
+            ch="$STARROCKS_BASE_HASH"
+          fi
+          echo "hash=$h" >> "$GITHUB_OUTPUT"
+          echo "commit_hash=$ch" >> "$GITHUB_OUTPUT"
+          echo "BE input hash $h, version 4.1.4-$ch"
+      - name: Look for a cached build
+        id: lookup
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-out
+          key: be-out-${{ steps.hash.outputs.hash }}
+          lookup-only: true
+      - name: Decide
+        id: decide
+        run: |
+          skip=false
+          if [ "${{ steps.lookup.outputs.cache-hit }}" = "true" ] && [ "${{ inputs.force }}" != "true" ]; then skip=true; fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "cached: ${{ steps.lookup.outputs.cache-hit }}, skip build: $skip"
+
+  part1:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    uses: ./.github/workflows/be-part.yml
+    with:
+      part: 1
+      hash: ${{ needs.plan.outputs.hash }}
+      commit_hash: ${{ needs.plan.outputs.commit_hash }}
+      budget_min: ${{ fromJSON(inputs.budget_min || '0') }}
+  part2:
+    needs: [plan, part1]
+    if: ${{ !cancelled() && needs.part1.result == 'success' && needs.part1.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 2 }}
+    uses: ./.github/workflows/be-part.yml
+    with:
+      part: 2
+      hash: ${{ needs.plan.outputs.hash }}
+      commit_hash: ${{ needs.plan.outputs.commit_hash }}
+      budget_min: ${{ fromJSON(inputs.budget_min || '0') }}
+  part3:
+    needs: [plan, part2]
+    if: ${{ !cancelled() && needs.part2.result == 'success' && needs.part2.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 3 }}
+    uses: ./.github/workflows/be-part.yml
+    with:
+      part: 3
+      hash: ${{ needs.plan.outputs.hash }}
+      commit_hash: ${{ needs.plan.outputs.commit_hash }}
+      budget_min: ${{ fromJSON(inputs.budget_min || '0') }}
+  part4:
+    needs: [plan, part3]
+    if: ${{ !cancelled() && needs.part3.result == 'success' && needs.part3.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 4 }}
+    uses: ./.github/workflows/be-part.yml
+    with:
+      part: 4
+      hash: ${{ needs.plan.outputs.hash }}
+      commit_hash: ${{ needs.plan.outputs.commit_hash }}
+      budget_min: ${{ fromJSON(inputs.budget_min || '0') }}
