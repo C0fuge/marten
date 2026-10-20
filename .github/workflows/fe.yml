@@ -113,8 +113,15 @@ jobs:
             sha256sum *.jar
           } > fe-build-info.txt
           cat fe-build-info.txt
+      # A rebuild of a cached hash (force / tests) replaces the entry: the jars carry the version string of the
+      # whole series (4.1.4-<commit_hash>), which release.yml checks.
+      - name: Drop the old FE output cache
+        if: steps.decide.outputs.build == 'true' && steps.lookup.outputs.cache-hit == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh cache delete "fe-out-${{ steps.hash.outputs.hash }}" --repo "$GITHUB_REPOSITORY" || true
       - name: Save FE output cache
-        if: steps.decide.outputs.build == 'true' && steps.lookup.outputs.cache-hit != 'true'
+        if: steps.decide.outputs.build == 'true'
         uses: actions/cache/save@v4
         with:
           path: /home/runner/sr-fe-out

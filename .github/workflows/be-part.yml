@@ -105,6 +105,13 @@ jobs:
           } > be-build-info.txt
           cat be-build-info.txt
           ls -la
+      # A forced rebuild of a cached hash replaces the entry (the binary carries the version string of the
+      # whole series, which release.yml checks).
+      - name: Drop an old BE output cache
+        if: steps.build.outputs.done == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh cache delete "be-out-${{ inputs.hash }}" --repo "$GITHUB_REPOSITORY" || true
       - name: Save BE output cache
         if: steps.build.outputs.done == 'true'
         uses: actions/cache/save@v4

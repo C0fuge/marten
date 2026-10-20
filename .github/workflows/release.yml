@@ -1,7 +1,9 @@
 # GitHub Release from the cached FE and BE builds of the current patch series (manual dispatch only).
 # Builds nothing: run fe / be first. Takes the outputs from the fe-out / be-out caches, falling back to the
-# fe-jars-<hash> / starrocks_be-<hash> workflow artifacts. A draft release creates no git tag until published;
-# re-running with the tag of an existing draft replaces that draft, a published release is never touched.
+# newest fe-jars-<hash> / starrocks_be-<hash> workflow artifact. FE and BE must report the same series hash
+# (4.1.4-<commit_hash>); after an FE-only patch change that needs 'be force=true' (ccache-only rebuild).
+# A draft release creates no git tag until published; re-running with the tag of an existing draft replaces
+# that draft, a published release is never touched.
 name: release
 on:
   workflow_dispatch:
@@ -64,20 +66,24 @@ jobs:
           path: /home/runner/sr-out
           key: be-out-${{ steps.hash.outputs.be }}
       - name: Fall back to workflow artifacts
-        if: steps.fe.outputs.cache-hit != 'true' || steps.be.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          CH: ${{ steps.hash.outputs.commit_hash }}
         run: |
-          fetch() { # artifact name, target dir
-            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$1&per_page=100" \
+          # A cache entry can be missing (evicted) or stale (an older build of the same sources reports another
+          # series hash); then take the newest workflow artifact of that input hash.
+          fetch() { # build-info file, artifact name, target dir
+            if [ -s "$3/$1" ] && grep -qx "commit_hash=$CH" "$3/$1"; then echo "$2: cached output is current"; return; fi
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$2&per_page=100" \
                    --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')
-            [ -n "$id" ] || { echo "::error::no cached output and no artifact $1: run the build first"; exit 1; }
-            mkdir -p "$2"
+            [ -n "$id" ] || { echo "::error::no current output and no artifact $2: run the build first"; exit 1; }
+            echo "$2: using artifact $id"
+            rm -rf "$3" && mkdir -p "$3"
             gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/a.zip"
-            unzip -o -q "$RUNNER_TEMP/a.zip" -d "$2"
+            unzip -o -q "$RUNNER_TEMP/a.zip" -d "$3"
           }
-          [ "${{ steps.fe.outputs.cache-hit }}" = true ] || fetch "fe-jars-${{ steps.hash.outputs.fe }}" /home/runner/sr-fe-out
-          [ "${{ steps.be.outputs.cache-hit }}" = true ] || fetch "starrocks_be-${{ steps.hash.outputs.be }}" /home/runner/sr-out
+          fetch fe-build-info.txt "fe-jars-${{ steps.hash.outputs.fe }}" /home/runner/sr-fe-out
+          fetch be-build-info.txt "starrocks_be-${{ steps.hash.outputs.be }}" /home/runner/sr-out
       - name: Assemble assets
         run: ci/release.sh /home/runner/sr-fe-out /home/runner/sr-out "${{ steps.hash.outputs.commit_hash }}" "${{ inputs.tag }}" "$RUNNER_TEMP/dist"
       - name: Create release
