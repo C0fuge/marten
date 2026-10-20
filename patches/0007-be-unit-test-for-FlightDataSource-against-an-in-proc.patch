@@ -7,11 +7,14 @@ Subject: [PATCH] be: unit test for FlightDataSource against an in-process
 flight_connector_test (standalone, own main: only GlobalEnv mem trackers): conversion of every mapped
 Arrow type incl. UInt64 -> LARGEINT and zoned/naive timestamps, slicing of large batches into chunks,
 failover from a refused location, no failover when disabled or on server errors, wrong token,
-connect timeout against a silent listener, cancellation of a blocked read, read limit, conjuncts.
+connect timeout against a silent listener, cancellation of a blocked read, read limit, conjuncts,
+basic auth (handshake -> bearer, wrong password not leaked) and TLS with a self-signed certificate
+generated at test time (root certs + override hostname, hostname mismatch, untrusted certificate,
+tls_verify=false, plain client against a TLS server).
 ---
  be/test/CMakeLists.txt                      |   3 +
- be/test/connector/flight_connector_test.cpp | 586 ++++++++++++++++++++
- 2 files changed, 589 insertions(+)
+ be/test/connector/flight_connector_test.cpp | 849 ++++++++++++++++++++
+ 2 files changed, 852 insertions(+)
  create mode 100644 be/test/connector/flight_connector_test.cpp
 
 diff --git a/be/test/CMakeLists.txt b/be/test/CMakeLists.txt
@@ -27,10 +30,10 @@ index 4e533869..67b2a33a 100644
 +ADD_BE_TEST(connector/flight_connector_test)
 diff --git a/be/test/connector/flight_connector_test.cpp b/be/test/connector/flight_connector_test.cpp
 new file mode 100644
-index 00000000..12c0dd74
+index 00000000..9db0ebc3
 --- /dev/null
 +++ b/be/test/connector/flight_connector_test.cpp
-@@ -0,0 +1,586 @@
+@@ -0,0 +1,849 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,15 +56,24 @@ index 00000000..12c0dd74
 +#include <arpa/inet.h>
 +#include <arrow/builder.h>
 +#include <arrow/flight/server.h>
++#include <arrow/flight/server_auth.h>
++#include <arrow/flight/server_middleware.h>
 +#include <arrow/record_batch.h>
 +#include <arrow/type.h>
++#include <arrow/util/base64.h>
 +#include <gtest/gtest.h>
 +#include <netinet/in.h>
++#include <openssl/ec.h>
++#include <openssl/evp.h>
++#include <openssl/pem.h>
++#include <openssl/x509.h>
++#include <openssl/x509v3.h>
 +#include <sys/socket.h>
 +#include <unistd.h>
 +
 +#include <atomic>
 +#include <chrono>
++#include <functional>
 +#include <future>
 +#include <limits>
 +#include <thread>
@@ -91,6 +103,8 @@ index 00000000..12c0dd74
 +namespace {
 +
 +constexpr const char* kToken = "test-token";
++constexpr const char* kUser = "flight-user";
++constexpr const char* kPassword = "flight-password";
 +
 +std::shared_ptr<arrow::Array> finish(arrow::ArrayBuilder* builder) {
 +    std::shared_ptr<arrow::Array> array;
@@ -133,6 +147,91 @@ index 00000000..12c0dd74
 +    std::atomic<bool>* _release;
 +    bool _sent = false;
 +};
++
++// Basic auth as AuthenticateBasicToken does it: the Handshake carries "authorization: Basic base64(user:password)",
++// the server answers with "authorization: Bearer <token>" (used by DoGet). Any other Basic header is rejected.
++class BearerMiddleware final : public fl::ServerMiddleware {
++public:
++    std::string name() const override { return "bearer"; }
++    void SendingHeaders(fl::AddCallHeaders* outgoing_headers) override {
++        outgoing_headers->AddHeader("authorization", std::string("Bearer ") + kToken);
++    }
++    void CallCompleted(const arrow::Status&) override {}
++};
++
++class BasicAuthMiddlewareFactory final : public fl::ServerMiddlewareFactory {
++public:
++    arrow::Status StartCall(const fl::CallInfo& info, const fl::ServerCallContext& context,
++                            std::shared_ptr<fl::ServerMiddleware>* middleware) override {
++        for (const auto& [k, v] : context.incoming_headers()) {
++            if (k != "authorization" || v.rfind("Basic ", 0) != 0) {
++                continue;
++            }
++            if (arrow::util::base64_decode(v.substr(6)) != std::string(kUser) + ":" + kPassword) {
++                return fl::MakeFlightError(fl::FlightStatusCode::Unauthenticated, "bad credentials");
++            }
++            if (info.method == fl::FlightMethod::Handshake) {
++                num_handshake++;
++            }
++            *middleware = std::make_shared<BearerMiddleware>();
++        }
++        return arrow::Status::OK();
++    }
++
++    std::atomic<int> num_handshake{0};
++};
++
++// A self-signed certificate (EC P-256, CA:TRUE, valid for a day) for the DNS name `host`, and its key.
++fl::CertKeyPair self_signed_cert(const std::string& host) {
++    EVP_PKEY_CTX* pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr);
++    CHECK(pctx != nullptr);
++    CHECK_EQ(1, EVP_PKEY_keygen_init(pctx));
++    CHECK_EQ(1, EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, NID_X9_62_prime256v1));
++    EVP_PKEY* pkey = nullptr;
++    CHECK_EQ(1, EVP_PKEY_keygen(pctx, &pkey));
++    EVP_PKEY_CTX_free(pctx);
++
++    X509* x509 = X509_new();
++    CHECK_EQ(1, X509_set_version(x509, 2));
++    ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
++    X509_gmtime_adj(X509_getm_notBefore(x509), -3600);
++    X509_gmtime_adj(X509_getm_notAfter(x509), 86400);
++    CHECK_EQ(1, X509_set_pubkey(x509, pkey));
++    X509_NAME* name = X509_get_subject_name(x509);
++    CHECK_EQ(1, X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
++                                           reinterpret_cast<const unsigned char*>(host.c_str()), -1, -1, 0));
++    CHECK_EQ(1, X509_set_issuer_name(x509, name));
++    X509V3_CTX ctx;
++    X509V3_set_ctx_nodb(&ctx);
++    X509V3_set_ctx(&ctx, x509, x509, nullptr, nullptr, 0);
++    const std::string san = "DNS:" + host;
++    for (const auto& [nid, value] :
++         std::vector<std::pair<int, std::string>>{{NID_basic_constraints, "critical,CA:TRUE"},
++                                                  {NID_subject_alt_name, san}}) {
++        X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, &ctx, nid, value.c_str());
++        CHECK(ext != nullptr);
++        CHECK_EQ(1, X509_add_ext(x509, ext, -1));
++        X509_EXTENSION_free(ext);
++    }
++    CHECK_GT(X509_sign(x509, pkey, EVP_sha256()), 0);
++
++    auto to_pem = [](const std::function<int(BIO*)>& write) {
++        BIO* bio = BIO_new(BIO_s_mem());
++        CHECK_EQ(1, write(bio));
++        char* data = nullptr;
++        long len = BIO_get_mem_data(bio, &data);
++        std::string pem(data, len);
++        BIO_free(bio);
++        return pem;
++    };
++    fl::CertKeyPair pair;
++    pair.pem_cert = to_pem([&](BIO* bio) { return PEM_write_bio_X509(bio, x509); });
++    pair.pem_key = to_pem(
++            [&](BIO* bio) { return PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr); });
++    X509_free(x509);
++    EVP_PKEY_free(pkey);
++    return pair;
++}
 +
 +// Tickets: "types" (every mapped type, row 1 all NULL), "ints:<rows>:<batches>" (c0 = 0, 1, ...),
 +// "block" (one batch of 3 rows, then the stream stalls), "error" (DoGet fails with a server error).
@@ -285,21 +384,93 @@ index 00000000..12c0dd74
 +class FlightConnectorTest : public ::testing::Test {
 +protected:
 +    void SetUp() override {
-+        _server = std::make_unique<TestFlightServer>();
-+        auto location = fl::Location::ForGrpcTcp("127.0.0.1", 0);
-+        ASSERT_TRUE(location.ok()) << location.status().ToString();
-+        fl::FlightServerOptions options(*location);
-+        auto st = _server->Init(options);
-+        ASSERT_TRUE(st.ok()) << st.ToString();
++        _auth = std::make_shared<BasicAuthMiddlewareFactory>();
++        _server = start_server(nullptr);
++        ASSERT_TRUE(_server != nullptr);
 +        _uri = "grpc://127.0.0.1:" + std::to_string(_server->port());
 +        _profile = std::make_unique<RuntimeProfile>("test");
 +    }
 +
 +    void TearDown() override {
-+        _server->release = true;
-+        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
-+        (void)_server->Shutdown(&deadline);
-+        (void)_server->Wait();
++        for (auto* server : {_server.get(), _tls_server.get()}) {
++            if (server == nullptr) {
++                continue;
++            }
++            server->release = true;
++            auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
++            (void)server->Shutdown(&deadline);
++            (void)server->Wait();
++        }
++    }
++
++    // plain gRPC on 127.0.0.1, or TLS with `cert`; Handshake with Basic auth through _auth
++    std::unique_ptr<TestFlightServer> start_server(const fl::CertKeyPair* cert) {
++        auto server = std::make_unique<TestFlightServer>();
++        auto location = cert == nullptr ? fl::Location::ForGrpcTcp("127.0.0.1", 0)
++                                        : fl::Location::ForGrpcTls("127.0.0.1", 0);
++        EXPECT_TRUE(location.ok()) << location.status().ToString();
++        if (!location.ok()) {
++            return nullptr;
++        }
++        fl::FlightServerOptions options(*location);
++        options.auth_handler = std::make_shared<fl::NoOpAuthHandler>();
++        options.middleware.emplace_back("basic-auth", _auth);
++        if (cert != nullptr) {
++            options.tls_certificates.push_back(*cert);
++        }
++        auto st = server->Init(options);
++        EXPECT_TRUE(st.ok()) << st.ToString();
++        if (!st.ok()) {
++            return nullptr;
++        }
++        return server;
++    }
++
++    // a TLS server with a self-signed certificate for "flight.test"; the scan's default location points to it
++    void use_tls_server() {
++        _cert = self_signed_cert("flight.test");
++        _tls_server = start_server(&_cert);
++        ASSERT_TRUE(_tls_server != nullptr);
++        _tnode.flight_scan_node.__set_default_location("grpc+tls://127.0.0.1:" + std::to_string(_tls_server->port()));
++    }
++
++    // Basic handshake instead of a bearer token
++    void use_basic_auth(const std::string& password) {
++        auto& node = _tnode.flight_scan_node;
++        node.bearer_token.clear();
++        node.__isset.bearer_token = false;
++        node.__set_user(kUser);
++        node.__set_password(password);
++        node.__set_rpc_timeout_ms(5000);
++    }
++
++    // opens the scan of "ints:10:1" and reads it; returns the status and the rows read. A scan still running
++    // after 30 s is cancelled instead of hanging the test.
++    Status read_ints(int64_t* rows) {
++        auto source = create_source("ints:10:1");
++        std::atomic<bool> done{false};
++        std::thread guard([&] {
++            auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
++            while (!done && std::chrono::steady_clock::now() < deadline) {
++                std::this_thread::sleep_for(std::chrono::milliseconds(50));
++            }
++            if (!done) {
++                _state->set_is_cancelled(true);
++            }
++        });
++        Status st = source->open(_state);
++        std::vector<ChunkPtr> chunks;
++        if (st.ok()) {
++            st = read_all(source.get(), &chunks);
++        }
++        done = true;
++        guard.join();
++        source->close(_state);
++        *rows = 0;
++        for (const auto& c : chunks) {
++            *rows += c->num_rows();
++        }
++        return st;
 +    }
 +
 +    void create_state(const std::vector<SlotSpec>& slots, int chunk_size = 4096) {
@@ -382,7 +553,10 @@ index 00000000..12c0dd74
 +    TPlanNode _tnode;
 +    std::unique_ptr<FlightDataSourceProvider> _provider;
 +    std::unique_ptr<RuntimeProfile> _profile;
++    std::shared_ptr<BasicAuthMiddlewareFactory> _auth;
 +    std::unique_ptr<TestFlightServer> _server;
++    std::unique_ptr<TestFlightServer> _tls_server;
++    fl::CertKeyPair _cert;
 +    std::string _uri;
 +};
 +
@@ -595,6 +769,98 @@ index 00000000..12c0dd74
 +    EXPECT_EQ(30, source->raw_rows_read());
 +    EXPECT_EQ(4, source->num_rows_read());
 +    Expr::close(conjuncts, _state);
++}
++
++TEST_F(FlightConnectorTest, BasicAuthHandshakeYieldsBearerToken) {
++    create_state(int_slots());
++    use_basic_auth(kPassword);
++    int64_t rows = 0;
++    ASSERT_OK(read_ints(&rows));
++    EXPECT_EQ(10, rows);
++    EXPECT_EQ(1, _auth->num_handshake.load());
++    EXPECT_EQ(1, _server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, BasicAuthWrongPasswordFailsWithoutLeakingIt) {
++    create_state(int_slots());
++    use_basic_auth("wrong-password");
++    int64_t rows = 0;
++    Status st = read_ints(&rows);
++    ASSERT_FALSE(st.ok());
++    LOG(INFO) << "wrong password: " << st;
++    EXPECT_EQ(std::string::npos, st.to_string().find("wrong-password")) << st;
++    EXPECT_EQ(0, _auth->num_handshake.load());
++    EXPECT_EQ(0, _server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, TlsWithRootCertsAndOverrideHostname) {
++    create_state(int_slots());
++    use_tls_server();
++    _tnode.flight_scan_node.__set_tls_root_certs(_cert.pem_cert);
++    _tnode.flight_scan_node.__set_tls_override_hostname("flight.test");
++    int64_t rows = 0;
++    ASSERT_OK(read_ints(&rows));
++    EXPECT_EQ(10, rows);
++    EXPECT_EQ(1, _tls_server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, TlsWithBasicAuth) {
++    create_state(int_slots());
++    use_tls_server();
++    _tnode.flight_scan_node.__set_tls_root_certs(_cert.pem_cert);
++    _tnode.flight_scan_node.__set_tls_override_hostname("flight.test");
++    use_basic_auth(kPassword);
++    int64_t rows = 0;
++    ASSERT_OK(read_ints(&rows));
++    EXPECT_EQ(10, rows);
++    EXPECT_EQ(1, _auth->num_handshake.load());
++}
++
++TEST_F(FlightConnectorTest, TlsHostnameMismatchFails) {
++    create_state(int_slots());
++    use_tls_server();
++    // the certificate names flight.test, the location 127.0.0.1
++    _tnode.flight_scan_node.__set_tls_root_certs(_cert.pem_cert);
++    int64_t rows = 0;
++    Status st = read_ints(&rows);
++    LOG(INFO) << "hostname mismatch: " << st;
++    EXPECT_FALSE(st.ok());
++    EXPECT_EQ(0, _tls_server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, TlsUntrustedCertificateFails) {
++    create_state(int_slots());
++    use_tls_server();
++    // default root store only: a self-signed certificate is not trusted
++    _tnode.flight_scan_node.__set_tls_override_hostname("flight.test");
++    int64_t rows = 0;
++    Status st = read_ints(&rows);
++    LOG(INFO) << "untrusted certificate: " << st;
++    EXPECT_FALSE(st.ok());
++    EXPECT_EQ(0, _tls_server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, TlsWithoutVerification) {
++    create_state(int_slots());
++    use_tls_server();
++    // no root certs, no override: only flight.tls.verify=false lets this through
++    _tnode.flight_scan_node.__set_tls_verify(false);
++    int64_t rows = 0;
++    ASSERT_OK(read_ints(&rows));
++    EXPECT_EQ(10, rows);
++    EXPECT_EQ(1, _tls_server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, PlainClientAgainstTlsServerFails) {
++    create_state(int_slots());
++    use_tls_server();
++    auto& node = _tnode.flight_scan_node;
++    node.__set_default_location("grpc://" + node.default_location.substr(std::string("grpc+tls://").size()));
++    int64_t rows = 0;
++    Status st = read_ints(&rows);
++    LOG(INFO) << "plain client against TLS: " << st;
++    EXPECT_FALSE(st.ok());
++    EXPECT_EQ(0, _tls_server->num_do_get.load());
 +}
 +
 +} // namespace starrocks::connector
