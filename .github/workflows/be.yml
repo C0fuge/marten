@@ -111,3 +111,15 @@ jobs:
       hash: ${{ needs.plan.outputs.hash }}
       commit_hash: ${{ needs.plan.outputs.commit_hash }}
       budget_min: ${{ fromJSON(inputs.budget_min || '0') }}
+  # Still not finished after 4 parts (~22 h of compile): start a new run of this workflow. It finds no cached
+  # output for the hash and resumes from the newest ccache, so a started build always completes unattended.
+  redispatch:
+    needs: [plan, part4]
+    if: ${{ !cancelled() && needs.part4.result == 'success' && needs.part4.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 4 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run be.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
