@@ -12,7 +12,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **10/10 green** (be-ut run 39489468073); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
 | M4 | Bench tests on the maintainer's local stand | not in the cloud; test SQL prepared in `docs/M4-TESTS.md` |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` written, draft dry run see Log; publish after M4 |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` (run 39500542342); publish after M4 |
 
 ## Patch series (on tag 4.1.4)
 
@@ -104,19 +104,31 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   reachable) and fails over otherwise; FlightSqlMetadataClientTest (in-process Java Flight server, silent /
   refused URI, no failover on server errors) + the other 6 FE test classes green (FE run 39484391882).
 
+- 2026-10-20 21:16–21:35 UTC (cloud session): Next step 1 (M5 release workflow). New `.github/workflows/release.yml`
+  + `ci/release.sh` (see CI above); `ci-report` also follows release runs. First dry run 39499303111 failed on its
+  consistency check: the cached `starrocks_be` (run 39484148997) reports series `4a9848e-fl76a25f`, built before
+  the last FE-only 0002 change, the jars `fl14c16b`. Forced BE rebuild (run 39499533941, same BE sources, Build BE
+  74 s) — and fe.yml / be-part.yml now replace an existing output cache entry on a rebuild (the old one could not
+  be overwritten). Second dry run 39500542342 green: **draft** pre-release `v4.1.4-flight.0-dryrun` (no git tag
+  yet) with fe-jars tar, starrocks_be.zst (sha256 60e1a2bc…), patches tar.gz, INSTALL.md, build-info files,
+  SHA256SUMS; FE from run 39484391882, BE from run 39499533941. INSTALL.md describes the release assets. No patch
+  changed (no source preparation needed).
+
 ## Next steps
 
-1. M5: release workflow (manual dispatch only: GitHub Release with fe-jars + starrocks_be.zst + patches +
-   build-info) — can be written and dry-run now (e.g. as a draft release), published once M4 passes;
-   README/INSTALL final check (patch list now 7 files, 0007 = BE test only, not needed at runtime).
-2. Optional hardening while M4 is pending: BE test cases for basic auth (user/password handshake) and TLS
+1. Optional hardening while M4 is pending: BE test cases for basic auth (user/password handshake) and TLS
    (`grpc+tls` with a generated self-signed cert and `tls_root_certs` / `tls_verify=false`); reuse
-   `flight_connector_test` (only patch 0007 changes → BE build is a ccache-only rebuild, be-ut ~4 min).
-3. React to M4 results from the maintainer (failures go here as new steps).
+   `flight_connector_test` (only patch 0007 changes → BE build is a ccache-only rebuild, be-ut ~4 min). Note: a
+   0007 change alters the series hash, so a later release needs `fe force=true` too (version string).
+2. React to M4 results from the maintainer (failures go here as new steps).
+3. After M4 passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false prerelease=false` (or
+   publish a draft by hand); delete the `v4.1.4-flight.0-dryrun` draft.
 
 ## Open questions for the maintainer
 
-- Not a decision, a heads-up: a first M4 smoke is possible now with the `fe-jars-*` artifact of FE run 39484391882
-  and the `starrocks_be-*` artifact of BE run 39484148997 (artifacts kept 7 days; both from the current series),
-  installed per `docs/INSTALL.md` (the allin1 image paths there are unverified), queries in `docs/M4-TESTS.md`.
-  Nothing in the cloud work depends on it.
+- Not a decision, a heads-up: a first M4 smoke is possible now with the assets of the **draft** release
+  `v4.1.4-flight.0-dryrun` (Releases page, visible to you only; FE run 39484391882 + BE run 39499533941, current
+  series `4a9848e-fl14c16b`), installed per `docs/INSTALL.md` (the allin1 image paths there are unverified),
+  queries in `docs/M4-TESTS.md`. Nothing in the cloud work depends on it.
+- Release naming: the workflow takes any tag `v…`; proposed `v4.1.4-flight.N`. Publishing (draft → public, which
+  creates the git tag) is left to you after M4.
