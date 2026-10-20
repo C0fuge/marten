@@ -1,0 +1,603 @@
+diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
+new file mode 100644
+index 00000000..ea67c829
+--- /dev/null
++++ b/be/src/connector/flight_connector.cpp
+@@ -0,0 +1,454 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#include "connector/flight_connector.h"
++
++#include <arrow/flight/client.h>
++#include <arrow/flight/types.h>
++#include <arrow/record_batch.h>
++#include <arrow/util/byte_size.h>
++
++#include <algorithm>
++#include <chrono>
++#include <thread>
++#include <unordered_set>
++
++#include "column/chunk.h"
++#include "column/column_helper.h"
++#include "exec/exec_node.h"
++#include "exec/file_scanner/parquet_scanner.h"
++#include "exprs/expr.h"
++#include "runtime/descriptors.h"
++#include "runtime/runtime_state.h"
++#include "util/arrow/utils.h"
++
++namespace starrocks::connector {
++
++namespace {
++
++constexpr const char* kReuseConnectionScheme = "arrow-flight-reuse-connection";
++
++// Errors that mean "the server could not be reached": only these move a stream to the next location,
++// and only while nothing has been delivered yet. Server errors are final.
++bool is_unreachable(const arrow::Status& st) {
++    if (st.ok()) {
++        return false;
++    }
++    auto detail = arrow::flight::FlightStatusDetail::UnwrapStatus(st);
++    if (detail != nullptr) {
++        return detail->code() == arrow::flight::FlightStatusCode::Unavailable ||
++               detail->code() == arrow::flight::FlightStatusCode::TimedOut;
++    }
++    return st.IsIOError();
++}
++
++bool iequals(const std::string& a, const std::string& b) {
++    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
++               return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y));
++           });
++}
++
++// One thread per process that cancels the gRPC streams of cancelled queries. A data source blocked in
++// FlightStreamReader::Next() cannot see the cancellation itself; Cancel() (gRPC TryCancel) wakes it up.
++class FlightCancelWatcher {
++public:
++    static FlightCancelWatcher* instance() {
++        static auto* watcher = new FlightCancelWatcher();
++        return watcher;
++    }
++
++    void add(FlightDataSource* source) {
++        std::lock_guard<std::mutex> l(_lock);
++        _sources.insert(source);
++        if (!_started) {
++            _started = true;
++            std::thread([this] { _run(); }).detach();
++        }
++    }
++
++    void remove(FlightDataSource* source) {
++        std::lock_guard<std::mutex> l(_lock);
++        _sources.erase(source);
++    }
++
++private:
++    void _run() {
++        while (true) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(200));
++            std::lock_guard<std::mutex> l(_lock);
++            for (auto* source : _sources) {
++                RuntimeState* state = source->runtime_state();
++                if (state != nullptr && state->is_cancelled()) {
++                    source->cancel_stream();
++                }
++            }
++        }
++    }
++
++    std::mutex _lock;
++    std::unordered_set<FlightDataSource*> _sources;
++    bool _started = false;
++};
++
++} // namespace
++
++// ================================
++
++DataSourceProviderPtr FlightConnector::create_data_source_provider(ConnectorScanNode* scan_node,
++                                                                   const TPlanNode& plan_node) const {
++    return std::make_unique<FlightDataSourceProvider>(scan_node, plan_node);
++}
++
++// ================================
++
++FlightDataSourceProvider::FlightDataSourceProvider(ConnectorScanNode* scan_node, const TPlanNode& plan_node)
++        : _scan_node(scan_node), _flight_scan_node(plan_node.flight_scan_node) {}
++
++DataSourcePtr FlightDataSourceProvider::create_data_source(const TScanRange& scan_range) {
++    return std::make_unique<FlightDataSource>(this, scan_range);
++}
++
++const TupleDescriptor* FlightDataSourceProvider::tuple_descriptor(RuntimeState* state) const {
++    return state->desc_tbl().get_tuple_descriptor(_flight_scan_node.tuple_id);
++}
++
++// ================================
++
++FlightDataSource::FlightDataSource(const FlightDataSourceProvider* provider, const TScanRange& scan_range)
++        : _provider(provider),
++          _scan_range(scan_range.flight_scan_range),
++          _has_range(scan_range.__isset.flight_scan_range) {}
++
++FlightDataSource::~FlightDataSource() {
++    if (_registered) {
++        FlightCancelWatcher::instance()->remove(this);
++        _registered = false;
++    }
++    _release_stream();
++}
++
++void FlightDataSource::_init_counters() {
++    _connect_timer = ADD_TIMER(_runtime_profile, "FlightConnectTime");
++    _read_timer = ADD_TIMER(_runtime_profile, "FlightReadTime(*)");
++    _convert_timer = ADD_TIMER(_runtime_profile, "ConvertTime");
++    _batches_counter = ADD_COUNTER(_runtime_profile, "BatchesRead", TUnit::UNIT);
++    _rows_counter = ADD_COUNTER(_runtime_profile, "RowsRead", TUnit::UNIT);
++    _bytes_counter = ADD_COUNTER(_runtime_profile, "BytesRead", TUnit::BYTES);
++    _failover_counter = ADD_COUNTER(_runtime_profile, "FailoverCount", TUnit::UNIT);
++}
++
++Status FlightDataSource::open(RuntimeState* state) {
++    _runtime_state = state;
++    _conv_ctx.state = state;
++    const TFlightScanNode& node = _provider->flight_scan_node();
++    _tuple_desc = state->desc_tbl().get_tuple_descriptor(node.tuple_id);
++    if (_tuple_desc == nullptr) {
++        return Status::InternalError("Flight scan: unknown tuple descriptor");
++    }
++    if (node.__isset.slot_ids) {
++        for (auto slot_id : node.slot_ids) {
++            SlotDescriptor* found = nullptr;
++            for (auto* slot : _tuple_desc->slots()) {
++                if (slot->id() == slot_id) {
++                    found = slot;
++                    break;
++                }
++            }
++            if (found == nullptr) {
++                return Status::InternalError(fmt::format("Flight scan: unknown slot id {}", slot_id));
++            }
++            _slots.push_back(found);
++        }
++    } else {
++        _slots = _tuple_desc->slots();
++    }
++    if (_slots.empty()) {
++        return Status::InternalError("Flight scan without output columns");
++    }
++    _init_counters();
++    if (!_has_range) {
++        // placeholder range of a scan without endpoints
++        _eof = true;
++        return Status::OK();
++    }
++
++    const std::string& default_location = node.default_location;
++    for (const auto& l : _scan_range.locations) {
++        if (l.empty() || l.rfind(kReuseConnectionScheme, 0) == 0) {
++            _locations.push_back(default_location);
++        } else {
++            _locations.push_back(l);
++        }
++    }
++    if (_locations.empty()) {
++        _locations.push_back(default_location);
++    }
++    if (node.__isset.location_failover && !node.location_failover) {
++        _locations.resize(1);
++    }
++    _runtime_profile->add_info_string("Location", _locations[0]);
++    if (node.__isset.remote_sql) {
++        _runtime_profile->add_info_string("RemoteSql", node.remote_sql);
++    }
++
++    RETURN_IF_ERROR(_start_stream());
++    FlightCancelWatcher::instance()->add(this);
++    _registered = true;
++    return Status::OK();
++}
++
++Status FlightDataSource::_start_stream() {
++    while (true) {
++        const std::string& location = _locations[_location_idx];
++        arrow::Status st = _connect_and_get(location);
++        if (st.ok()) {
++            return Status::OK();
++        }
++        _release_stream();
++        if (_runtime_state->is_cancelled()) {
++            return Status::Cancelled("Cancelled");
++        }
++        if (!is_unreachable(st) || _location_idx + 1 >= _locations.size()) {
++            return to_status(st).clone_and_prepend(fmt::format("Flight endpoint {} at {}",
++                                                               _scan_range.endpoint_index, location));
++        }
++        _location_idx++;
++        COUNTER_UPDATE(_failover_counter, 1);
++        LOG(WARNING) << "Flight endpoint " << _scan_range.endpoint_index << ": location " << location
++                     << " unreachable (" << st.ToString() << "), trying " << _locations[_location_idx];
++        _runtime_profile->add_info_string("Location", _locations[_location_idx]);
++    }
++}
++
++arrow::Status FlightDataSource::_connect_and_get(const std::string& location) {
++    namespace fl = arrow::flight;
++    const TFlightScanNode& node = _provider->flight_scan_node();
++    SCOPED_TIMER(_connect_timer);
++
++    ARROW_ASSIGN_OR_RAISE(auto loc, fl::Location::Parse(location));
++    auto options = fl::FlightClientOptions::Defaults();
++    if (node.__isset.tls_root_certs && !node.tls_root_certs.empty()) {
++        options.tls_root_certs = node.tls_root_certs;
++    }
++    if (node.__isset.tls_override_hostname && !node.tls_override_hostname.empty()) {
++        options.override_hostname = node.tls_override_hostname;
++    }
++    if (node.__isset.tls_verify && !node.tls_verify) {
++        options.disable_server_verification = true;
++    }
++    bool failover = !node.__isset.location_failover || node.location_failover;
++    if (failover && node.__isset.keepalive_ms && node.keepalive_ms > 0) {
++        options.generic_options.emplace_back("grpc.keepalive_time_ms", node.keepalive_ms);
++        options.generic_options.emplace_back("grpc.keepalive_timeout_ms", 5000);
++    }
++    ARROW_ASSIGN_OR_RAISE(_client, fl::FlightClient::Connect(loc, options));
++
++    fl::FlightCallOptions call;
++    for (const auto& [k, v] : node.call_headers) {
++        call.headers.emplace_back(k, v);
++    }
++    if (node.__isset.rpc_timeout_ms && node.rpc_timeout_ms > 0) {
++        call.timeout = fl::TimeoutDuration(static_cast<double>(node.rpc_timeout_ms) / 1000.0);
++    }
++    if (node.__isset.bearer_token && !node.bearer_token.empty()) {
++        call.headers.emplace_back("authorization", "Bearer " + node.bearer_token);
++    } else if (node.__isset.user && !node.user.empty()) {
++        ARROW_ASSIGN_OR_RAISE(auto header, _client->AuthenticateBasicToken(call, node.user, node.password));
++        if (!header.first.empty()) {
++            call.headers.push_back(header);
++        }
++    }
++
++    fl::Ticket ticket;
++    ticket.ticket = _scan_range.ticket;
++    ARROW_ASSIGN_OR_RAISE(auto reader, _client->DoGet(call, ticket));
++    {
++        std::lock_guard<std::mutex> l(_reader_lock);
++        _reader = std::move(reader);
++    }
++    // GetSchema waits for the first message, so connection errors show up here (failover still possible)
++    ARROW_ASSIGN_OR_RAISE(auto schema, _reader->GetSchema());
++    Status st = _check_schema(*schema);
++    if (!st.ok()) {
++        return arrow::Status::Invalid(std::string(st.message()));
++    }
++    return arrow::Status::OK();
++}
++
++Status FlightDataSource::_check_schema(const arrow::Schema& schema) {
++    if (schema.num_fields() < static_cast<int>(_slots.size())) {
++        return Status::InternalError(fmt::format("Flight stream has {} fields, the scan needs {}",
++                                                 schema.num_fields(), _slots.size()));
++    }
++    const TFlightScanNode& node = _provider->flight_scan_node();
++    for (size_t i = 0; i < _slots.size(); i++) {
++        const std::string& field = schema.field(static_cast<int>(i))->name();
++        const std::string& expected = i < node.field_names.size() ? node.field_names[i] : _slots[i]->col_name();
++        if (!field.empty() && !iequals(field, expected)) {
++            return Status::InternalError(
++                    fmt::format("Flight stream field {} is named '{}', expected '{}'", i, field, expected));
++        }
++    }
++    return Status::OK();
++}
++
++void FlightDataSource::cancel_stream() {
++    std::lock_guard<std::mutex> l(_reader_lock);
++    if (_reader != nullptr) {
++        _reader->Cancel();
++    }
++}
++
++void FlightDataSource::_release_stream() {
++    std::unique_ptr<arrow::flight::FlightStreamReader> reader;
++    {
++        std::lock_guard<std::mutex> l(_reader_lock);
++        reader = std::move(_reader);
++    }
++    if (reader != nullptr && !_eof) {
++        reader->Cancel();
++    }
++    reader.reset();
++    if (_client != nullptr) {
++        WARN_IF_ERROR(to_status(_client->Close()), "close flight client");
++        _client.reset();
++    }
++}
++
++Status FlightDataSource::_next_batch(bool* eof) {
++    while (true) {
++        arrow::Result<arrow::flight::FlightStreamChunk> next;
++        {
++            SCOPED_RAW_TIMER(&_io_time_ns);
++            SCOPED_TIMER(_read_timer);
++            next = _reader->Next();
++        }
++        if (!next.ok()) {
++            if (_runtime_state->is_cancelled()) {
++                return Status::Cancelled("Cancelled");
++            }
++            if (!_delivered && is_unreachable(next.status()) && _location_idx + 1 < _locations.size()) {
++                LOG(WARNING) << "Flight endpoint " << _scan_range.endpoint_index << ": read from "
++                             << _locations[_location_idx] << " failed before any data (" << next.status().ToString()
++                             << "), trying " << _locations[_location_idx + 1];
++                _release_stream();
++                _location_idx++;
++                COUNTER_UPDATE(_failover_counter, 1);
++                RETURN_IF_ERROR(_start_stream());
++                continue;
++            }
++            return to_status(next.status())
++                    .clone_and_prepend(fmt::format("Flight endpoint {} at {}", _scan_range.endpoint_index,
++                                                   _locations[_location_idx]));
++        }
++        if (next->data == nullptr) {
++            *eof = true;
++            return Status::OK();
++        }
++        COUNTER_UPDATE(_batches_counter, 1);
++        if (next->data->num_rows() == 0) {
++            continue;
++        }
++        _batch = std::move(next->data);
++        _batch_offset = 0;
++        _last_batch_bytes = arrow::util::TotalBufferSize(*_batch);
++        _bytes_read += _last_batch_bytes;
++        COUNTER_UPDATE(_bytes_counter, _last_batch_bytes);
++        if (_batch->num_columns() < static_cast<int>(_slots.size())) {
++            return Status::InternalError(fmt::format("Flight batch has {} columns, the scan needs {}",
++                                                     _batch->num_columns(), _slots.size()));
++        }
++        return Status::OK();
++    }
++}
++
++Status FlightDataSource::_convert(size_t num_rows, ChunkPtr* chunk) {
++    SCOPED_RAW_TIMER(&_cpu_time_ns);
++    SCOPED_TIMER(_convert_timer);
++    ObjectPool pool;
++    auto src = std::make_shared<Chunk>();
++    Filter filter(num_rows, 1);
++    std::vector<Expr*> exprs(_slots.size(), nullptr);
++    for (size_t i = 0; i < _slots.size(); i++) {
++        SlotDescriptor* slot = _slots[i];
++        const auto& array = _batch->column(static_cast<int>(i));
++        MutableColumnPtr column;
++        ConvertFuncTree conv_func;
++        RETURN_IF_ERROR(ParquetScanner::new_column(array->type().get(), slot, &column, &conv_func, &exprs[i], pool,
++                                                   false));
++        column->reserve(num_rows);
++        _conv_ctx.current_slot = slot;
++        Status st = ParquetScanner::convert_array_to_column(&conv_func, num_rows, array.get(), column.get(),
++                                                            _batch_offset, 0, &filter, &_conv_ctx);
++        if (!st.ok()) {
++            return st.clone_and_prepend(fmt::format("Flight column {}", slot->col_name()));
++        }
++        src->append_column(std::move(column), slot->id());
++    }
++    // rows with NULL in a NOT NULL slot are dropped (strict mode off, like broker load)
++    src->filter(filter);
++
++    auto dest = std::make_shared<Chunk>();
++    for (size_t i = 0; i < _slots.size(); i++) {
++        SlotDescriptor* slot = _slots[i];
++        ASSIGN_OR_RETURN(auto column, exprs[i]->evaluate_checked(nullptr, src.get()));
++        column = ColumnHelper::unfold_const_column(slot->type(), src->num_rows(), std::move(column));
++        dest->append_column(std::move(column), slot->id());
++    }
++    *chunk = std::move(dest);
++    return Status::OK();
++}
++
++Status FlightDataSource::get_next(RuntimeState* state, ChunkPtr* chunk) {
++    while (true) {
++        if (_eof) {
++            return Status::EndOfFile("");
++        }
++        RETURN_IF_CANCELLED(state);
++        if (_batch == nullptr || _batch_offset >= static_cast<size_t>(_batch->num_rows())) {
++            _batch.reset();
++            bool eof = false;
++            RETURN_IF_ERROR(_next_batch(&eof));
++            if (eof) {
++                _eof = true;
++                continue;
++            }
++        }
++        size_t n = std::min<size_t>(state->chunk_size(), _batch->num_rows() - _batch_offset);
++        RETURN_IF_ERROR(_convert(n, chunk));
++        _batch_offset += n;
++        _delivered = true;
++        _rows_read += n;
++        COUNTER_UPDATE(_rows_counter, n);
++        {
++            SCOPED_RAW_TIMER(&_cpu_time_ns);
++            RETURN_IF_ERROR(ExecNode::eval_conjuncts(_conjunct_ctxs, chunk->get()));
++        }
++        _rows_returned += (*chunk)->num_rows();
++        if ((*chunk)->num_rows() > 0) {
++            return Status::OK();
++        }
++    }
++}
++
++void FlightDataSource::close(RuntimeState* state) {
++    if (_registered) {
++        FlightCancelWatcher::instance()->remove(this);
++        _registered = false;
++    }
++    _release_stream();
++    _batch.reset();
++}
++
++} // namespace starrocks::connector
+diff --git a/be/src/connector/flight_connector.h b/be/src/connector/flight_connector.h
+new file mode 100644
+index 00000000..2adf2944
+--- /dev/null
++++ b/be/src/connector/flight_connector.h
+@@ -0,0 +1,137 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++#pragma once
++
++#include <memory>
++#include <mutex>
++#include <string>
++#include <vector>
++
++#include "arrow/status.h"
++#include "column/vectorized_fwd.h"
++#include "common/object_pool.h"
++#include "connector/connector.h"
++#include "exec/arrow_to_starrocks_converter.h"
++
++namespace arrow {
++class RecordBatch;
++class Schema;
++namespace flight {
++class FlightClient;
++class FlightStreamReader;
++} // namespace flight
++} // namespace arrow
++
++namespace starrocks::connector {
++
++// Arrow Flight SQL external catalog (FE catalog type "flight"). The FE plans one Flight SQL query per scan
++// (GetFlightInfo) and sends every FlightEndpoint as one TFlightScanRange; each data source reads one endpoint
++// with DoGet and converts the Arrow record batches into chunks. Arrow field i fills slot i of the tuple.
++class FlightConnector final : public Connector {
++public:
++    ~FlightConnector() override = default;
++
++    DataSourceProviderPtr create_data_source_provider(ConnectorScanNode* scan_node,
++                                                      const TPlanNode& plan_node) const override;
++
++    ConnectorType connector_type() const override { return ConnectorType::FLIGHT; }
++};
++
++class FlightDataSourceProvider final : public DataSourceProvider {
++public:
++    FlightDataSourceProvider(ConnectorScanNode* scan_node, const TPlanNode& plan_node);
++    ~FlightDataSourceProvider() override = default;
++
++    DataSourcePtr create_data_source(const TScanRange& scan_range) override;
++    const TupleDescriptor* tuple_descriptor(RuntimeState* state) const override;
++    // one endpoint per scan range; several endpoints are read in parallel
++    bool insert_local_exchange_operator() const override { return true; }
++
++    const TFlightScanNode& flight_scan_node() const { return _flight_scan_node; }
++
++private:
++    ConnectorScanNode* _scan_node;
++    const TFlightScanNode _flight_scan_node;
++};
++
++class FlightDataSource final : public DataSource {
++public:
++    FlightDataSource(const FlightDataSourceProvider* provider, const TScanRange& scan_range);
++    ~FlightDataSource() override;
++
++    std::string name() const override { return "FlightDataSource"; }
++    Status open(RuntimeState* state) override;
++    void close(RuntimeState* state) override;
++    Status get_next(RuntimeState* state, ChunkPtr* chunk) override;
++
++    int64_t raw_rows_read() const override { return _rows_read; }
++    int64_t num_rows_read() const override { return _rows_returned; }
++    int64_t num_bytes_read() const override { return _bytes_read; }
++    int64_t cpu_time_spent() const override { return _cpu_time_ns; }
++    int64_t io_time_spent() const override { return _io_time_ns; }
++    bool can_estimate_mem_usage() const override { return true; }
++    int64_t estimated_mem_usage() const override { return _last_batch_bytes; }
++
++    // Called by the cancel watcher thread.
++    void cancel_stream();
++    RuntimeState* runtime_state() const { return _runtime_state; }
++
++private:
++    Status _start_stream();
++    arrow::Status _connect_and_get(const std::string& location);
++    Status _check_schema(const arrow::Schema& schema);
++    Status _next_batch(bool* eof);
++    Status _convert(size_t num_rows, ChunkPtr* chunk);
++    void _release_stream();
++    void _init_counters();
++
++    const FlightDataSourceProvider* _provider;
++    const TFlightScanRange _scan_range;
++    bool _has_range = false;
++
++    RuntimeState* _runtime_state = nullptr;
++    std::vector<SlotDescriptor*> _slots;
++    std::vector<std::string> _locations;
++    size_t _location_idx = 0;
++
++    std::unique_ptr<arrow::flight::FlightClient> _client;
++    std::unique_ptr<arrow::flight::FlightStreamReader> _reader;
++    std::mutex _reader_lock; // guards _reader against cancel_stream() from the watcher thread
++    bool _registered = false;
++
++    std::shared_ptr<arrow::RecordBatch> _batch;
++    size_t _batch_offset = 0;
++    bool _delivered = false; // at least one batch was returned: no failover any more
++    bool _eof = false;
++
++    ArrowConvertContext _conv_ctx;
++
++    int64_t _rows_read = 0;
++    int64_t _rows_returned = 0;
++    int64_t _bytes_read = 0;
++    int64_t _cpu_time_ns = 0;
++    int64_t _io_time_ns = 0;
++    int64_t _last_batch_bytes = 0;
++
++    RuntimeProfile::Counter* _connect_timer = nullptr;
++    RuntimeProfile::Counter* _read_timer = nullptr;
++    RuntimeProfile::Counter* _convert_timer = nullptr;
++    RuntimeProfile::Counter* _batches_counter = nullptr;
++    RuntimeProfile::Counter* _rows_counter = nullptr;
++    RuntimeProfile::Counter* _bytes_counter = nullptr;
++    RuntimeProfile::Counter* _failover_counter = nullptr;
++};
++
++} // namespace starrocks::connector

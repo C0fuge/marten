@@ -7,9 +7,9 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 
 | M | Content | State |
 |---|---|---|
-| M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | FE done (run 39408957469, 12 min). BE run 39408952022 (started 10:35 UTC) is most likely the resumability PROBE (budget 10 min × 2 parts: part1 took 13 min); check its result, then start the full M0 BE build |
-| M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | code written, **not compiled yet** (patch 0002, WIP) |
-| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift part done (patch 0001); BE code todo |
+| M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | FE done (run 39408957469). ccache resume probe OK (run 39408952022: part2 hit all 50 part1 objects). Full BE build (4.1.4 + thrift patch) run **39412648088** started 11:07 UTC |
+| M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | patch 0002 **compiles** (run 39412699319); masking added in PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs; unit tests running (run 39414525761) |
+| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift done (0001); FE FlightScanNode done; BE connector first draft in `wip/be-flight-connector.wip.diff` (not compiled, not yet a patch) |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | FE parts started inside patch 0002 (FlightSqlRenderer, FlightAggregationPushdown); todo |
 | M4 | Bench tests on the maintainer's local stand | not in the cloud; done locally after M3 |
 | M5 | Package: patch series + artifacts + install guide | todo |
@@ -19,7 +19,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | Patch | Content | State |
 |---|---|---|
 | 0001 thrift | TFlightScanNode, TFlightScanRange, TTableType FLIGHT_TABLE (free ids per RESEARCH.md) | done |
-| 0002 fe (WIP) | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient, FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`; optimizer: Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, edits in OperatorType, visitors, RuleSet/RuleType, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, StmtExecutor, Authorizer, Table, ConnectorType | written in one go, never compiled; FlightScanNode (planner → TPlanNode/scan ranges) and FE unit tests still missing |
+| 0002 fe (WIP, compiles) | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient, FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`; optimizer: Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, edits in OperatorType, visitors, RuleSet/RuleType, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, StmtExecutor, Authorizer, Table, ConnectorType | compiles (run 39412699319, without the 2nd-session additions); now also FlightScanNode + PlanFragmentBuilder.visitPhysicalFlightScan, masking, renderer fix (pushed column names were unquoted), tests FlightTypeMapperTest/FlightSqlRendererTest/FlightPropertiesTest |
 
 Planned final split (PLAN.md §4 M5): thrift, FE connector, FE optimizer/planner, BE connector, TOP-N fix, tests.
 Split 0002 into "FE connector" and "FE optimizer/planner" once it compiles.
@@ -41,12 +41,20 @@ Split 0002 into "FE connector" and "FE optimizer/planner" once it compiles.
 - 2026-10-20 14:00 MSK: handoff from the local session to the cloud routine. WIP FE code exported as patch 0002.
   Added `dispatch.yml`, `ci-report.yml`, `scripts/export-patches.sh`, docs/PLAN.md, docs/RESEARCH.md.
 
+- 2026-10-20 11:05–11:40 UTC (cloud session): probe OK; dispatched full BE build run 39412648088. FE build of
+  patch 0002 OK (run 39412699319). Added FlightScanNode, masking, quoting fix, 3 test classes; FE build+tests
+  dispatched (run 39414525761, result not seen). BE connector draft saved to `wip/` (kept out of `patches/` so the
+  running BE build is not cancelled). Session stopped early on the maintainer's request.
+
 ## Next steps
 
-1. When probe run 39408952022 is finished and shows ccache resume worked, start the full unmodified M0 BE build. NOTE: `be.yml` builds the CURRENT patch series (0001 thrift is in it), so a build now is "4.1.4 + thrift patch", not unmodified — that is fine and more useful (it warms ccache for the patched tree); request it via `ci/dispatch.txt` with `be parts=4 budget_min=0`. Record time and minutes. Do not push BE/thrift patch changes while it runs.
-2. Make patch 0002 compile: FE CI build (push the patch; the push triggers `fe`). Fix errors from STATUS-CI.md.
-3. Add FlightScanNode (FE planner) + FE unit tests (type mapping, masking, SQL renderer, pushdown), run them via
-   `ci/dispatch.txt` (`fe tests=...`).
+1. Check FE run 39414525761 (build + FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest); fix
+   failures. Check full BE run 39412648088 (record time); do not push BE/thrift patch changes while it runs.
+2. FE: Explain/LogicalPlanPrinter entries if needed, aggregation pushdown rule (FlightAggregationPushdown has no
+   rule setting it yet), count(*) rule, session switch `flight_filter_pushdown`.
+3. Finish the BE connector from `wip/be-flight-connector.wip.diff` (still missing: register in connector.cpp +
+   ConnectorType FLIGHT, CMakeLists, exec_node.cpp FLIGHT_SCAN_NODE, FlightTableDescriptor in descriptors.{h,cpp});
+   make it patch `0003-be-...` once BE M0 is cached, one BE build.
 4. BE connector `be/src/connector/flight/` (PLAN.md §2.7) as patch `be:`; one BE build after M0 is cached.
 5. TOP-N: reproduce by reasoning/unit test in FE (PLAN.md §2.6), then a separate patch.
 6. Install guide `docs/INSTALL.md` (overlay starrocks_be + starrocks-fe.jar onto `starrocks/allin1-ubuntu` 4.1.4).
