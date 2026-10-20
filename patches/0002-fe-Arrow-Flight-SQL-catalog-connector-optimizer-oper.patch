@@ -1,12 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: starrocks-flight <starrocks-flight@localhost>
 Date: Tue, 20 Oct 2026 13:53:54 +0300
-Subject: [PATCH] fe: Arrow Flight SQL catalog connector, optimizer scan
- operators (WIP, M1-M3 in progress, not compiled yet)
+Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
+ scan node (WIP)
 
 ---
  .../com/starrocks/catalog/FlightTable.java    |  86 ++++
  .../java/com/starrocks/catalog/Table.java     |   8 +-
+ .../starrocks/common/util/PrintableMap.java   |   2 +
+ .../common/util/SqlCredentialRedactor.java    |   2 +
  .../starrocks/connector/ConnectorType.java    |   3 +
  .../flight/FlightAggregationPushdown.java     |  83 ++++
  .../connector/flight/FlightConnector.java     |  57 +++
@@ -14,10 +16,13 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog connector, optimizer scan
  .../connector/flight/FlightMetadata.java      | 300 ++++++++++++
  .../connector/flight/FlightProperties.java    | 316 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
- .../flight/FlightSqlMetadataClient.java       | 417 +++++++++++++++++
- .../connector/flight/FlightSqlRenderer.java   | 441 ++++++++++++++++++
+ .../flight/FlightSqlMetadataClient.java       | 417 ++++++++++++++++
+ .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 166 +++++++
+ .../starrocks/credential/CredentialUtil.java  |   6 +
+ .../com/starrocks/planner/FlightScanNode.java | 299 ++++++++++++
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
+ .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
  .../sql/optimizer/OptExpressionVisitor.java   |   4 +
  .../sql/optimizer/operator/OperatorType.java  |   2 +
@@ -33,7 +38,11 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog connector, optimizer scan
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  37 ++
  .../transformer/RelationTransformer.java      |   4 +
- 28 files changed, 2225 insertions(+), 2 deletions(-)
+ .../sql/plan/PlanFragmentBuilder.java         |  39 ++
+ .../flight/FlightPropertiesTest.java          | 104 ++++
+ .../flight/FlightSqlRendererTest.java         | 124 +++++
+ .../flight/FlightTypeMapperTest.java          | 116 +++++
+ 37 files changed, 2926 insertions(+), 4 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -44,9 +53,13 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog connector, optimizer scan
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightTypeMapper.java
+ create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/implementation/FlightScanImplementationRule.java
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java b/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
 new file mode 100644
@@ -166,6 +179,32 @@ index 72436b92..c20dcb2a 100644
      public boolean isHMSTable() {
          return type == TableType.HIVE || type == TableType.HUDI || type == TableType.ODPS;
      }
+diff --git a/fe/fe-core/src/main/java/com/starrocks/common/util/PrintableMap.java b/fe/fe-core/src/main/java/com/starrocks/common/util/PrintableMap.java
+index 47e8ed9a..1dfc19b5 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/common/util/PrintableMap.java
++++ b/fe/fe-core/src/main/java/com/starrocks/common/util/PrintableMap.java
+@@ -67,6 +67,8 @@ public class PrintableMap<K, V> {
+         SENSITIVE_KEY.add("authentication_ldap_simple_ssl_conn_trust_store_pwd");
+         SENSITIVE_KEY.add("client_secret");
+         SENSITIVE_KEY.add("ldap_bind_root_pwd");
++        SENSITIVE_KEY.add("flight.token");
++        SENSITIVE_KEY.add("flight.password");
+     }
+ 
+     public PrintableMap(Map<K, V> map, String keyValueSaperator,
+diff --git a/fe/fe-core/src/main/java/com/starrocks/common/util/SqlCredentialRedactor.java b/fe/fe-core/src/main/java/com/starrocks/common/util/SqlCredentialRedactor.java
+index c0794ea5..efbddb89 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/common/util/SqlCredentialRedactor.java
++++ b/fe/fe-core/src/main/java/com/starrocks/common/util/SqlCredentialRedactor.java
+@@ -83,6 +83,8 @@ public class SqlCredentialRedactor {
+             .add("pwd")
+             .add("property.sasl.password")
+             .add("broker.password")
++            .add("flight.token")
++            .add("flight.password")
+             .build();
+ 
+     // Lowercase set for O(1) lookup (case-insensitive matching)
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/ConnectorType.java b/fe/fe-core/src/main/java/com/starrocks/connector/ConnectorType.java
 index 43a321a0..167a7442 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/connector/ConnectorType.java
@@ -1506,10 +1545,10 @@ index 00000000..87c83807
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
 new file mode 100644
-index 00000000..3d24eee6
+index 00000000..0e39cd78
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
-@@ -0,0 +1,441 @@
+@@ -0,0 +1,445 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1577,15 +1616,19 @@ index 00000000..3d24eee6
 +    }
 +
 +    /**
-+     * Columns that may appear in rendered SQL: column ref to remote column name. A column is absent when its
++     * Columns that may appear in rendered SQL: column ref to the quoted remote column name. A column is absent when its
 +     * type has no exact SQL representation (FLOAT, VARBINARY, nested, time-zoned timestamps).
 +     */
 +    public interface Columns {
 +        String remoteName(ColumnRefOperator ref);
 +    }
 +
++    /** Columns backed by a map of column ref to remote column name; the names are rendered quoted. */
 +    public static Columns columns(Map<ColumnRefOperator, String> pushable) {
-+        return pushable::get;
++        return ref -> {
++            String name = pushable.get(ref);
++            return name == null ? null : quoteIdent(name);
++        };
 +    }
 +
 +    /** Renders a boolean expression for WHERE, or returns null if it cannot be rendered exactly. */
@@ -2123,6 +2166,335 @@ index 00000000..980ca8ef
 +                || type.isDecimalOfAnyVersion() || type.isStringType() || type.isDate() || type.isDatetime();
 +    }
 +}
+diff --git a/fe/fe-core/src/main/java/com/starrocks/credential/CredentialUtil.java b/fe/fe-core/src/main/java/com/starrocks/credential/CredentialUtil.java
+index 5f93fd8a..ff21eb2f 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/credential/CredentialUtil.java
++++ b/fe/fe-core/src/main/java/com/starrocks/credential/CredentialUtil.java
+@@ -15,6 +15,7 @@
+ package com.starrocks.credential;
+ 
+ import com.starrocks.catalog.JDBCResource;
++import com.starrocks.connector.flight.FlightProperties;
+ import com.starrocks.connector.iceberg.IcebergCatalogProperties;
+ import com.starrocks.connector.iceberg.rest.OAuth2SecurityConfig;
+ import com.starrocks.connector.odps.OdpsProperties;
+@@ -75,6 +76,11 @@ public class CredentialUtil {
+         // Mask for odps catalog credential
+         doMask(properties, OdpsProperties.ACCESS_ID);
+         doMask(properties, OdpsProperties.ACCESS_KEY);
++
++        // Flight catalog secrets are masked completely
++        for (String key : FlightProperties.SENSITIVE_KEYS) {
++            properties.computeIfPresent(key, (k, v) -> MASK_CLOUD_CREDENTIAL_WORDS);
++        }
+     }
+ 
+     private static void doMask(Map<String, String> properties, String configKey) {
+diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
+new file mode 100644
+index 00000000..0eae8103
+--- /dev/null
++++ b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
+@@ -0,0 +1,299 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package com.starrocks.planner;
++
++import com.google.common.annotations.VisibleForTesting;
++import com.google.common.base.MoreObjects;
++import com.starrocks.catalog.Column;
++import com.starrocks.catalog.FlightTable;
++import com.starrocks.connector.RemoteFileInfo;
++import com.starrocks.connector.exception.StarRocksConnectorException;
++import com.starrocks.connector.flight.FlightAggregationPushdown;
++import com.starrocks.connector.flight.FlightConnector;
++import com.starrocks.connector.flight.FlightGetRemoteFilesParams;
++import com.starrocks.connector.flight.FlightMetadata;
++import com.starrocks.connector.flight.FlightProperties;
++import com.starrocks.connector.flight.FlightRemoteFileDesc;
++import com.starrocks.connector.flight.FlightSqlRenderer;
++import com.starrocks.qe.ConnectContext;
++import com.starrocks.server.GlobalStateMgr;
++import com.starrocks.server.RunMode;
++import com.starrocks.server.WarehouseManager;
++import com.starrocks.sql.optimizer.Utils;
++import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
++import com.starrocks.system.ComputeNode;
++import com.starrocks.system.SystemInfoService;
++import com.starrocks.thrift.TExplainLevel;
++import com.starrocks.thrift.TFlightScanNode;
++import com.starrocks.thrift.TFlightScanRange;
++import com.starrocks.thrift.TPlanNode;
++import com.starrocks.thrift.TPlanNodeType;
++import com.starrocks.thrift.TScanRange;
++import com.starrocks.thrift.TScanRangeLocation;
++import com.starrocks.thrift.TScanRangeLocations;
++import com.starrocks.warehouse.cngroup.ComputeResource;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.stream.Collectors;
++
++/**
++ * Scan of an Arrow Flight SQL table. Planning renders one remote SQL query (projection, the translatable
++ * conjuncts, LIMIT, an optional partial aggregation), runs one GetFlightInfo, and turns every returned
++ * endpoint into one scan range, assigned round-robin over the alive BEs/CNs (the Kudu pattern). All
++ * conjuncts are still evaluated by the BE. Tickets and credentials never appear in EXPLAIN or logs.
++ */
++public class FlightScanNode extends ScanNode {
++    private final FlightTable table;
++    private final List<TScanRangeLocations> scanRanges = new ArrayList<>();
++    private FlightProperties props;
++    private String remoteSql;
++    private String defaultLocation;
++    private int endpointCount;
++    private long totalRecords = -1;
++    private int pushedConjuncts;
++    private int totalConjuncts;
++    private boolean limitPushed;
++
++    public FlightScanNode(PlanNodeId id, TupleDescriptor desc, String planNodeName) {
++        super(id, desc, planNodeName);
++        this.table = (FlightTable) desc.getTable();
++    }
++
++    private FlightMetadata metadata() {
++        FlightMetadata metadata = FlightConnector.metadataOf(table.getCatalogName());
++        if (metadata == null) {
++            // the connector is created lazily; getting it through the manager initializes it
++            GlobalStateMgr.getCurrentState().getConnectorMgr().getConnector(table.getCatalogName()).getMetadata();
++            metadata = FlightConnector.metadataOf(table.getCatalogName());
++        }
++        if (metadata == null) {
++            throw new StarRocksConnectorException("Flight catalog %s is not initialized", table.getCatalogName());
++        }
++        return metadata;
++    }
++
++    /**
++     * Renders the remote SQL for the slots of this scan.
++     *
++     * @param columnRefs   the scan's column refs to their table columns (to name pushed conjuncts)
++     * @param predicate    the scan predicate (every conjunct is also evaluated by the BE)
++     * @param limit        scan limit, or -1
++     * @param aggregation  partial aggregation computed by the server, or null
++     */
++    @VisibleForTesting
++    String renderRemoteSql(FlightProperties props, Map<ColumnRefOperator, Column> columnRefs, ScalarOperator predicate,
++                           long limit, FlightAggregationPushdown aggregation) {
++        List<FlightSqlRenderer.SelectItem> items = new ArrayList<>();
++        for (SlotDescriptor slot : desc.getSlots()) {
++            String name = slot.getColumn().getName();
++            if (aggregation != null && FlightAggregationPushdown.isSynthetic(name)) {
++                String agg = aggregation.getAggregates().get(name);
++                if (agg == null) {
++                    throw new StarRocksConnectorException("Unknown pushed aggregate column %s", name);
++                }
++                items.add(new FlightSqlRenderer.SelectItem(agg, name));
++            } else {
++                items.add(new FlightSqlRenderer.SelectItem(FlightSqlRenderer.quoteIdent(name), null));
++            }
++        }
++        List<String> where = new ArrayList<>();
++        List<String> groupBy = Collections.emptyList();
++        List<ScalarOperator> conjuncts = Utils.extractConjuncts(predicate);
++        totalConjuncts = conjuncts.size();
++        if (aggregation != null) {
++            // the aggregation rule only fires when every conjunct is rendered; they are part of it
++            where.addAll(aggregation.getWhere());
++            groupBy = aggregation.getGroupBy();
++            pushedConjuncts = totalConjuncts;
++        } else if (props.isFilterPushdown() && !conjuncts.isEmpty()) {
++            Map<ColumnRefOperator, String> pushable = new HashMap<>();
++            for (Map.Entry<ColumnRefOperator, Column> e : columnRefs.entrySet()) {
++                if (table.isFilterable(e.getValue().getName())) {
++                    pushable.put(e.getKey(), e.getValue().getName());
++                }
++            }
++            FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(pushable);
++            for (ScalarOperator conjunct : conjuncts) {
++                String p = FlightSqlRenderer.predicate(conjunct, cols);
++                if (p != null) {
++                    where.add(p);
++                }
++            }
++            pushedConjuncts = where.size();
++        }
++        // a LIMIT is exact only if the server applies every conjunct
++        long remoteLimit = -1;
++        if (aggregation == null && limit >= 0 && props.isLimitPushdown() && pushedConjuncts == totalConjuncts) {
++            remoteLimit = limit;
++        }
++        limitPushed = remoteLimit >= 0;
++        return FlightSqlRenderer.select(table.getCatalogDBName(), table.getCatalogTableName(), items, where, groupBy,
++                remoteLimit, false);
++    }
++
++    public void setupScanRangeLocations(Map<ColumnRefOperator, Column> columnRefs, ScalarOperator predicate,
++                                        long limit, FlightAggregationPushdown aggregation) {
++        FlightMetadata metadata = metadata();
++        props = metadata.getProperties();
++        remoteSql = renderRemoteSql(props, columnRefs, predicate, limit, aggregation);
++        List<RemoteFileInfo> files = GlobalStateMgr.getCurrentState().getMetadataMgr()
++                .getRemoteFiles(table, new FlightGetRemoteFilesParams(remoteSql));
++        FlightRemoteFileDesc fileDesc = (FlightRemoteFileDesc) files.get(0).getFiles().get(0);
++        defaultLocation = fileDesc.getDefaultLocation();
++        totalRecords = fileDesc.getTotalRecords();
++        List<FlightRemoteFileDesc.Endpoint> endpoints = fileDesc.getEndpoints();
++        endpointCount = endpoints.size();
++        if (endpoints.isEmpty()) {
++            return;
++        }
++        List<Long> nodeIds = getAllAvailableBackendOrComputeIds();
++        if (nodeIds.isEmpty()) {
++            throw new StarRocksConnectorException("No alive backend or compute node for the Flight scan");
++        }
++        long perEndpoint = totalRecords >= 0 ? (totalRecords + endpoints.size() - 1) / endpoints.size() : -1;
++        for (int i = 0; i < endpoints.size(); i++) {
++            FlightRemoteFileDesc.Endpoint e = endpoints.get(i);
++            TFlightScanRange range = new TFlightScanRange();
++            range.setTicket(e.ticket);
++            range.setLocations(new ArrayList<>(e.locations));
++            range.setEndpoint_index(i);
++            range.setEstimated_rows(perEndpoint);
++            TScanRange scanRange = new TScanRange();
++            scanRange.setFlight_scan_range(range);
++
++            TScanRangeLocations locations = new TScanRangeLocations();
++            locations.setScan_range(scanRange);
++            TScanRangeLocation location = new TScanRangeLocation();
++            location.setBackend_id(nodeIds.get(i % nodeIds.size()));
++            locations.addToLocations(location);
++            scanRanges.add(locations);
++        }
++    }
++
++    @VisibleForTesting
++    public List<Long> getAllAvailableBackendOrComputeIds() {
++        if (RunMode.isSharedDataMode()) {
++            ComputeResource computeResource = WarehouseManager.DEFAULT_RESOURCE;
++            if (ConnectContext.get() != null) {
++                computeResource = ConnectContext.get().getCurrentComputeResource();
++            }
++            return GlobalStateMgr.getCurrentState().getWarehouseMgr().getAliveComputeNodes(computeResource)
++                    .stream().map(ComputeNode::getId).collect(Collectors.toList());
++        }
++        SystemInfoService systemInfoService = GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo();
++        List<Long> nodes = new ArrayList<>(systemInfoService.getAvailableBackendIds());
++        nodes.addAll(systemInfoService.getAvailableComputeNodeIds());
++        return nodes;
++    }
++
++    public String getRemoteSql() {
++        return remoteSql;
++    }
++
++    @Override
++    public List<TScanRangeLocations> getScanRangeLocations(long maxScanRangeLength) {
++        return scanRanges;
++    }
++
++    @Override
++    public void finalizeStats() {
++    }
++
++    @Override
++    protected String debugString() {
++        return MoreObjects.toStringHelper(this).addValue(super.debugString())
++                .addValue("flightTable=" + table.getName()).toString();
++    }
++
++    @Override
++    protected String getNodeExplainString(String prefix, TExplainLevel detailLevel) {
++        StringBuilder output = new StringBuilder();
++        output.append(prefix).append("TABLE: ").append(table.getCatalogDBName()).append(".")
++                .append(table.getCatalogTableName()).append("\n");
++        output.append(prefix).append("REMOTE SQL: ").append(remoteSql).append("\n");
++        output.append(prefix).append("ENDPOINTS: ").append(endpointCount);
++        if (totalRecords >= 0) {
++            output.append(", records=").append(totalRecords);
++        }
++        output.append("\n");
++        if (props != null) {
++            output.append(prefix).append("RESULT MODE: ").append(props.getResultMode()).append("\n");
++        }
++        output.append(prefix).append("PUSHED CONJUNCTS: ").append(pushedConjuncts).append("/").append(totalConjuncts);
++        if (limitPushed) {
++            output.append(", limit pushed");
++        }
++        output.append("\n");
++        if (!conjuncts.isEmpty()) {
++            output.append(prefix).append("PREDICATES: ").append(getExplainString(conjuncts)).append("\n");
++        }
++        if (detailLevel != TExplainLevel.VERBOSE) {
++            output.append(prefix).append(String.format("cardinality=%s", cardinality)).append("\n");
++        }
++        output.append(prefix).append(String.format("avgRowSize=%s", avgRowSize)).append("\n");
++        return output.toString();
++    }
++
++    @Override
++    protected void toThrift(TPlanNode msg) {
++        msg.node_type = TPlanNodeType.FLIGHT_SCAN_NODE;
++        TFlightScanNode node = new TFlightScanNode();
++        node.setTuple_id(desc.getId().asInt());
++        List<String> fieldNames = new ArrayList<>();
++        List<Integer> slotIds = new ArrayList<>();
++        for (SlotDescriptor slot : desc.getSlots()) {
++            fieldNames.add(slot.getColumn().getName());
++            slotIds.add(slot.getId().asInt());
++        }
++        node.setField_names(fieldNames);
++        node.setSlot_ids(slotIds);
++        node.setCatalog_name(table.getCatalogName());
++        node.setRemote_sql(remoteSql);
++        if (props != null) {
++            node.setDefault_location(defaultLocation != null ? defaultLocation : props.getDefaultLocation());
++            if (props.getToken() != null) {
++                node.setBearer_token(props.getToken());
++            }
++            if (props.getUser() != null) {
++                node.setUser(props.getUser());
++                node.setPassword(props.getPassword() == null ? "" : props.getPassword());
++            }
++            node.setTls_verify(props.isTlsVerify());
++            if (props.getTlsRootCerts() != null) {
++                node.setTls_root_certs(props.getTlsRootCerts());
++            }
++            if (props.getTlsOverrideHostname() != null) {
++                node.setTls_override_hostname(props.getTlsOverrideHostname());
++            }
++            node.setCall_headers(new HashMap<>(props.getCallHeaders()));
++            node.setConnect_timeout_ms(props.getConnectTimeoutMs());
++            node.setKeepalive_ms(props.getKeepaliveMs());
++            node.setRpc_timeout_ms(props.getRpcTimeoutMs());
++            node.setLocation_failover(props.isLocationFailover());
++        }
++        msg.flight_scan_node = node;
++        setConnectorCatalogType(msg);
++    }
++
++    @Override
++    public boolean canUseRuntimeAdaptiveDop() {
++        return true;
++    }
++}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/qe/StmtExecutor.java b/fe/fe-core/src/main/java/com/starrocks/qe/StmtExecutor.java
 index 551a17a9..f4d9be38 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/qe/StmtExecutor.java
@@ -2136,6 +2508,38 @@ index 551a17a9..f4d9be38 100644
              case ELASTICSEARCH:
                  return "elasticsearch";
              default:
+diff --git a/fe/fe-core/src/main/java/com/starrocks/server/CatalogMgr.java b/fe/fe-core/src/main/java/com/starrocks/server/CatalogMgr.java
+index 88f6ba16..32434a39 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/server/CatalogMgr.java
++++ b/fe/fe-core/src/main/java/com/starrocks/server/CatalogMgr.java
+@@ -33,6 +33,7 @@ import com.starrocks.common.proc.ExternalDbsProcDir;
+ import com.starrocks.common.proc.ProcDirInterface;
+ import com.starrocks.common.proc.ProcNodeInterface;
+ import com.starrocks.common.proc.ProcResult;
++import com.starrocks.common.util.PrintableMap;
+ import com.starrocks.connector.CatalogConnector;
+ import com.starrocks.connector.ConnectorContext;
+ import com.starrocks.connector.ConnectorMgr;
+@@ -197,7 +198,8 @@ public class CatalogMgr {
+                     AlterCatalogLog alterCatalogLog = new AlterCatalogLog(catalogName, properties);
+                     GlobalStateMgr.getCurrentState().getEditLog().logAlterCatalog(alterCatalogLog,
+                             wal -> alterCatalogInternal(catalog, newConnector, properties));
+-                    LOG.info("Recreate catalog [{}] with properties [{}]", catalogName, catalog.getConfig());
++                    LOG.info("Recreate catalog [{}] with properties [{}]", catalogName,
++                            new PrintableMap<>(catalog.getConfig(), "=", true, false, true));
+                 } catch (Exception e) {
+                     LOG.warn("alter catalog failed, shutdown new connector", e);
+                     newConnector.shutdown();
+@@ -370,7 +372,8 @@ public class CatalogMgr {
+             }
+ 
+             alterCatalogInternal(catalog, newConnector, properties);
+-            LOG.info("Recreate catalog [{}] with properties [{}] in replay", catalog.getName(), catalog.getConfig());
++            LOG.info("Recreate catalog [{}] with properties [{}] in replay", catalog.getName(),
++                    new PrintableMap<>(catalog.getConfig(), "=", true, false, true));
+         } finally {
+             writeUnLock();
+         }
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/analyzer/Authorizer.java b/fe/fe-core/src/main/java/com/starrocks/sql/analyzer/Authorizer.java
 index f0e54493..633c6ca4 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/analyzer/Authorizer.java
@@ -2595,3 +2999,436 @@ index 133b0a74..52d26ebd 100644
          } else if (Table.TableType.KUDU.equals(node.getTable().getType())) {
              scanOperator = new LogicalKuduScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build(),
                  columnMetaToColRefMap, Operator.DEFAULT_LIMIT, null);
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
+index 93a8bf9d..19f35197 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
+@@ -56,6 +56,7 @@ import com.starrocks.common.Pair;
+ import com.starrocks.common.PatternMatcher;
+ import com.starrocks.common.StarRocksException;
+ import com.starrocks.connector.BucketProperty;
++import com.starrocks.connector.exception.StarRocksConnectorException;
+ import com.starrocks.connector.metadata.MetadataTable;
+ import com.starrocks.load.BrokerFileGroup;
+ import com.starrocks.planner.AggregateInfo;
+@@ -78,6 +79,7 @@ import com.starrocks.planner.ExecGroupSets;
+ import com.starrocks.planner.FetchNode;
+ import com.starrocks.planner.FileScanNode;
+ import com.starrocks.planner.FileTableScanNode;
++import com.starrocks.planner.FlightScanNode;
+ import com.starrocks.planner.FragmentNormalizer;
+ import com.starrocks.planner.HashJoinNode;
+ import com.starrocks.planner.HdfsScanNode;
+@@ -181,6 +183,7 @@ import com.starrocks.sql.optimizer.operator.physical.PhysicalDistributionOperato
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalEsScanOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalFileScanOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalFilterOperator;
++import com.starrocks.sql.optimizer.operator.physical.PhysicalFlightScanOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalHashAggregateOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalHashJoinOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalHiveScanOperator;
+@@ -1556,6 +1559,42 @@ public class PlanFragmentBuilder {
+             return fragment;
+         }
+ 
++        @Override
++        public PlanFragment visitPhysicalFlightScan(OptExpression optExpression, ExecPlan context) {
++            PhysicalFlightScanOperator node = (PhysicalFlightScanOperator) optExpression.getOp();
++
++            Table referenceTable = node.getTable();
++            context.getDescTbl().addReferencedTable(referenceTable);
++            TupleDescriptor tupleDescriptor = context.getDescTbl().createTupleDescriptor();
++            tupleDescriptor.setTable(referenceTable);
++
++            prepareContextSlots(node, context, tupleDescriptor);
++
++            FlightScanNode flightScanNode =
++                    new FlightScanNode(context.getNextNodeId(), tupleDescriptor, "FlightScanNode");
++            flightScanNode.setScanOptimizeOption(node.getScanOptimizeOption());
++            ScalarOperatorToExpr.FormatterContext formatterContext =
++                    new ScalarOperatorToExpr.FormatterContext(context.getColRefToExpr());
++            for (ScalarOperator predicate : Utils.extractConjuncts(node.getPredicate())) {
++                flightScanNode.getConjuncts().add(ScalarOperatorToExpr.buildExecExpression(predicate, formatterContext));
++            }
++            try {
++                flightScanNode.setupScanRangeLocations(node.getColRefToColumnMetaMap(), node.getPredicate(),
++                        node.getLimit(), node.getAggregationPushdown());
++            } catch (StarRocksConnectorException e) {
++                throw new StarRocksPlannerException(e.getMessage(), INTERNAL_ERROR);
++            }
++            flightScanNode.setLimit(node.getLimit());
++
++            tupleDescriptor.computeMemLayout();
++            context.getScanNodes().add(flightScanNode);
++
++            PlanFragment fragment =
++                    new PlanFragment(context.getNextFragmentId(), flightScanNode, DataPartition.RANDOM);
++            context.getFragments().add(fragment);
++            return fragment;
++        }
++
+         @Override
+         public PlanFragment visitPhysicalIcebergScan(OptExpression optExpression, ExecPlan context) {
+             return buildIcebergScanNode(optExpression, context);
+diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
+new file mode 100644
+index 00000000..872574ab
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
+@@ -0,0 +1,104 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.connector.flight;
++
++import com.google.common.collect.ImmutableMap;
++import com.starrocks.common.util.PrintableMap;
++import com.starrocks.common.util.SqlCredentialRedactor;
++import com.starrocks.connector.exception.StarRocksConnectorException;
++import com.starrocks.credential.CredentialUtil;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++
++public class FlightPropertiesTest {
++    private static FlightProperties props(String... kv) {
++        Map<String, String> m = new HashMap<>();
++        m.put("type", "flight");
++        for (int i = 0; i < kv.length; i += 2) {
++            m.put(kv[i], kv[i + 1]);
++        }
++        return new FlightProperties(m);
++    }
++
++    @Test
++    public void testDefaults() {
++        FlightProperties p = props("flight.uri", "grpc://h1:8815");
++        Assertions.assertEquals("grpc://h1:8815", p.getDefaultLocation());
++        Assertions.assertEquals("partial", p.getResultMode());
++        Assertions.assertTrue(p.isLocationFailover());
++        Assertions.assertTrue(p.isTlsVerify());
++        Assertions.assertFalse(p.isTls());
++        Assertions.assertEquals(5000, p.getConnectTimeoutMs());
++        Assertions.assertEquals(10000, p.getKeepaliveMs());
++        Assertions.assertEquals(FlightProperties.NestedTypes.NATIVE, p.getNestedTypes());
++        Assertions.assertTrue(p.isFilterPushdown());
++        Assertions.assertTrue(p.isLimitPushdown());
++        Assertions.assertEquals(ImmutableMap.of("x-flight-result-mode", "partial", "x-flight-location-failover", "1"),
++                p.getCallHeaders());
++    }
++
++    @Test
++    public void testUrisAndHeaders() {
++        FlightProperties p = props("flight.uri", "grpc+tls://a:1, grpc+tls://b:2", "flight.header.X-Tenant", "t1",
++                "flight.result_mode", "complete", "flight.location_failover", "false");
++        Assertions.assertEquals(2, p.getUris().size());
++        Assertions.assertTrue(p.isTls());
++        Assertions.assertEquals(ImmutableMap.of("x-flight-result-mode", "complete", "x-tenant", "t1"),
++                p.getCallHeaders());
++    }
++
++    @Test
++    public void testInvalid() {
++        Assertions.assertThrows(StarRocksConnectorException.class, () -> props());
++        Assertions.assertThrows(StarRocksConnectorException.class, () -> props("flight.uri", "http://h:1"));
++        Assertions.assertThrows(StarRocksConnectorException.class, () -> props("flight.uri", "grpc://h"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.token", "t", "flight.user", "u"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.unknown", "x"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.header.authorization", "x"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.result_mode", "bogus"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.connect_timeout_ms", "-5"));
++    }
++
++    @Test
++    public void testSecretsAreMasked() {
++        Map<String, String> m = new HashMap<>();
++        m.put("type", "flight");
++        m.put("flight.uri", "grpc://h:1");
++        m.put("flight.token", "secret-token-value");
++        m.put("flight.password", "secret-password");
++
++        String printed = new PrintableMap<>(m, "=", true, false, true).toString();
++        Assertions.assertFalse(printed.contains("secret"), printed);
++
++        Map<String, String> copy = new HashMap<>(m);
++        CredentialUtil.maskCredential(copy);
++        Assertions.assertFalse(copy.get("flight.token").contains("secret"));
++        Assertions.assertFalse(copy.get("flight.password").contains("secret"));
++        Assertions.assertEquals("grpc://h:1", copy.get("flight.uri"));
++
++        String sql = "CREATE EXTERNAL CATALOG f PROPERTIES (\"type\"=\"flight\", \"flight.uri\"=\"grpc://h:1\", "
++                + "\"flight.token\"=\"secret-token-value\", \"flight.password\"=\"secret-password\")";
++        String redacted = SqlCredentialRedactor.redact(sql);
++        Assertions.assertFalse(redacted.contains("secret"), redacted);
++        Assertions.assertTrue(redacted.contains("grpc://h:1"), redacted);
++    }
++}
+diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
+new file mode 100644
+index 00000000..154d4435
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
+@@ -0,0 +1,124 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.connector.flight;
++package com.starrocks.connector.flight;
++
++import com.google.common.collect.ImmutableList;
++import com.google.common.collect.ImmutableMap;
++import com.starrocks.sql.ast.expression.BinaryType;
++import com.starrocks.sql.optimizer.operator.scalar.BinaryPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
++import com.starrocks.sql.optimizer.operator.scalar.CompoundPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
++import com.starrocks.sql.optimizer.operator.scalar.InPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.IsNullPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.LikePredicateOperator;
++import com.starrocks.type.FloatType;
++import com.starrocks.type.IntegerType;
++import com.starrocks.type.TypeFactory;
++import com.starrocks.type.VarcharType;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.Test;
++
++import java.math.BigDecimal;
++import java.time.LocalDateTime;
++import java.util.Collections;
++
++public class FlightSqlRendererTest {
++    private final ColumnRefOperator id = new ColumnRefOperator(1, IntegerType.INT, "id", true);
++    private final ColumnRefOperator name = new ColumnRefOperator(2, VarcharType.VARCHAR, "name", true);
++    private final ColumnRefOperator price = new ColumnRefOperator(3, FloatType.FLOAT, "price", true);
++    private final ColumnRefOperator hidden = new ColumnRefOperator(4, IntegerType.INT, "hidden", true);
++    private final FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(
++            ImmutableMap.of(id, "id", name, "Na\"me", price, "price"));
++
++    @Test
++    public void testQuoting() {
++        Assertions.assertEquals("\"a\"\"b\"", FlightSqlRenderer.quoteIdent("a\"b"));
++        Assertions.assertEquals("\"s\".\"t\"", FlightSqlRenderer.tableRef("s", "t"));
++        Assertions.assertEquals("'it''s'", FlightSqlRenderer.stringLiteral("it's"));
++    }
++
++    @Test
++    public void testLiterals() {
++        Assertions.assertEquals("42", FlightSqlRenderer.literal(ConstantOperator.createInt(42)));
++        Assertions.assertEquals("-7", FlightSqlRenderer.literal(ConstantOperator.createBigint(-7)));
++        Assertions.assertEquals("'a''b'", FlightSqlRenderer.literal(ConstantOperator.createVarchar("a'b")));
++        Assertions.assertEquals("12.50", FlightSqlRenderer.literal(ConstantOperator.createDecimal(
++                new BigDecimal("12.50"), TypeFactory.createUnifiedDecimalType(10, 2))));
++        Assertions.assertEquals("DATE '2024-02-29'",
++                FlightSqlRenderer.literal(ConstantOperator.createDate(LocalDateTime.of(2024, 2, 29, 0, 0))));
++        Assertions.assertEquals("TIMESTAMP '2024-02-29 13:14:15.000001'", FlightSqlRenderer.literal(
++                ConstantOperator.createDatetime(LocalDateTime.of(2024, 2, 29, 13, 14, 15, 1000))));
++        Assertions.assertEquals("NULL", FlightSqlRenderer.literal(ConstantOperator.createNull(IntegerType.INT)));
++    }
++
++    @Test
++    public void testPredicates() {
++        Assertions.assertEquals("(\"id\" = 5)", FlightSqlRenderer.predicate(
++                new BinaryPredicateOperator(BinaryType.EQ, id, ConstantOperator.createInt(5)), cols));
++        Assertions.assertEquals("(\"id\" <> 5)", FlightSqlRenderer.predicate(
++                new BinaryPredicateOperator(BinaryType.NE, id, ConstantOperator.createInt(5)), cols));
++        Assertions.assertEquals("(\"Na\"\"me\" LIKE 'ab%')", FlightSqlRenderer.predicate(
++                new LikePredicateOperator(name, ConstantOperator.createVarchar("ab%")), cols));
++        Assertions.assertEquals("(\"id\" IN (1, 2))", FlightSqlRenderer.predicate(
++                new InPredicateOperator(false, id, ConstantOperator.createInt(1), ConstantOperator.createInt(2)),
++                cols));
++        Assertions.assertEquals("(\"id\" IS NULL)", FlightSqlRenderer.predicate(
++                new IsNullPredicateOperator(false, id), cols));
++        Assertions.assertEquals("((\"id\" > 1) OR (\"Na\"\"me\" = 'x'))", FlightSqlRenderer.predicate(
++                new CompoundPredicateOperator(CompoundPredicateOperator.CompoundType.OR,
++                        new BinaryPredicateOperator(BinaryType.GT, id, ConstantOperator.createInt(1)),
++                        new BinaryPredicateOperator(BinaryType.EQ, name, ConstantOperator.createVarchar("x"))),
++                cols));
++    }
++
++    @Test
++    public void testNotRenderable() {
++        // FLOAT comparisons differ between engines
++        Assertions.assertNull(FlightSqlRenderer.predicate(new BinaryPredicateOperator(BinaryType.LT, price,
++                ConstantOperator.createFloat(1.5)), cols));
++        // column without an exact remote representation
++        Assertions.assertNull(FlightSqlRenderer.predicate(
++                new BinaryPredicateOperator(BinaryType.EQ, hidden, ConstantOperator.createInt(1)), cols));
++        // backslash escapes differ
++        Assertions.assertNull(FlightSqlRenderer.predicate(
++                new LikePredicateOperator(name, ConstantOperator.createVarchar("a\\%")), cols));
++        // one part of an OR that cannot be rendered makes the whole OR StarRocks-only
++        Assertions.assertNull(FlightSqlRenderer.predicate(
++                new CompoundPredicateOperator(CompoundPredicateOperator.CompoundType.OR,
++                        new BinaryPredicateOperator(BinaryType.GT, id, ConstantOperator.createInt(1)),
++                        new BinaryPredicateOperator(BinaryType.EQ, hidden, ConstantOperator.createInt(1))),
++                cols));
++        // string compared with a number
++        Assertions.assertNull(FlightSqlRenderer.predicate(
++                new BinaryPredicateOperator(BinaryType.EQ, name, ConstantOperator.createInt(1)), cols));
++    }
++
++    @Test
++    public void testSelect() {
++        Assertions.assertEquals("SELECT \"a\", \"b\" FROM \"s\".\"t\" WHERE (\"a\" = 1) AND (\"b\" IS NULL) LIMIT 10",
++                FlightSqlRenderer.select("s", "t", ImmutableList.of(
++                                new FlightSqlRenderer.SelectItem("\"a\"", null),
++                                new FlightSqlRenderer.SelectItem("\"b\"", null)),
++                        ImmutableList.of("(\"a\" = 1)", "(\"b\" IS NULL)"), Collections.emptyList(), 10, false));
++        Assertions.assertEquals("SELECT 1 FROM \"s\".\"t\"", FlightSqlRenderer.select("s", "t",
++                Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), -1, false));
++        Assertions.assertEquals("SELECT \"g\", sum(\"x\") AS \"__flight_agg_0\" FROM \"s\".\"t\" GROUP BY \"g\"",
++                FlightSqlRenderer.select("s", "t", ImmutableList.of(
++                                new FlightSqlRenderer.SelectItem("\"g\"", null),
++                                new FlightSqlRenderer.SelectItem("sum(\"x\")", "__flight_agg_0")),
++                        Collections.emptyList(), ImmutableList.of("g"), -1, false));
++    }
++}
+diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
+new file mode 100644
+index 00000000..3d3d4698
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
+@@ -0,0 +1,116 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.connector.flight;
++
++import com.starrocks.type.ArrayType;
++import com.starrocks.type.MapType;
++import com.starrocks.type.PrimitiveType;
++import com.starrocks.type.ScalarType;
++import com.starrocks.type.StructType;
++import com.starrocks.type.Type;
++import org.apache.arrow.vector.types.DateUnit;
++import org.apache.arrow.vector.types.FloatingPointPrecision;
++import org.apache.arrow.vector.types.TimeUnit;
++import org.apache.arrow.vector.types.pojo.ArrowType;
++import org.apache.arrow.vector.types.pojo.Field;
++import org.apache.arrow.vector.types.pojo.FieldType;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.Test;
++
++import java.util.Arrays;
++import java.util.Collections;
++
++public class FlightTypeMapperTest {
++    private static Field field(String name, ArrowType type, Field... children) {
++        return new Field(name, FieldType.nullable(type), Arrays.asList(children));
++    }
++
++    private static Type map(ArrowType type) {
++        return FlightTypeMapper.toStarRocksType(field("c", type), FlightProperties.NestedTypes.NATIVE);
++    }
++
++    @Test
++    public void testScalarTypes() {
++        Assertions.assertEquals(PrimitiveType.BOOLEAN, map(ArrowType.Bool.INSTANCE).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.TINYINT, map(new ArrowType.Int(8, true)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.SMALLINT, map(new ArrowType.Int(16, true)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.INT, map(new ArrowType.Int(32, true)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.BIGINT, map(new ArrowType.Int(64, true)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.FLOAT,
++                map(new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.DOUBLE,
++                map(new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARCHAR, map(ArrowType.Utf8.INSTANCE).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARCHAR, map(ArrowType.LargeUtf8.INSTANCE).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARBINARY, map(ArrowType.Binary.INSTANCE).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.DATE, map(new ArrowType.Date(DateUnit.DAY)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.DATETIME,
++                map(new ArrowType.Timestamp(TimeUnit.MICROSECOND, null)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.DATETIME,
++                map(new ArrowType.Timestamp(TimeUnit.NANOSECOND, "UTC")).getPrimitiveType());
++    }
++
++    @Test
++    public void testUnsignedIntegersAreWidened() {
++        Assertions.assertEquals(PrimitiveType.SMALLINT, map(new ArrowType.Int(8, false)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.INT, map(new ArrowType.Int(16, false)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.BIGINT, map(new ArrowType.Int(32, false)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.LARGEINT, map(new ArrowType.Int(64, false)).getPrimitiveType());
++    }
++
++    @Test
++    public void testDecimal() {
++        Type t = map(new ArrowType.Decimal(15, 2, 128));
++        Assertions.assertTrue(t.isDecimalOfAnyVersion());
++        Assertions.assertEquals(15, ((ScalarType) t).getScalarPrecision());
++        Assertions.assertEquals(2, ((ScalarType) t).getScalarScale());
++        Assertions.assertTrue(map(new ArrowType.Decimal(38, 10, 128)).isDecimalOfAnyVersion());
++        // Decimal256 has no BE converter
++        Assertions.assertNull(map(new ArrowType.Decimal(40, 2, 256)));
++        Assertions.assertNull(map(new ArrowType.Decimal(20, 2, 256)));
++    }
++
++    @Test
++    public void testUnsupportedTypesAreHidden() {
++        Assertions.assertNull(map(new ArrowType.Time(TimeUnit.MICROSECOND, 64)));
++        Assertions.assertNull(map(new ArrowType.Duration(TimeUnit.SECOND)));
++        Assertions.assertNull(map(ArrowType.Null.INSTANCE));
++    }
++
++    @Test
++    public void testNestedTypes() {
++        Field list = field("l", ArrowType.List.INSTANCE, field("item", new ArrowType.Int(32, true)));
++        Type native_ = FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.NATIVE);
++        Assertions.assertTrue(native_ instanceof ArrayType);
++        Assertions.assertEquals(PrimitiveType.INT, ((ArrayType) native_).getItemType().getPrimitiveType());
++        Assertions.assertNull(FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.HIDE));
++        Assertions.assertEquals(PrimitiveType.JSON,
++                FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.JSON).getPrimitiveType());
++
++        Field entries = new Field("entries", FieldType.notNullable(ArrowType.Struct.INSTANCE), Arrays.asList(
++                new Field("key", FieldType.notNullable(ArrowType.Utf8.INSTANCE), Collections.emptyList()),
++                field("value", new ArrowType.Int(64, true))));
++        Field mapField = field("m", new ArrowType.Map(false), entries);
++        Assertions.assertTrue(FlightTypeMapper.toStarRocksType(mapField, FlightProperties.NestedTypes.NATIVE)
++                instanceof MapType);
++
++        Field struct = field("s", ArrowType.Struct.INSTANCE, field("a", ArrowType.Utf8.INSTANCE),
++                field("b", new ArrowType.Date(DateUnit.DAY)));
++        Assertions.assertTrue(FlightTypeMapper.toStarRocksType(struct, FlightProperties.NestedTypes.NATIVE)
++                instanceof StructType);
++        // a struct with an unsupported child is hidden as a whole
++        Field badStruct = field("s", ArrowType.Struct.INSTANCE, field("t", new ArrowType.Time(TimeUnit.SECOND, 32)));
++        Assertions.assertNull(FlightTypeMapper.toStarRocksType(badStruct, FlightProperties.NestedTypes.NATIVE));
++    }
++}
