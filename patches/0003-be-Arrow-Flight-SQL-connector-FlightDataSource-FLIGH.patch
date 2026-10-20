@@ -1,9 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: starrocks-flight <starrocks-flight@localhost>
+Date: Tue, 20 Oct 2026 15:22:46 +0000
+Subject: [PATCH] be: Arrow Flight SQL connector (FlightDataSource),
+ FLIGHT_SCAN_NODE, FLIGHT_TABLE
+
+Connector "flight" (ConnectorType FLIGHT): one FlightDataSource per TFlightScanRange (endpoint).
+DoGet with bearer token or basic auth, call headers, TLS options, keepalive; failover to the next
+location while nothing has been delivered and the error means unreachable; cancellation of blocked
+reads through a process-wide watcher thread; Arrow -> Chunk via ParquetScanner converters; conjuncts
+and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescriptor.
+---
+ be/src/connector/CMakeLists.txt       |   1 +
+ be/src/connector/connector.cpp        |   3 +
+ be/src/connector/connector.h          |   2 +
+ be/src/connector/flight_connector.cpp | 460 ++++++++++++++++++++++++++
+ be/src/connector/flight_connector.h   | 137 ++++++++
+ be/src/exec/exec_node.cpp             |   7 +
+ be/src/runtime/descriptors.cpp        |   5 +
+ 7 files changed, 615 insertions(+)
+ create mode 100644 be/src/connector/flight_connector.cpp
+ create mode 100644 be/src/connector/flight_connector.h
+
+diff --git a/be/src/connector/CMakeLists.txt b/be/src/connector/CMakeLists.txt
+index 9b301391..1891a412 100644
+--- a/be/src/connector/CMakeLists.txt
++++ b/be/src/connector/CMakeLists.txt
+@@ -23,6 +23,7 @@ ADD_BE_LIB(Connector
+         mysql_connector.cpp
+         cache_stats_connector.cpp
+         file_connector.cpp
++        flight_connector.cpp
+         binlog_connector.cpp
+         iceberg_connector.cpp
+         connector_chunk_sink.cpp
+diff --git a/be/src/connector/connector.cpp b/be/src/connector/connector.cpp
+index e1675232..374f70e1 100644
+--- a/be/src/connector/connector.cpp
++++ b/be/src/connector/connector.cpp
+@@ -17,6 +17,7 @@
+ #include "connector/binlog_connector.h"
+ #include "connector/es_connector.h"
+ #include "connector/file_connector.h"
++#include "connector/flight_connector.h"
+ #include "connector/hive_connector.h"
+ #ifndef __APPLE__
+ #include "connector/iceberg_connector.h"
+@@ -53,6 +54,7 @@ const std::string Connector::LAKE = "lake";
+ const std::string Connector::BINLOG = "binlog";
+ const std::string Connector::ICEBERG = "iceberg";
+ const std::string Connector::CACHE_STATS = "cache_stats";
++const std::string Connector::FLIGHT = "flight";
+ 
+ class ConnectorManagerInit {
+ public:
+@@ -66,6 +68,7 @@ public:
+         cm->put(Connector::FILE, std::make_unique<FileConnector>());
+         cm->put(Connector::LAKE, std::make_unique<LakeConnector>());
+         cm->put(Connector::BINLOG, std::make_unique<BinlogConnector>());
++        cm->put(Connector::FLIGHT, std::make_unique<FlightConnector>());
+ #ifndef __APPLE__
+         cm->put(Connector::ICEBERG, std::make_unique<IcebergConnector>());
+ #endif
+diff --git a/be/src/connector/connector.h b/be/src/connector/connector.h
+index 0b983626..ddea013e 100644
+--- a/be/src/connector/connector.h
++++ b/be/src/connector/connector.h
+@@ -201,6 +201,7 @@ enum ConnectorType {
+     ICEBERG = 7,
+     // BENCHMARK = 8,
+     CACHE_STATS = 9,
++    FLIGHT = 10,
+ };
+ 
+ class Connector {
+@@ -215,6 +216,7 @@ public:
+     static const std::string BINLOG;
+     static const std::string ICEBERG;
+     static const std::string CACHE_STATS;
++    static const std::string FLIGHT;
+ 
+     virtual ~Connector() = default;
+     // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..ea67c829
+index 00000000..9a06af88
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,460 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +107,7 @@ index 00000000..ea67c829
 +#include <arrow/flight/types.h>
 +#include <arrow/record_batch.h>
 +#include <arrow/util/byte_size.h>
++#include <fmt/format.h>
 +
 +#include <algorithm>
 +#include <chrono>
@@ -204,6 +288,7 @@ index 00000000..ea67c829
 +        _locations.resize(1);
 +    }
 +    _runtime_profile->add_info_string("Location", _locations[0]);
++    _conv_ctx.current_file = fmt::format("flight endpoint {}", _scan_range.endpoint_index);
 +    if (node.__isset.remote_sql) {
 +        _runtime_profile->add_info_string("RemoteSql", node.remote_sql);
 +    }
@@ -226,8 +311,8 @@ index 00000000..ea67c829
 +            return Status::Cancelled("Cancelled");
 +        }
 +        if (!is_unreachable(st) || _location_idx + 1 >= _locations.size()) {
-+            return to_status(st).clone_and_prepend(fmt::format("Flight endpoint {} at {}",
-+                                                               _scan_range.endpoint_index, location));
++            return to_status(st).clone_and_prepend(
++                    fmt::format("Flight endpoint {} at {}", _scan_range.endpoint_index, location));
 +        }
 +        _location_idx++;
 +        COUNTER_UPDATE(_failover_counter, 1);
@@ -294,8 +379,8 @@ index 00000000..ea67c829
 +
 +Status FlightDataSource::_check_schema(const arrow::Schema& schema) {
 +    if (schema.num_fields() < static_cast<int>(_slots.size())) {
-+        return Status::InternalError(fmt::format("Flight stream has {} fields, the scan needs {}",
-+                                                 schema.num_fields(), _slots.size()));
++        return Status::InternalError(
++                fmt::format("Flight stream has {} fields, the scan needs {}", schema.num_fields(), _slots.size()));
 +    }
 +    const TFlightScanNode& node = _provider->flight_scan_node();
 +    for (size_t i = 0; i < _slots.size(); i++) {
@@ -334,12 +419,11 @@ index 00000000..ea67c829
 +
 +Status FlightDataSource::_next_batch(bool* eof) {
 +    while (true) {
-+        arrow::Result<arrow::flight::FlightStreamChunk> next;
-+        {
++        auto next = [this] {
 +            SCOPED_RAW_TIMER(&_io_time_ns);
 +            SCOPED_TIMER(_read_timer);
-+            next = _reader->Next();
-+        }
++            return _reader->Next();
++        }();
 +        if (!next.ok()) {
 +            if (_runtime_state->is_cancelled()) {
 +                return Status::Cancelled("Cancelled");
@@ -391,8 +475,8 @@ index 00000000..ea67c829
 +        const auto& array = _batch->column(static_cast<int>(i));
 +        MutableColumnPtr column;
 +        ConvertFuncTree conv_func;
-+        RETURN_IF_ERROR(ParquetScanner::new_column(array->type().get(), slot, &column, &conv_func, &exprs[i], pool,
-+                                                   false));
++        RETURN_IF_ERROR(
++                ParquetScanner::new_column(array->type().get(), slot, &column, &conv_func, &exprs[i], pool, false));
 +        column->reserve(num_rows);
 +        _conv_ctx.current_slot = slot;
 +        Status st = ParquetScanner::convert_array_to_column(&conv_func, num_rows, array.get(), column.get(),
@@ -422,6 +506,11 @@ index 00000000..ea67c829
 +            return Status::EndOfFile("");
 +        }
 +        RETURN_IF_CANCELLED(state);
++        if (_read_limit > 0 && _rows_returned >= _read_limit) {
++            // LIMIT reached (the remote query usually carries it too): stop reading, close() cancels the stream
++            _eof = true;
++            continue;
++        }
 +        if (_batch == nullptr || _batch_offset >= static_cast<size_t>(_batch->num_rows())) {
 +            _batch.reset();
 +            bool eof = false;
@@ -601,3 +690,44 @@ index 00000000..2adf2944
 +};
 +
 +} // namespace starrocks::connector
+diff --git a/be/src/exec/exec_node.cpp b/be/src/exec/exec_node.cpp
+index d927b831..eae5909c 100644
+--- a/be/src/exec/exec_node.cpp
++++ b/be/src/exec/exec_node.cpp
+@@ -590,6 +590,12 @@ Status ExecNode::create_vectorized_node(starrocks::RuntimeState* state, starrock
+         *node = pool->add(new ConnectorScanNode(pool, new_node, descs));
+         return Status::OK();
+     }
++    case TPlanNodeType::FLIGHT_SCAN_NODE: {
++        TPlanNode new_node = tnode;
++        new_node.connector_scan_node = make_connector_scan_node(tnode, connector::Connector::FLIGHT);
++        *node = pool->add(new ConnectorScanNode(pool, new_node, descs));
++        return Status::OK();
++    }
+     default:
+         return Status::InternalError(strings::Substitute("Vectorized engine not support node: $0", tnode.node_type));
+     }
+@@ -864,6 +870,7 @@ void ExecNode::collect_scan_nodes(vector<ExecNode*>* nodes) {
+     collect_nodes(TPlanNodeType::MYSQL_SCAN_NODE, nodes);
+     collect_nodes(TPlanNodeType::LAKE_SCAN_NODE, nodes);
+     collect_nodes(TPlanNodeType::LAKE_CACHE_STATS_SCAN_NODE, nodes);
++    collect_nodes(TPlanNodeType::FLIGHT_SCAN_NODE, nodes);
+     collect_nodes(TPlanNodeType::SCHEMA_SCAN_NODE, nodes);
+     collect_nodes(TPlanNodeType::STREAM_SCAN_NODE, nodes);
+ }
+diff --git a/be/src/runtime/descriptors.cpp b/be/src/runtime/descriptors.cpp
+index 19965be6..e4e0b5f1 100644
+--- a/be/src/runtime/descriptors.cpp
++++ b/be/src/runtime/descriptors.cpp
+@@ -809,6 +809,11 @@ Status DescriptorTbl::create(RuntimeState* state, ObjectPool* pool, const TDescr
+             desc = pool->add(new KuduTableDescriptor(tdesc, pool));
+             break;
+         }
++        case TTableType::FLIGHT_TABLE: {
++            // Arrow Flight catalog: names only; the scan reads everything from TFlightScanNode
++            desc = pool->add(new TableDescriptor(tdesc));
++            break;
++        }
+         default:
+             DCHECK(false) << "invalid table type: " << tdesc.tableType;
+         }
