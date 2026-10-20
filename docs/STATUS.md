@@ -32,8 +32,7 @@ Split 0002 into "FE connector" and "FE optimizer/planner" once it compiles.
 - Push-triggered builds (branches `main` and `claude/**`) react only to their patch areas (`*-thrift-*`,
   `*-fe-*`, `*-be-*`). `concurrency: cancel-in-progress` — a new push touching BE patches CANCELS a running BE
   build on the same branch.
-- Budget: private repo, about 2000 Actions minutes per month. A full BE build on the 4-vCPU runner is many hours;
-  incremental BE builds with a warm ccache are short. Any change to patch 0001 (thrift) regenerates headers used
+- The repo is public (free Actions minutes). A full BE build on the 4-vCPU runner is many hours; incremental BE builds with a warm ccache are short. Any change to patch 0001 (thrift) regenerates headers used
   everywhere = near-full BE rebuild, so batch thrift changes and avoid them.
 
 ## Log
