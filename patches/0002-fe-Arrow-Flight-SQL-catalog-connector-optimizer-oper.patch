@@ -47,8 +47,10 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  .../flight/FlightPropertiesTest.java          | 104 ++++
  .../flight/FlightSqlRendererTest.java         | 123 +++++
  .../flight/FlightTypeMapperTest.java          | 116 +++++
+ .../flight/MockedFlightSqlMetadataClient.java |  99 ++++
  .../FlightAggregationPushdownRuleTest.java    |  67 +++
- 43 files changed, 3307 insertions(+), 4 deletions(-)
+ .../sql/plan/FlightScanPlanTest.java          | 161 +++++++
+ 45 files changed, 3567 insertions(+), 4 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -67,7 +69,9 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java b/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
 new file mode 100644
@@ -3839,6 +3843,111 @@ index 00000000..4bc29fd3
 +        Assertions.assertNull(FlightTypeMapper.toStarRocksType(badStruct, FlightProperties.NestedTypes.NATIVE));
 +    }
 +}
+diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
+new file mode 100644
+index 00000000..f3bbd654
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
+@@ -0,0 +1,99 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.connector.flight;
++
++import com.google.common.collect.ImmutableList;
++import org.apache.arrow.flight.FlightDescriptor;
++import org.apache.arrow.flight.FlightEndpoint;
++import org.apache.arrow.flight.FlightInfo;
++import org.apache.arrow.flight.Location;
++import org.apache.arrow.flight.Ticket;
++import org.apache.arrow.vector.types.FloatingPointPrecision;
++import org.apache.arrow.vector.types.pojo.ArrowType;
++import org.apache.arrow.vector.types.pojo.Field;
++import org.apache.arrow.vector.types.pojo.FieldType;
++import org.apache.arrow.vector.types.pojo.Schema;
++
++import java.nio.charset.StandardCharsets;
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.List;
++
++/**
++ * Flight SQL metadata client without a server: one schema {@code s1} with table {@code t1(id INT, k VARCHAR,
++ * price FLOAT)}; every planned query gets two endpoints. The planned SQL is recorded.
++ */
++public class MockedFlightSqlMetadataClient extends FlightSqlMetadataClient {
++    public static final String SCHEMA = "s1";
++    public static final String TABLE = "t1";
++    public static final String LOCATION = "grpc://127.0.0.1:31337";
++    public static final long ROW_COUNT = 1000;
++
++    private final List<String> executed = Collections.synchronizedList(new ArrayList<>());
++
++    public MockedFlightSqlMetadataClient(FlightProperties props) {
++        super(props);
++    }
++
++    public static Schema t1Schema() {
++        return new Schema(ImmutableList.of(
++                new Field("id", FieldType.nullable(new ArrowType.Int(32, true)), null),
++                new Field("k", FieldType.nullable(ArrowType.Utf8.INSTANCE), null),
++                new Field("price", FieldType.nullable(new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE)),
++                        null)));
++    }
++
++    @Override
++    public List<String> listSchemas() {
++        return ImmutableList.of(SCHEMA);
++    }
++
++    @Override
++    public List<String> listTables(String schema) {
++        return SCHEMA.equals(schema) ? ImmutableList.of(TABLE) : ImmutableList.of();
++    }
++
++    @Override
++    public RemoteTable getTable(String schema, String table) {
++        if (!SCHEMA.equals(schema) || !TABLE.equals(table)) {
++            return null;
++        }
++        return new RemoteTable(null, schema, table, t1Schema());
++    }
++
++    @Override
++    public FlightInfo execute(String sql) {
++        executed.add(sql);
++        Location location = Location.forGrpcInsecure("127.0.0.1", 31337);
++        List<FlightEndpoint> endpoints = ImmutableList.of(
++                new FlightEndpoint(new Ticket("e0".getBytes(StandardCharsets.UTF_8)), location),
++                new FlightEndpoint(new Ticket("e1".getBytes(StandardCharsets.UTF_8)), location));
++        return new FlightInfo(t1Schema(), FlightDescriptor.command(sql.getBytes(StandardCharsets.UTF_8)), endpoints,
++                -1, ROW_COUNT);
++    }
++
++    @Override
++    public long querySumOfLong(String sql) {
++        return ROW_COUNT;
++    }
++
++    @Override
++    public String currentLocation() {
++        return LOCATION;
++    }
++
++    public List<String> getExecuted() {
++        return ImmutableList.copyOf(executed);
++    }
++}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
 new file mode 100644
 index 00000000..118c9c55
@@ -3910,5 +4019,172 @@ index 00000000..118c9c55
 +        Assertions.assertEquals("min(\"name\")", render(FunctionSet.MIN, name, VarcharType.VARCHAR));
 +        Assertions.assertEquals("max(\"id\")", render(FunctionSet.MAX, id, IntegerType.INT));
 +        Assertions.assertNull(render(FunctionSet.MAX, price, FloatType.FLOAT));
++    }
++}
+diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
+new file mode 100644
+index 00000000..7ebbb0a1
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
+@@ -0,0 +1,161 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.sql.plan;
++
++import com.starrocks.connector.MockedMetadataMgr;
++import com.starrocks.connector.flight.FlightConnector;
++import com.starrocks.connector.flight.FlightMetadata;
++import com.starrocks.connector.flight.FlightProperties;
++import com.starrocks.connector.flight.MockedFlightSqlMetadataClient;
++import com.starrocks.server.GlobalStateMgr;
++import org.junit.jupiter.api.AfterAll;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.BeforeAll;
++import org.junit.jupiter.api.Test;
++
++import java.util.HashMap;
++import java.util.Map;
++
++/** Plans of Flight scans: the REMOTE SQL in EXPLAIN for projection, filters, LIMIT and aggregation pushdown. */
++public class FlightScanPlanTest extends PlanTestBase {
++    private static final String CATALOG = "flight0";
++    private static final String T1 = CATALOG + ".s1.t1";
++
++    @BeforeAll
++    public static void beforeClass() throws Exception {
++        PlanTestBase.beforeClass();
++        GlobalStateMgr gsm = connectContext.getGlobalStateMgr();
++        MockedMetadataMgr metadataMgr = new MockedMetadataMgr(gsm.getLocalMetastore(), gsm.getConnectorMgr());
++        gsm.setMetadataMgr(metadataMgr);
++        Map<String, String> properties = new HashMap<>();
++        properties.put("type", "flight");
++        properties.put(FlightProperties.URI, MockedFlightSqlMetadataClient.LOCATION);
++        gsm.getCatalogMgr().createCatalog("flight", CATALOG, "", properties);
++        // the scan node and the aggregation rule read the catalog properties from the (lazily created) connector
++        gsm.getConnectorMgr().getConnector(CATALOG).getMetadata();
++        Assertions.assertNotNull(FlightConnector.metadataOf(CATALOG));
++        FlightProperties props = new FlightProperties(properties);
++        metadataMgr.registerMockedMetadata(CATALOG,
++                new FlightMetadata(CATALOG, props, new MockedFlightSqlMetadataClient(props)));
++    }
++
++    @AfterAll
++    public static void afterClass() {
++        ConnectorPlanTestBase.dropCatalog(CATALOG);
++    }
++
++    private static String remoteSql(String plan) {
++        for (String line : plan.split("\n")) {
++            int i = line.indexOf("REMOTE SQL: ");
++            if (i >= 0) {
++                return line.substring(i + "REMOTE SQL: ".length()).trim();
++            }
++        }
++        Assertions.fail("no REMOTE SQL in plan:\n" + plan);
++        return null;
++    }
++
++    @Test
++    public void testProjection() throws Exception {
++        String plan = getFragmentPlan("select k, id from " + T1);
++        String sql = remoteSql(plan);
++        Assertions.assertTrue(sql.startsWith("SELECT "), sql);
++        Assertions.assertTrue(sql.endsWith(" FROM \"s1\".\"t1\""), sql);
++        assertContains(sql, "\"id\"", "\"k\"");
++        assertNotContains(sql, "\"price\"");
++        assertContains(plan, "FlightScanNode", "TABLE: s1.t1", "ENDPOINTS: 2, records=1000", "RESULT MODE: partial",
++                "PUSHED CONJUNCTS: 0/0");
++    }
++
++    @Test
++    public void testFiltersArePushedAndRechecked() throws Exception {
++        String plan = getFragmentPlan("select id from " + T1 + " where id > 10 and k = 'a'");
++        String sql = remoteSql(plan);
++        assertContains(sql, " WHERE ", "(\"id\" > 10)", "(\"k\" = 'a')");
++        assertContains(plan, "PUSHED CONJUNCTS: 2/2", "PREDICATES: ");
++    }
++
++    @Test
++    public void testLimitPushedOnlyWithAllConjuncts() throws Exception {
++        String plan = getFragmentPlan("select id from " + T1 + " limit 5");
++        Assertions.assertTrue(remoteSql(plan).endsWith(" LIMIT 5"), plan);
++        assertContains(plan, "limit pushed");
++
++        plan = getFragmentPlan("select id from " + T1 + " where id = 3 limit 5");
++        assertContains(remoteSql(plan), "WHERE (\"id\" = 3) LIMIT 5");
++
++        // FLOAT columns are never filtered remotely, so the LIMIT must stay local
++        plan = getFragmentPlan("select id from " + T1 + " where price > 1.5 limit 5");
++        String sql = remoteSql(plan);
++        assertNotContains(sql, "WHERE", "LIMIT");
++        assertContains(plan, "PUSHED CONJUNCTS: 0/1");
++        assertNotContains(plan, "limit pushed");
++    }
++
++    @Test
++    public void testCountStar() throws Exception {
++        String plan = getFragmentPlan("select count(*) from " + T1);
++        Assertions.assertEquals("SELECT count(*) AS \"__flight_agg_0\" FROM \"s1\".\"t1\"", remoteSql(plan), plan);
++        // count without GROUP BY: sum of partial counts over no rows is NULL, so it is coalesced to 0
++        assertContains(plan, "coalesce(");
++        assertNotContains(plan, "PREDICATES: ");
++    }
++
++    @Test
++    public void testGroupByWithWhereAndHaving() throws Exception {
++        String plan = getFragmentPlan("select k, count(*), sum(id), max(id) from " + T1
++                + " where id > 0 group by k having count(*) > 1");
++        String sql = remoteSql(plan);
++        assertContains(sql, "count(*) AS \"__flight_agg_", "CAST(sum(\"id\") AS BIGINT) AS \"__flight_agg_",
++                "max(\"id\") AS \"__flight_agg_", " WHERE (\"id\" > 0) GROUP BY \"k\"");
++        // the WHERE is part of the remote aggregation; the scan keeps no predicate
++        assertNotContains(plan, "PREDICATES: ", "coalesce(");
++        assertContains(plan, "having: ");
++    }
++
++    @Test
++    public void testAggregationsNotPushed() throws Exception {
++        // avg and count(distinct) are not pushed
++        String plan = getFragmentPlan("select avg(id) from " + T1);
++        assertNotContains(plan, "__flight_agg_");
++        Assertions.assertEquals("SELECT \"id\" FROM \"s1\".\"t1\"", remoteSql(plan), plan);
++
++        plan = getFragmentPlan("select count(distinct k) from " + T1);
++        assertNotContains(plan, "__flight_agg_");
++
++        // a conjunct the server cannot evaluate blocks the aggregation pushdown
++        plan = getFragmentPlan("select count(*) from " + T1 + " where price > 1.5");
++        assertNotContains(plan, "__flight_agg_");
++        assertContains(plan, "PUSHED CONJUNCTS: 0/1", "PREDICATES: ");
++    }
++
++    @Test
++    public void testSessionSwitches() throws Exception {
++        try {
++            connectContext.getSessionVariable().setFlightAggregatePushdown(false);
++            String plan = getFragmentPlan("select count(*) from " + T1);
++            assertNotContains(plan, "__flight_agg_");
++        } finally {
++            connectContext.getSessionVariable().setFlightAggregatePushdown(true);
++        }
++        try {
++            connectContext.getSessionVariable().setFlightFilterPushdown(false);
++            String plan = getFragmentPlan("select id from " + T1 + " where id > 10 limit 5");
++            assertNotContains(remoteSql(plan), "WHERE", "LIMIT");
++            assertContains(plan, "PUSHED CONJUNCTS: 0/1", "PREDICATES: ");
++        } finally {
++            connectContext.getSessionVariable().setFlightFilterPushdown(true);
++        }
 +    }
 +}
