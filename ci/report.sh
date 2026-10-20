@@ -15,7 +15,7 @@ echo "|---|---|---|---|---|---|---|---|---|---|"
 gh run list -R "$R" -L 20 --json databaseId,workflowName,headBranch,headSha,event,status,conclusion,createdAt,updatedAt,displayTitle \
   --jq '.[] | "| \(.databaseId) | \(.workflowName) | \(.headBranch) | \(.headSha[0:9]) | \(.event) | \(.status) | \(.conclusion) | \(.createdAt) | \(.updatedAt) | \(.displayTitle[0:60]) |"'
 echo
-for id in $(gh run list -R "$R" -L 8 --json databaseId,workflowName --jq '.[] | select(.workflowName=="fe" or .workflowName=="be") | .databaseId'); do
+for id in $(gh run list -R "$R" -L 8 --json databaseId,workflowName --jq '.[] | select(.workflowName=="fe" or .workflowName=="be" or .workflowName=="be-ut") | .databaseId'); do
   echo "## Run $id jobs"
   echo
   gh run view "$id" -R "$R" --json jobs --jq '.jobs[] | "- \(.name): \(.status) \(.conclusion) \(.startedAt) → \(.completedAt)"'

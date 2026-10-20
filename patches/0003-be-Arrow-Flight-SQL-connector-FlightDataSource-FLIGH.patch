@@ -83,7 +83,7 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..b7e80963
+index 00000000..aa4fb523
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
 @@ -0,0 +1,488 @@
@@ -293,10 +293,10 @@ index 00000000..b7e80963
 +        _runtime_profile->add_info_string("RemoteSql", node.remote_sql);
 +    }
 +
-+    RETURN_IF_ERROR(_start_stream());
++    // registered before the first connect, so a stalled connect or first read can be cancelled as well
 +    FlightCancelWatcher::instance()->add(this);
 +    _registered = true;
-+    return Status::OK();
++    return _start_stream();
 +}
 +
 +Status FlightDataSource::_start_stream() {

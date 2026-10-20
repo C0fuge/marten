@@ -1,0 +1,619 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: starrocks-flight <starrocks-flight@localhost>
+Date: Tue, 20 Oct 2026 19:29:59 +0000
+Subject: [PATCH] be: unit test for FlightDataSource against an in-process
+ Arrow Flight server
+
+flight_connector_test (standalone, own main: only GlobalEnv mem trackers): conversion of every mapped
+Arrow type incl. UInt64 -> LARGEINT and zoned/naive timestamps, slicing of large batches into chunks,
+failover from a refused location, no failover when disabled or on server errors, wrong token,
+connect timeout against a silent listener, cancellation of a blocked read, read limit, conjuncts.
+---
+ be/test/CMakeLists.txt                      |   3 +
+ be/test/connector/flight_connector_test.cpp | 586 ++++++++++++++++++++
+ 2 files changed, 589 insertions(+)
+ create mode 100644 be/test/connector/flight_connector_test.cpp
+
+diff --git a/be/test/CMakeLists.txt b/be/test/CMakeLists.txt
+index 4e533869..67b2a33a 100644
+--- a/be/test/CMakeLists.txt
++++ b/be/test/CMakeLists.txt
+@@ -728,3 +728,6 @@ ADD_BE_TEST(fuzzy/builtin_functions_fuzzy_test)
+ 
+ add_dependencies(starrocks_dw_test engine_storage_migration_task_test compaction_task_test builtin_functions_fuzzy_test)
+ add_dependencies(starrocks_dw_test engine_storage_migration_task_test compaction_task_test builtin_functions_fuzzy_test)
++
++# Arrow Flight connector against an in-process Flight server (own main: no storage engine or ExecEnv needed)
++ADD_BE_TEST(connector/flight_connector_test)
+diff --git a/be/test/connector/flight_connector_test.cpp b/be/test/connector/flight_connector_test.cpp
+new file mode 100644
+index 00000000..12c0dd74
+--- /dev/null
++++ b/be/test/connector/flight_connector_test.cpp
+@@ -0,0 +1,586 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++// FlightDataSource against an in-process Arrow Flight server. Standalone binary with its own main: it needs no
++// storage engine or ExecEnv, only the mem trackers of GlobalEnv.
++
++#include "connector/flight_connector.h"
++
++#include <arpa/inet.h>
++#include <arrow/builder.h>
++#include <arrow/flight/server.h>
++#include <arrow/record_batch.h>
++#include <arrow/type.h>
++#include <gtest/gtest.h>
++#include <netinet/in.h>
++#include <sys/socket.h>
++#include <unistd.h>
++
++#include <atomic>
++#include <chrono>
++#include <future>
++#include <limits>
++#include <thread>
++
++#include "column/chunk.h"
++#include "column/column.h"
++#include "column/datum.h"
++#include "common/config.h"
++#include "common/object_pool.h"
++#include "exprs/expr_context.h"
++#include "runtime/descriptor_helper.h"
++#include "runtime/descriptors.h"
++#include "runtime/exec_env.h"
++#include "runtime/runtime_state.h"
++#include "runtime/time_types.h"
++#include "testutil/assert.h"
++#include "testutil/exprs_test_helper.h"
++#include "util/cpu_info.h"
++#include "util/logging.h"
++#include "util/mem_info.h"
++#include "util/runtime_profile.h"
++
++namespace starrocks::connector {
++
++namespace fl = arrow::flight;
++
++namespace {
++
++constexpr const char* kToken = "test-token";
++
++std::shared_ptr<arrow::Array> finish(arrow::ArrayBuilder* builder) {
++    std::shared_ptr<arrow::Array> array;
++    EXPECT_TRUE(builder->Finish(&array).ok());
++    return array;
++}
++
++// one int32 column "c0" with the values start, start+1, ...
++std::shared_ptr<arrow::RecordBatch> int_batch(int start, int rows) {
++    arrow::Int32Builder b;
++    for (int i = 0; i < rows; i++) {
++        EXPECT_TRUE(b.Append(start + i).ok());
++    }
++    auto schema = arrow::schema({arrow::field("c0", arrow::int32())});
++    return arrow::RecordBatch::Make(schema, rows, {finish(&b)});
++}
++
++// Delivers its batches, then blocks (up to 20 s) until released: a server that stops sending mid-stream.
++class BlockingReader final : public arrow::RecordBatchReader {
++public:
++    BlockingReader(std::shared_ptr<arrow::RecordBatch> first, std::atomic<bool>* release)
++            : _first(std::move(first)), _release(release) {}
++    std::shared_ptr<arrow::Schema> schema() const override { return _first->schema(); }
++    arrow::Status ReadNext(std::shared_ptr<arrow::RecordBatch>* batch) override {
++        if (_first != nullptr && !_sent) {
++            _sent = true;
++            *batch = _first;
++            return arrow::Status::OK();
++        }
++        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
++        while (!_release->load() && std::chrono::steady_clock::now() < deadline) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++        }
++        *batch = nullptr;
++        return arrow::Status::OK();
++    }
++
++private:
++    std::shared_ptr<arrow::RecordBatch> _first;
++    std::atomic<bool>* _release;
++    bool _sent = false;
++};
++
++// Tickets: "types" (every mapped type, row 1 all NULL), "ints:<rows>:<batches>" (c0 = 0, 1, ...),
++// "block" (one batch of 3 rows, then the stream stalls), "error" (DoGet fails with a server error).
++class TestFlightServer final : public fl::FlightServerBase {
++public:
++    arrow::Status DoGet(const fl::ServerCallContext& context, const fl::Ticket& request,
++                        std::unique_ptr<fl::FlightDataStream>* stream) override {
++        std::string auth;
++        for (const auto& [k, v] : context.incoming_headers()) {
++            if (k == "authorization") {
++                auth = std::string(v);
++            }
++        }
++        if (auth != std::string("Bearer ") + kToken) {
++            return fl::MakeFlightError(fl::FlightStatusCode::Unauthenticated, "bad credentials");
++        }
++        num_do_get++;
++        const std::string& t = request.ticket;
++        if (t == "types") {
++            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({types_batch()}));
++            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            return arrow::Status::OK();
++        }
++        if (t.rfind("ints:", 0) == 0) {
++            int rows = std::stoi(t.substr(5));
++            int batches = std::stoi(t.substr(t.rfind(':') + 1));
++            std::vector<std::shared_ptr<arrow::RecordBatch>> list;
++            for (int i = 0; i < batches; i++) {
++                list.push_back(int_batch(i * rows, rows));
++            }
++            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make(list));
++            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            return arrow::Status::OK();
++        }
++        if (t == "block") {
++            auto reader = std::make_shared<BlockingReader>(int_batch(0, 3), &release);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            return arrow::Status::OK();
++        }
++        return arrow::Status::Invalid("no such ticket");
++    }
++
++    static std::shared_ptr<arrow::RecordBatch> types_batch() {
++        arrow::BooleanBuilder b_bool;
++        arrow::Int8Builder b_i8;
++        arrow::Int16Builder b_i16;
++        arrow::Int32Builder b_i32;
++        arrow::Int64Builder b_i64;
++        arrow::UInt8Builder b_u8;
++        arrow::UInt32Builder b_u32;
++        arrow::UInt64Builder b_u64;
++        arrow::FloatBuilder b_f32;
++        arrow::DoubleBuilder b_f64;
++        arrow::StringBuilder b_s;
++        arrow::LargeStringBuilder b_ls;
++        arrow::BinaryBuilder b_bin;
++        arrow::Date32Builder b_d;
++        auto ts_type = arrow::timestamp(arrow::TimeUnit::MICRO);
++        auto tstz_type = arrow::timestamp(arrow::TimeUnit::MILLI, "UTC");
++        auto dec_type = arrow::decimal128(10, 2);
++        arrow::TimestampBuilder b_ts(ts_type, arrow::default_memory_pool());
++        arrow::TimestampBuilder b_tstz(tstz_type, arrow::default_memory_pool());
++        arrow::Decimal128Builder b_dec(dec_type);
++
++        EXPECT_TRUE(b_bool.Append(true).ok());
++        EXPECT_TRUE(b_i8.Append(-8).ok());
++        EXPECT_TRUE(b_i16.Append(-16000).ok());
++        EXPECT_TRUE(b_i32.Append(-2000000000).ok());
++        EXPECT_TRUE(b_i64.Append(-9000000000000000000LL).ok());
++        EXPECT_TRUE(b_u8.Append(250).ok());
++        EXPECT_TRUE(b_u32.Append(4000000000U).ok());
++        EXPECT_TRUE(b_u64.Append(std::numeric_limits<uint64_t>::max()).ok());
++        EXPECT_TRUE(b_f32.Append(1.5f).ok());
++        EXPECT_TRUE(b_f64.Append(-2.25).ok());
++        EXPECT_TRUE(b_s.Append("héllo 'x'").ok());
++        EXPECT_TRUE(b_ls.Append("large").ok());
++        EXPECT_TRUE(b_bin.Append(std::string("\x00\x01\xff", 3)).ok());
++        EXPECT_TRUE(b_d.Append(19724).ok());                 // 2024-01-02
++        EXPECT_TRUE(b_ts.Append(1704164645123456LL).ok());   // 2024-01-02 03:04:05.123456 (wall clock)
++        EXPECT_TRUE(b_tstz.Append(1704153600000LL).ok());    // 2024-01-02 00:00:00 UTC
++        EXPECT_TRUE(b_dec.Append(arrow::Decimal128(-12345)).ok()); // -123.45
++
++        for (arrow::ArrayBuilder* b : std::vector<arrow::ArrayBuilder*>{
++                     &b_bool, &b_i8, &b_i16, &b_i32, &b_i64, &b_u8, &b_u32, &b_u64, &b_f32, &b_f64, &b_s, &b_ls,
++                     &b_bin, &b_d, &b_ts, &b_tstz, &b_dec}) {
++            EXPECT_TRUE(b->AppendNull().ok());
++        }
++        auto schema = arrow::schema({
++                arrow::field("c_bool", arrow::boolean()),     arrow::field("c_i8", arrow::int8()),
++                arrow::field("c_i16", arrow::int16()),        arrow::field("c_i32", arrow::int32()),
++                arrow::field("c_i64", arrow::int64()),        arrow::field("c_u8", arrow::uint8()),
++                arrow::field("c_u32", arrow::uint32()),       arrow::field("c_u64", arrow::uint64()),
++                arrow::field("c_f32", arrow::float32()),      arrow::field("c_f64", arrow::float64()),
++                arrow::field("c_s", arrow::utf8()),           arrow::field("c_ls", arrow::large_utf8()),
++                arrow::field("c_bin", arrow::binary()),       arrow::field("c_d", arrow::date32()),
++                arrow::field("c_ts", ts_type),                arrow::field("c_tstz", tstz_type),
++                arrow::field("c_dec", dec_type),
++        });
++        return arrow::RecordBatch::Make(
++                schema, 2,
++                {finish(&b_bool), finish(&b_i8), finish(&b_i16), finish(&b_i32), finish(&b_i64), finish(&b_u8),
++                 finish(&b_u32), finish(&b_u64), finish(&b_f32), finish(&b_f64), finish(&b_s), finish(&b_ls),
++                 finish(&b_bin), finish(&b_d), finish(&b_ts), finish(&b_tstz), finish(&b_dec)});
++    }
++
++    std::atomic<int> num_do_get{0};
++    std::atomic<bool> release{false};
++};
++
++// A port with nothing listening (connection refused).
++int closed_port() {
++    int fd = socket(AF_INET, SOCK_STREAM, 0);
++    sockaddr_in addr{};
++    addr.sin_family = AF_INET;
++    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++    addr.sin_port = 0;
++    CHECK_EQ(0, bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)));
++    socklen_t len = sizeof(addr);
++    CHECK_EQ(0, getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len));
++    close(fd);
++    return ntohs(addr.sin_port);
++}
++
++// A socket that completes TCP connects (kernel backlog) but never answers: the gRPC handshake stalls.
++struct SilentListener {
++    int fd = -1;
++    int port = 0;
++    SilentListener() {
++        fd = socket(AF_INET, SOCK_STREAM, 0);
++        sockaddr_in addr{};
++        addr.sin_family = AF_INET;
++        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++        addr.sin_port = 0;
++        CHECK_EQ(0, bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)));
++        CHECK_EQ(0, listen(fd, 16));
++        socklen_t len = sizeof(addr);
++        CHECK_EQ(0, getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len));
++        port = ntohs(addr.sin_port);
++    }
++    ~SilentListener() { close(fd); }
++};
++
++struct SlotSpec {
++    std::string name;
++    TypeDescriptor type;
++};
++
++} // namespace
++
++class FlightConnectorTest : public ::testing::Test {
++protected:
++    void SetUp() override {
++        _server = std::make_unique<TestFlightServer>();
++        auto location = fl::Location::ForGrpcTcp("127.0.0.1", 0);
++        ASSERT_TRUE(location.ok()) << location.status().ToString();
++        fl::FlightServerOptions options(*location);
++        auto st = _server->Init(options);
++        ASSERT_TRUE(st.ok()) << st.ToString();
++        _uri = "grpc://127.0.0.1:" + std::to_string(_server->port());
++        _profile = std::make_unique<RuntimeProfile>("test");
++    }
++
++    void TearDown() override {
++        _server->release = true;
++        auto deadline = std::chrono::system_clock::now() + std::chrono::seconds(5);
++        (void)_server->Shutdown(&deadline);
++        (void)_server->Wait();
++    }
++
++    void create_state(const std::vector<SlotSpec>& slots, int chunk_size = 4096) {
++        TUniqueId fragment_id;
++        TQueryOptions query_options;
++        query_options.__set_batch_size(chunk_size);
++        TQueryGlobals query_globals;
++        query_globals.__set_time_zone("+03:00");
++        _state = _pool.add(new RuntimeState(fragment_id, query_options, query_globals, nullptr));
++        _state->init_instance_mem_tracker();
++
++        TDescriptorTableBuilder table_builder;
++        TTupleDescriptorBuilder tuple_builder;
++        for (size_t i = 0; i < slots.size(); i++) {
++            TSlotDescriptorBuilder slot_builder;
++            slot_builder.column_name(slots[i].name).type(slots[i].type).id(static_cast<int>(i)).nullable(true);
++            tuple_builder.add_slot(slot_builder.build());
++        }
++        tuple_builder.build(&table_builder);
++        DescriptorTbl* tbl = nullptr;
++        ASSERT_TRUE(DescriptorTbl::create(_state, &_pool, table_builder.desc_tbl(), &tbl, chunk_size).ok());
++        _state->set_desc_tbl(tbl);
++
++        _tnode = TPlanNode();
++        TFlightScanNode node;
++        node.__set_tuple_id(0);
++        std::vector<std::string> names;
++        for (const auto& s : slots) {
++            names.push_back(s.name);
++        }
++        node.__set_field_names(names);
++        node.__set_default_location(_uri);
++        node.__set_bearer_token(kToken);
++        node.__set_connect_timeout_ms(1000);
++        node.__set_location_failover(true);
++        node.__set_call_headers({{"x-flight-result-mode", "partial"}});
++        _tnode.__set_flight_scan_node(node);
++    }
++
++    std::unique_ptr<FlightDataSource> create_source(const std::string& ticket,
++                                                    const std::vector<std::string>& locations = {}) {
++        _provider = std::make_unique<FlightDataSourceProvider>(nullptr, _tnode);
++        TScanRange range;
++        TFlightScanRange flight_range;
++        flight_range.__set_ticket(ticket);
++        flight_range.__set_locations(locations);
++        flight_range.__set_endpoint_index(0);
++        range.__set_flight_scan_range(flight_range);
++        auto source = std::make_unique<FlightDataSource>(_provider.get(), range);
++        source->set_runtime_profile(_profile.get());
++        return source;
++    }
++
++    // reads to the end; returns the total number of rows and the chunk sizes
++    Status read_all(FlightDataSource* source, std::vector<ChunkPtr>* chunks) {
++        while (true) {
++            ChunkPtr chunk;
++            Status st = source->get_next(_state, &chunk);
++            if (st.is_end_of_file()) {
++                return Status::OK();
++            }
++            RETURN_IF_ERROR(st);
++            chunks->push_back(chunk);
++        }
++    }
++
++    static std::vector<SlotSpec> int_slots() { return {{"c0", TypeDescriptor(TYPE_INT)}}; }
++
++    int64_t failover_count() {
++        auto* child = _profile->get_child(DataSource::PROFILE_NAME);
++        if (child == nullptr) {
++            return -1;
++        }
++        auto* counter = child->get_counter("FailoverCount");
++        return counter == nullptr ? -1 : counter->value();
++    }
++
++    ObjectPool _pool;
++    RuntimeState* _state = nullptr;
++    TPlanNode _tnode;
++    std::unique_ptr<FlightDataSourceProvider> _provider;
++    std::unique_ptr<RuntimeProfile> _profile;
++    std::unique_ptr<TestFlightServer> _server;
++    std::string _uri;
++};
++
++TEST_F(FlightConnectorTest, ConvertsMappedTypes) {
++    std::vector<SlotSpec> slots = {
++            {"c_bool", TypeDescriptor(TYPE_BOOLEAN)},
++            {"c_i8", TypeDescriptor(TYPE_TINYINT)},
++            {"c_i16", TypeDescriptor(TYPE_SMALLINT)},
++            {"c_i32", TypeDescriptor(TYPE_INT)},
++            {"c_i64", TypeDescriptor(TYPE_BIGINT)},
++            {"c_u8", TypeDescriptor(TYPE_SMALLINT)},
++            {"c_u32", TypeDescriptor(TYPE_BIGINT)},
++            {"c_u64", TypeDescriptor(TYPE_LARGEINT)},
++            {"c_f32", TypeDescriptor(TYPE_FLOAT)},
++            {"c_f64", TypeDescriptor(TYPE_DOUBLE)},
++            {"c_s", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_ls", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_bin", TypeDescriptor::create_varbinary_type(1048576)},
++            {"c_d", TypeDescriptor(TYPE_DATE)},
++            {"c_ts", TypeDescriptor(TYPE_DATETIME)},
++            {"c_tstz", TypeDescriptor(TYPE_DATETIME)},
++            {"c_dec", TypeDescriptor::create_decimalv3_type(TYPE_DECIMAL64, 10, 2)},
++    };
++    create_state(slots);
++    auto source = create_source("types");
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    ASSERT_EQ(1, chunks.size());
++    const ChunkPtr& chunk = chunks[0];
++    ASSERT_EQ(2, chunk->num_rows());
++    auto value = [&](int slot) { return chunk->get_column_by_slot_id(slot)->get(0); };
++
++    EXPECT_EQ(1, value(0).get_uint8());
++    EXPECT_EQ(-8, value(1).get_int8());
++    EXPECT_EQ(-16000, value(2).get_int16());
++    EXPECT_EQ(-2000000000, value(3).get_int32());
++    EXPECT_EQ(-9000000000000000000LL, value(4).get_int64());
++    EXPECT_EQ(250, value(5).get_int16());
++    EXPECT_EQ(4000000000LL, value(6).get_int64());
++    // UInt64 -> LARGEINT must widen, not wrap
++    EXPECT_TRUE(value(7).get_int128() == static_cast<int128_t>(std::numeric_limits<uint64_t>::max()));
++    EXPECT_FLOAT_EQ(1.5f, value(8).get_float());
++    EXPECT_DOUBLE_EQ(-2.25, value(9).get_double());
++    EXPECT_EQ("héllo 'x'", value(10).get_slice().to_string());
++    EXPECT_EQ("large", value(11).get_slice().to_string());
++    EXPECT_EQ(std::string("\x00\x01\xff", 3), value(12).get_slice().to_string());
++    EXPECT_EQ("2024-01-02", value(13).get_date().to_string());
++    // timestamp without zone: wall clock kept whatever the session zone (+03:00)
++    EXPECT_EQ("2024-01-02 03:04:05.123456", value(14).get_timestamp().to_string());
++    // timestamp with zone: shown in the session zone
++    EXPECT_EQ("2024-01-02 03:00:00", value(15).get_timestamp().to_string());
++    EXPECT_EQ(-12345, value(16).get_int64());
++
++    for (int slot = 0; slot < static_cast<int>(slots.size()); slot++) {
++        EXPECT_TRUE(chunk->get_column_by_slot_id(slot)->get(1).is_null()) << slots[slot].name;
++    }
++    EXPECT_EQ(2, source->raw_rows_read());
++}
++
++TEST_F(FlightConnectorTest, SlicesLargeBatchesIntoChunks) {
++    create_state(int_slots(), 1000);
++    auto source = create_source("ints:2500:2");
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    std::vector<size_t> sizes;
++    int64_t sum = 0;
++    for (const auto& c : chunks) {
++        sizes.push_back(c->num_rows());
++        for (size_t i = 0; i < c->num_rows(); i++) {
++            sum += c->get_column_by_slot_id(0)->get(i).get_int32();
++        }
++    }
++    EXPECT_EQ((std::vector<size_t>{1000, 1000, 500, 1000, 1000, 500}), sizes);
++    EXPECT_EQ(int64_t(4999) * 5000 / 2, sum);
++}
++
++TEST_F(FlightConnectorTest, FailsOverFromRefusedLocation) {
++    create_state(int_slots());
++    std::string refused = "grpc://127.0.0.1:" + std::to_string(closed_port());
++    auto source = create_source("ints:10:1", {refused, _uri});
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    ASSERT_EQ(1, chunks.size());
++    EXPECT_EQ(10, chunks[0]->num_rows());
++    EXPECT_EQ(1, failover_count());
++    EXPECT_EQ(1, _server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, NoFailoverWhenDisabled) {
++    create_state(int_slots());
++    _tnode.flight_scan_node.__set_location_failover(false);
++    std::string refused = "grpc://127.0.0.1:" + std::to_string(closed_port());
++    auto source = create_source("ints:10:1", {refused, _uri});
++    Status st = source->open(_state);
++    source->close(_state);
++    EXPECT_FALSE(st.ok());
++    EXPECT_EQ(0, _server->num_do_get.load());
++}
++
++TEST_F(FlightConnectorTest, ServerErrorIsNotFailedOver) {
++    create_state(int_slots());
++    auto source = create_source("error", {_uri, _uri});
++    Status st = source->open(_state);
++    source->close(_state);
++    ASSERT_FALSE(st.ok());
++    EXPECT_NE(std::string::npos, st.message().find("no such ticket")) << st;
++    EXPECT_EQ(0, failover_count());
++}
++
++TEST_F(FlightConnectorTest, WrongTokenFailsWithoutLeakingIt) {
++    create_state(int_slots());
++    _tnode.flight_scan_node.__set_bearer_token("wrong-secret");
++    auto source = create_source("ints:10:1");
++    Status st = source->open(_state);
++    source->close(_state);
++    ASSERT_FALSE(st.ok());
++    EXPECT_EQ(std::string::npos, st.to_string().find("wrong-secret")) << st;
++}
++
++TEST_F(FlightConnectorTest, ConnectTimeoutFailsOverFromSilentLocation) {
++    create_state(int_slots());
++    SilentListener silent;
++    auto source = create_source("ints:10:1", {"grpc://127.0.0.1:" + std::to_string(silent.port), _uri});
++    // safety net: a connect that never times out is cancelled after 30 s instead of hanging the test
++    std::atomic<bool> done{false};
++    std::thread guard([&] {
++        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
++        while (!done && std::chrono::steady_clock::now() < deadline) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(50));
++        }
++        if (!done) {
++            _state->set_is_cancelled(true);
++        }
++    });
++    auto start = std::chrono::steady_clock::now();
++    Status st = source->open(_state);
++    auto elapsed_ms =
++            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
++    done = true;
++    guard.join();
++    LOG(INFO) << "open with a silent first location took " << elapsed_ms << " ms: " << st;
++    ASSERT_OK(st);
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    EXPECT_EQ(1, failover_count());
++    EXPECT_LT(elapsed_ms, 10000);
++}
++
++TEST_F(FlightConnectorTest, CancelWakesBlockedRead) {
++    create_state(int_slots());
++    auto source = create_source("block");
++    ASSERT_OK(source->open(_state));
++    ChunkPtr chunk;
++    ASSERT_OK(source->get_next(_state, &chunk));
++    EXPECT_EQ(3, chunk->num_rows());
++
++    std::thread canceller([&] {
++        std::this_thread::sleep_for(std::chrono::milliseconds(300));
++        _state->set_is_cancelled(true);
++    });
++    auto start = std::chrono::steady_clock::now();
++    Status st = source->get_next(_state, &chunk);
++    auto elapsed_ms =
++            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
++    canceller.join();
++    source->close(_state);
++    EXPECT_TRUE(st.is_cancelled()) << st;
++    // watcher period 200 ms + the 300 ms delay; the server would stall for 20 s
++    EXPECT_LT(elapsed_ms, 3000);
++}
++
++TEST_F(FlightConnectorTest, StopsAtReadLimit) {
++    create_state(int_slots());
++    auto source = create_source("ints:10:3");
++    source->set_read_limit(5);
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    ASSERT_EQ(1, chunks.size());
++    EXPECT_EQ(10, chunks[0]->num_rows());
++    EXPECT_EQ(10, source->raw_rows_read());
++}
++
++TEST_F(FlightConnectorTest, EvaluatesConjuncts) {
++    create_state(int_slots());
++    std::vector<TExpr> texprs{ExprsTestHelper::create_binary_pred_texpr<TYPE_INT, int>(0, 25)}; // c0 > 25
++    std::vector<ExprContext*> conjuncts;
++    ASSERT_OK(ExprsTestHelper::create_and_open_conjunct_ctxs(&_pool, _state, &texprs, &conjuncts));
++    auto source = create_source("ints:10:3");
++    source->set_predicates(conjuncts);
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    std::vector<int32_t> values;
++    for (const auto& c : chunks) {
++        for (size_t i = 0; i < c->num_rows(); i++) {
++            values.push_back(c->get_column_by_slot_id(0)->get(i).get_int32());
++        }
++    }
++    EXPECT_EQ((std::vector<int32_t>{26, 27, 28, 29}), values);
++    EXPECT_EQ(30, source->raw_rows_read());
++    EXPECT_EQ(4, source->num_rows_read());
++    Expr::close(conjuncts, _state);
++}
++
++} // namespace starrocks::connector
++
++int main(int argc, char** argv) {
++    ::testing::InitGoogleTest(&argc, argv);
++    std::stringstream empty_conf;
++    if (!starrocks::config::init(empty_conf)) {
++        fprintf(stderr, "config init failed\n");
++        return 1;
++    }
++    starrocks::init_glog("flight_connector_test", true);
++    starrocks::CpuInfo::init();
++    starrocks::MemInfo::init();
++    starrocks::date::init_date_cache();
++    auto st = starrocks::GlobalEnv::GetInstance()->init();
++    if (!st.ok()) {
++        fprintf(stderr, "GlobalEnv init failed: %s\n", st.to_string().c_str());
++        return 1;
++    }
++    return RUN_ALL_TESTS();
++}

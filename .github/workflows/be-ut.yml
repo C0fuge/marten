@@ -1,0 +1,60 @@
+# BE unit test flight_connector_test (FlightDataSource against an in-process Arrow Flight server), built in
+# the Release tree with the BE ccache (ci/build-be-ut.sh). Reads the ccache of be.yml, never saves it.
+name: be-ut
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "gtest filter"
+        default: "*"
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - "patches/*-thrift-*"
+      - "patches/*-be-*"
+      - "ci/build-be-ut.sh"
+      - ".github/workflows/be-ut.yml"
+
+concurrency:
+  group: be-ut-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Runner setup
+        run: ci/runner-setup.sh
+      - name: Pull builder image
+        run: |
+          . ci/env.sh
+          docker pull --quiet "$DEV_IMAGE" &
+          scripts/prepare-source.sh "$WORK/src"
+          wait
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-ccache
+          key: ccache-be-none
+          restore-keys: ccache-be-
+      - name: Build and run flight_connector_test
+        run: |
+          . ci/env.sh
+          mkdir -p /home/runner/sr-ccache
+          docker run --rm --init --name sr-be-ut \
+            -v "$WORK/src:/workspace" -v "$PWD/ci:/ci:ro" -v "/home/runner/sr-ccache:/ccache" \
+            -e JOBS="$(nproc)" -e GTEST_FILTER="${{ inputs.filter || '*' }}" \
+            "$DEV_IMAGE" /ci/build-be-ut.sh
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: be-ut-report-${{ github.run_id }}
+          path: ${{ env.WORK }}/src/ut-report/
+          if-no-files-found: ignore
+          retention-days: 7
