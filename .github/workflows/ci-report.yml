@@ -3,7 +3,7 @@
 name: ci-report
 on:
   workflow_run:
-    workflows: [fe, be, be-ut]
+    workflows: [fe, be, be-ut, release]
     types: [requested, completed]
   workflow_dispatch:
   workflow_call:
