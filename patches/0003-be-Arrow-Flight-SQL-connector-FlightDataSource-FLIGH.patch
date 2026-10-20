@@ -13,11 +13,11 @@ and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescrip
  be/src/connector/CMakeLists.txt       |   1 +
  be/src/connector/connector.cpp        |   3 +
  be/src/connector/connector.h          |   2 +
- be/src/connector/flight_connector.cpp | 460 ++++++++++++++++++++++++++
- be/src/connector/flight_connector.h   | 137 ++++++++
+ be/src/connector/flight_connector.cpp | 482 ++++++++++++++++++++++++++
+ be/src/connector/flight_connector.h   | 146 ++++++++
  be/src/exec/exec_node.cpp             |   7 +
  be/src/runtime/descriptors.cpp        |   5 +
- 7 files changed, 615 insertions(+)
+ 7 files changed, 646 insertions(+)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -83,10 +83,10 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..9a06af88
+index 00000000..b8cc1603
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,460 @@
+@@ -0,0 +1,482 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -349,13 +349,15 @@ index 00000000..9a06af88
 +    for (const auto& [k, v] : node.call_headers) {
 +        call.headers.emplace_back(k, v);
 +    }
-+    if (node.__isset.rpc_timeout_ms && node.rpc_timeout_ms > 0) {
-+        call.timeout = fl::TimeoutDuration(static_cast<double>(node.rpc_timeout_ms) / 1000.0);
-+    }
 +    if (node.__isset.bearer_token && !node.bearer_token.empty()) {
 +        call.headers.emplace_back("authorization", "Bearer " + node.bearer_token);
 +    } else if (node.__isset.user && !node.user.empty()) {
-+        ARROW_ASSIGN_OR_RAISE(auto header, _client->AuthenticateBasicToken(call, node.user, node.password));
++        // rpc_timeout_ms bounds unary calls only; DoGet streams for as long as the endpoint needs
++        fl::FlightCallOptions auth = call;
++        if (node.__isset.rpc_timeout_ms && node.rpc_timeout_ms > 0) {
++            auth.timeout = fl::TimeoutDuration(static_cast<double>(node.rpc_timeout_ms) / 1000.0);
++        }
++        ARROW_ASSIGN_OR_RAISE(auto header, _client->AuthenticateBasicToken(auth, node.user, node.password));
 +        if (!header.first.empty()) {
 +            call.headers.push_back(header);
 +        }
@@ -374,6 +376,11 @@ index 00000000..9a06af88
 +    if (!st.ok()) {
 +        return arrow::Status::Invalid(std::string(st.message()));
 +    }
++    // a new stream (also after failover) gets new converters, built from its first batch
++    _conv_funcs.clear();
++    _cast_exprs.clear();
++    _column_protos.clear();
++    _conv_pool.clear();
 +    return arrow::Status::OK();
 +}
 +
@@ -466,20 +473,35 @@ index 00000000..9a06af88
 +Status FlightDataSource::_convert(size_t num_rows, ChunkPtr* chunk) {
 +    SCOPED_RAW_TIMER(&_cpu_time_ns);
 +    SCOPED_TIMER(_convert_timer);
-+    ObjectPool pool;
++    if (_conv_funcs.empty()) {
++        // the Arrow types are fixed for the stream: build converters and cast exprs once
++        std::vector<std::unique_ptr<ConvertFuncTree>> conv_funcs;
++        std::vector<Expr*> cast_exprs;
++        std::vector<MutableColumnPtr> column_protos;
++        for (size_t i = 0; i < _slots.size(); i++) {
++            const auto& array = _batch->column(static_cast<int>(i));
++            auto conv_func = std::make_unique<ConvertFuncTree>();
++            MutableColumnPtr column;
++            Expr* expr = nullptr;
++            RETURN_IF_ERROR(ParquetScanner::new_column(array->type().get(), _slots[i], &column, conv_func.get(), &expr,
++                                                       _conv_pool, false));
++            conv_funcs.push_back(std::move(conv_func));
++            cast_exprs.push_back(expr);
++            column_protos.push_back(std::move(column));
++        }
++        _conv_funcs = std::move(conv_funcs);
++        _cast_exprs = std::move(cast_exprs);
++        _column_protos = std::move(column_protos);
++    }
 +    auto src = std::make_shared<Chunk>();
 +    Filter filter(num_rows, 1);
-+    std::vector<Expr*> exprs(_slots.size(), nullptr);
 +    for (size_t i = 0; i < _slots.size(); i++) {
 +        SlotDescriptor* slot = _slots[i];
 +        const auto& array = _batch->column(static_cast<int>(i));
-+        MutableColumnPtr column;
-+        ConvertFuncTree conv_func;
-+        RETURN_IF_ERROR(
-+                ParquetScanner::new_column(array->type().get(), slot, &column, &conv_func, &exprs[i], pool, false));
++        MutableColumnPtr column = _column_protos[i]->clone_empty();
 +        column->reserve(num_rows);
 +        _conv_ctx.current_slot = slot;
-+        Status st = ParquetScanner::convert_array_to_column(&conv_func, num_rows, array.get(), column.get(),
++        Status st = ParquetScanner::convert_array_to_column(_conv_funcs[i].get(), num_rows, array.get(), column.get(),
 +                                                            _batch_offset, 0, &filter, &_conv_ctx);
 +        if (!st.ok()) {
 +            return st.clone_and_prepend(fmt::format("Flight column {}", slot->col_name()));
@@ -492,7 +514,7 @@ index 00000000..9a06af88
 +    auto dest = std::make_shared<Chunk>();
 +    for (size_t i = 0; i < _slots.size(); i++) {
 +        SlotDescriptor* slot = _slots[i];
-+        ASSIGN_OR_RETURN(auto column, exprs[i]->evaluate_checked(nullptr, src.get()));
++        ASSIGN_OR_RETURN(auto column, _cast_exprs[i]->evaluate_checked(nullptr, src.get()));
 +        column = ColumnHelper::unfold_const_column(slot->type(), src->num_rows(), std::move(column));
 +        dest->append_column(std::move(column), slot->id());
 +    }
@@ -549,10 +571,10 @@ index 00000000..9a06af88
 +} // namespace starrocks::connector
 diff --git a/be/src/connector/flight_connector.h b/be/src/connector/flight_connector.h
 new file mode 100644
-index 00000000..2adf2944
+index 00000000..f3d2db03
 --- /dev/null
 +++ b/be/src/connector/flight_connector.h
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,146 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -588,6 +610,10 @@ index 00000000..2adf2944
 +class FlightStreamReader;
 +} // namespace flight
 +} // namespace arrow
++
++namespace starrocks {
++class Expr;
++} // namespace starrocks
 +
 +namespace starrocks::connector {
 +
@@ -672,6 +698,11 @@ index 00000000..2adf2944
 +    bool _eof = false;
 +
 +    ArrowConvertContext _conv_ctx;
++    // per stream: one converter, cast expr and empty column prototype per slot
++    ObjectPool _conv_pool;
++    std::vector<std::unique_ptr<ConvertFuncTree>> _conv_funcs;
++    std::vector<Expr*> _cast_exprs;
++    std::vector<MutableColumnPtr> _column_protos;
 +
 +    int64_t _rows_read = 0;
 +    int64_t _rows_returned = 0;
