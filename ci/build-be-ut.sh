@@ -45,6 +45,10 @@ if [ ! -x "$bin" ]; then
 fi
 ls -la "$bin"
 mkdir -p /workspace/ut-report
+# starrocks_be links libjvm.so dynamically (JNI connectors); start_backend.sh puts it on the path the same way
+jvm_dir=$(dirname "$(find "${JAVA_HOME:-/usr/lib/jvm}/" /usr/lib/jvm/ -name libjvm.so 2>/dev/null | head -1)")
+export LD_LIBRARY_PATH="$jvm_dir:${LD_LIBRARY_PATH:-}"
+echo "libjvm.so from $jvm_dir"
 "$bin" --gtest_filter="${GTEST_FILTER:-*}" --gtest_output=xml:/workspace/ut-report/$TEST.xml 2>&1 |
     tee /workspace/ut-report/$TEST.log
 exit "${PIPESTATUS[0]}"
