@@ -9,21 +9,22 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 |---|---|---|
 | M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | **done**: FE run 39408957469; full BE (4.1.4 + thrift patch) run 39412648088, one job, Build BE 11:10–12:40 UTC (90 min, 4 vCPU, partly warm ccache); incremental BE with patch 0003: run 39447876098, Build BE 7 min |
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
-| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector patch 0003 **compiles and links** (runs 39447876098, 39453716203, 39465826698 with the connect timeout); untested until M4 |
+| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **10/10 green** (be-ut run 39489468073); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
 | M4 | Bench tests on the maintainer's local stand | not in the cloud; test SQL prepared in `docs/M4-TESTS.md` |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series split into the final 6 patches; release workflow todo |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches (0007 = BE unit test); release workflow todo |
 
 ## Patch series (on tag 4.1.4)
 
 | Patch | Content | State |
 |---|---|---|
 | 0001 thrift | TFlightScanNode, TFlightScanRange, TTableType FLIGHT_TABLE (free ids per RESEARCH.md) | done |
-| 0002 fe connector | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient, FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`, Table, ConnectorType; Authorizer, StmtExecutor (catalog type); masking (PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs) | compiles (with the series) |
-| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, connect timeout via `grpc.min_reconnect_backoff_ms`, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it) | compiles + links (run 39465826698, artifact of the current version) |
+| 0002 fe connector | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient (connect probe: ListActions bounded by `flight.connect_timeout_ms`), FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`, Table, ConnectorType; Authorizer, StmtExecutor (catalog type); masking (PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs) | compiles (with the series) |
+| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, connect timeout via `grpc.min_reconnect_backoff_ms`, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source; registered with the cancel watcher before the first connect), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it) | compiles + links (run 39484148997, artifact of the current version) |
 | 0004 fe optimizer/planner | `planner/FlightScanNode`; Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, **FlightAggregationPushdownRule** (rewriteOnce in QueryOptimizer after RewriteSimpleAggToHDFSScanRule), edits in OperatorType, visitors, RuleSet/RuleType, MultiOpPattern, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, PlanFragmentBuilder, Explain, LogicalPlanPrinter; SessionVariable `flight_filter_pushdown`, `flight_aggregate_pushdown` | compiles |
 | 0005 fe | PushDownTopNToPreAggRule: ORDER BY must cover all GROUP BY keys; PushDownTopNToPreAggRuleTest | test passes (run 39453420117) |
-| 0006 fe tests | FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest, FlightScanPlanTest (+ MockedFlightSqlMetadataClient: Flight SQL metadata without a server) | 22 tests pass (runs 39447425479, 39465778230) |
+| 0006 fe tests | FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest, FlightScanPlanTest (+ MockedFlightSqlMetadataClient: Flight SQL metadata without a server), FlightSqlMetadataClientTest (in-process Java Flight server: failover from a silent / refused URI, no failover on server errors) | all pass (FE run 39484391882) |
+| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts | 10/10 pass (be-ut run 39489468073) |
 
 The split (2026-10-20) left the patched source tree byte-identical; 0001 and 0003 files are unchanged. Patches 0002
 and 0004 are only built as part of the whole series (0002 alone has no reference to 0004's classes).
@@ -31,7 +32,11 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## CI
 
-- `fe.yml`: FE jars (~12 min with warm Maven cache). `be.yml`: `starrocks_be`, chained jobs `part1..part4` (each
+- `fe.yml`: FE jars (~12 min with warm Maven cache). `be-ut.yml`: `flight_connector_test` (~6 min: restores
+  the newest `ccache-be-*` read-only, builds the Release tree with the test target appended to be/CMakeLists.txt
+  by `ci/build-be-ut.sh` — the upstream MAKE_TEST/ASAN UT build would share nothing with our ccache — and runs
+  it; report artifact `be-ut-report-<run>`). Runs on pushes of thrift/be patches or its own files, or via
+  `be-ut` in `ci/dispatch.txt` (input `filter` = gtest filter). `be.yml`: `starrocks_be`, chained jobs `part1..part4` (each
   < 6 h, ccache carried in actions/cache); if 4 parts are not enough the run re-dispatches itself.
 - Builds are skipped when an output for the same input hash is cached (`fe-out-<hash>`, `be-out-<hash>`).
 - Push-triggered builds (branches `main` and `claude/**`) react only to their patch areas (`*-thrift-*`,
@@ -75,20 +80,36 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   tree identical, same FE input hash);
   the split series applies and builds, and the 6 FE test classes pass (FE run 39470578122). Session ended 18:07 UTC.
 
+- 2026-10-20 19:16–20:20 UTC (cloud session): Next step 1 done. BE unit test `flight_connector_test` (new patch
+  0007) against an in-process `arrow::flight::FlightServerBase`: all mapped types convert as designed (UInt8→SMALLINT
+  and UInt64→LARGEINT widen, naive timestamp keeps its wall clock, zoned timestamp is shown in the session zone,
+  DECIMAL128→DECIMAL64, VARBINARY), batches are sliced to chunk_size, failover from a refused location (1 DoGet),
+  none when disabled or on a server error, wrong token fails without the token in the message, a silent location
+  (TCP accepted, no HTTP/2) fails over after 1004 ms with `connect_timeout_ms`=1000 (so
+  `grpc.min_reconnect_backoff_ms` does bound the connect on gRPC 1.43; risk R3 settled), cancel wakes a blocked
+  read in ~400 ms, read limit and conjuncts work: 10/10 (be-ut run 39489468073). Found while writing it: a stalled
+  connect/first read in `open()` was not cancellable (the source registered with the cancel watcher only after
+  the stream started); fixed in 0003 (BE run 39484148997 green). New CI job `be-ut.yml` + `ci/build-be-ut.sh`
+  (Release tree + appended test target, BE ccache read-only, ~4 min); runs 39484149185, 39484779489, 39486204186,
+  39487039672, 39487742279, 39488591786 failed on CI plumbing (build.sh `--module` takes no argument, protected
+  member → `-fno-access-control`, libjvm/libjemalloc path, config env vars). Next step 2 done as well: the FE
+  metadata client probes a new connection with ListActions bounded by `flight.connect_timeout_ms` (any answer =
+  reachable) and fails over otherwise; FlightSqlMetadataClientTest (in-process Java Flight server, silent /
+  refused URI, no failover on server errors) + the other 6 FE test classes green (FE run 39484391882).
+
 ## Next steps
 
-1. BE unit test for FlightDataSource against an in-process Arrow Flight server (arrow::flight::FlightServerBase is
-   in the thirdparty build): conversion of the mapped types, location failover (first location refused), connect
-   timeout, cancellation during a blocked read, LIMIT/conjuncts. Needs a `be-ut` CI job that builds only the needed
-   test target (check how `run-be-ut.sh` / `be/test/CMakeLists.txt` can be restricted; keep it incremental with the
-   ccache of be.yml).
-2. FE: the metadata client (FlightSqlMetadataClient) has no connect timeout either; FlightClient.Builder has no
-   option for it in Arrow Java 18 — check the gRPC channel builder route or a deadline on the first call.
-3. M5: release workflow (GitHub Release with fe-jars + starrocks_be.zst + patches) once M4 passes; README/INSTALL
-   final check (patch list now 6 files).
+1. M5: release workflow (manual dispatch only: GitHub Release with fe-jars + starrocks_be.zst + patches +
+   build-info) — can be written and dry-run now (e.g. as a draft release), published once M4 passes;
+   README/INSTALL final check (patch list now 7 files, 0007 = BE test only, not needed at runtime).
+2. Optional hardening while M4 is pending: BE test cases for basic auth (user/password handshake) and TLS
+   (`grpc+tls` with a generated self-signed cert and `tls_root_certs` / `tls_verify=false`); reuse
+   `flight_connector_test` (only patch 0007 changes → BE build is a ccache-only rebuild, be-ut ~4 min).
+3. React to M4 results from the maintainer (failures go here as new steps).
 
 ## Open questions for the maintainer
 
-- Not a decision, a heads-up: a first M4 smoke is possible now with `fe-jars-a98b4da77859eeaf` (run 39465778230)
-  and `starrocks_be-*` of run 39465826698 (artifacts kept 7 days), installed per `docs/INSTALL.md` (the allin1
-  image paths there are unverified), queries in `docs/M4-TESTS.md`. Nothing in the cloud work depends on it.
+- Not a decision, a heads-up: a first M4 smoke is possible now with the `fe-jars-*` artifact of FE run 39484391882
+  and the `starrocks_be-*` artifact of BE run 39484148997 (artifacts kept 7 days; both from the current series),
+  installed per `docs/INSTALL.md` (the allin1 image paths there are unverified), queries in `docs/M4-TESTS.md`.
+  Nothing in the cloud work depends on it.
