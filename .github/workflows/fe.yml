@@ -12,7 +12,7 @@ on:
         description: "fe-core test classes to run after the build (comma-separated, optional)"
         default: ""
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
     paths:
       - "patches/*-thrift-*"
       - "patches/*-fe-*"

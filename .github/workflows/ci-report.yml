@@ -1,0 +1,39 @@
+# Publishes ci/report.sh output to branch `ci-status` (STATUS-CI.md), so a session without Actions API access
+# can follow builds with `git fetch origin ci-status && git show origin/ci-status:STATUS-CI.md`.
+name: ci-report
+on:
+  workflow_run:
+    workflows: [fe, be]
+    types: [requested, completed]
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ci-report
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: ci
+      - name: Build report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT_TRIGGER: ${{ github.event_name }} ${{ github.event.workflow_run.name }} ${{ github.event.workflow_run.conclusion }}
+        run: ci/report.sh > "$RUNNER_TEMP/STATUS-CI.md"
+      - name: Push to ci-status
+        run: |
+          d=$RUNNER_TEMP/ci-status; mkdir -p "$d"; cd "$d"
+          git init -q -b ci-status
+          cp "$RUNNER_TEMP/STATUS-CI.md" .
+          git add STATUS-CI.md
+          git -c user.name=ci-report -c user.email=ci-report@localhost commit -q -m "CI status $(date -u +%FT%TZ)"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" ci-status

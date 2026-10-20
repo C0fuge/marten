@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: C0fuge <189659128+C0fuge@users.noreply.github.com>
+Date: Tue, 20 Oct 2026 13:36:45 +0300
+Subject: [PATCH] thrift: Arrow Flight scan node, scan range and table type
+
+Adds TFlightScanNode (TPlanNode field 86), TFlightScanRange (TScanRange field 31),
+TPlanNodeType.FLIGHT_SCAN_NODE and TTableType.FLIGHT_TABLE for the native Arrow Flight SQL
+external catalog.
+---
+ gensrc/thrift/PlanNodes.thrift | 47 +++++++++++++++++++++++++++++++++-
+ gensrc/thrift/Types.thrift     |  3 ++-
+ 2 files changed, 48 insertions(+), 2 deletions(-)
+
+diff --git a/gensrc/thrift/PlanNodes.thrift b/gensrc/thrift/PlanNodes.thrift
+index 1584c3d2..3b746a96 100644
+--- a/gensrc/thrift/PlanNodes.thrift
++++ b/gensrc/thrift/PlanNodes.thrift
+@@ -89,7 +89,8 @@ enum TPlanNodeType {
+   FETCH_NODE,
+   LOOKUP_NODE,
+   BENCHMARK_SCAN_NODE,
+-  LAKE_CACHE_STATS_SCAN_NODE
++  LAKE_CACHE_STATS_SCAN_NODE,
++  FLIGHT_SCAN_NODE
+ }
+ 
+ // phases of an execution node
+@@ -483,6 +484,45 @@ struct TBinlogScanRange {
+   11: optional Types.TBinlogOffset offset
+ }
+ 
++// Arrow Flight SQL external catalog (type "flight"): one scan range per FlightEndpoint.
++struct TFlightScanRange {
++  // opaque Flight ticket of the endpoint (never logged)
++  1: optional binary ticket
++  // endpoint locations in failover order; empty = the catalog location (default_location)
++  2: optional list<string> locations
++  3: optional i32 endpoint_index
++  4: optional i64 estimated_rows
++}
++
++// Arrow Flight scan node. Arrow field i of every endpoint stream fills slot i of the tuple
++// (in the order of field_names / slot_ids); names are checked when the server sends them.
++struct TFlightScanNode {
++  1: optional Types.TTupleId tuple_id
++  2: optional list<string> field_names
++  3: optional list<Types.TSlotId> slot_ids
++  // catalog URI, used for endpoints without locations and for arrow-flight-reuse-connection://
++  4: optional string default_location
++  // "authorization: Bearer <token>" is built from this; never logged
++  5: optional string bearer_token
++  6: optional string user
++  7: optional string password
++  8: optional bool tls_verify
++  // PEM root certificates (content, not a path)
++  9: optional string tls_root_certs
++  10: optional string tls_override_hostname
++  // extra call headers, e.g. x-flight-result-mode, x-flight-location-failover
++  11: optional map<string, string> call_headers
++  12: optional i32 connect_timeout_ms
++  13: optional i32 keepalive_ms
++  14: optional i64 rpc_timeout_ms
++  15: optional bool location_failover
++  // rendered remote SQL, for the profile only
++  16: optional string remote_sql
++  17: optional string catalog_name
++  // forward-compatible knobs (avoid thrift changes for small options)
++  18: optional map<string, string> options
++}
++
+ // Specification of an individual data range which is held in its entirety
+ // by a storage server
+ struct TScanRange {
+@@ -496,6 +536,9 @@ struct TScanRange {
+   20: optional THdfsScanRange hdfs_scan_range
+ 
+   30: optional TBinlogScanRange binlog_scan_range
++
++  // one Arrow Flight endpoint (external catalog type "flight")
++  31: optional TFlightScanRange flight_scan_range
+ }
+ 
+ struct TMySQLScanNode {
+@@ -1529,6 +1572,8 @@ struct TPlanNode {
+   // 84: optional TBenchmarkScanNode benchmark_scan_node;
+ 
+   85: optional TCacheStatsScanNode cache_stats_scan_node;
++
++  86: optional TFlightScanNode flight_scan_node;
+ }
+ 
+ // A flattened representation of a tree of PlanNodes, obtained by depth-first
+diff --git a/gensrc/thrift/Types.thrift b/gensrc/thrift/Types.thrift
+index bbae6e47..80d545dd 100644
+--- a/gensrc/thrift/Types.thrift
++++ b/gensrc/thrift/Types.thrift
+@@ -438,7 +438,8 @@ enum TTableType {
+     ICEBERG_SNAPSHOTS_TABLE,
+     ICEBERG_MANIFESTS_TABLE,
+     ICEBERG_FILES_TABLE,
+-    ICEBERG_PARTITIONS_TABLE
++    ICEBERG_PARTITIONS_TABLE,
++    FLIGHT_TABLE
+ }
+ 
+ enum TKeysType {

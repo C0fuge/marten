@@ -1,0 +1,45 @@
+# Lets a session that can only push start workflows: edit ci/dispatch.txt and push.
+# One request per line, e.g.
+#   fe force=false tests=FlightTypeMapperTest,FlightPropertiesTest
+#   be force=false parts=4 budget_min=0
+#   report
+# Lines starting with # are ignored. Requests run against the pushed branch.
+name: dispatch
+on:
+  push:
+    branches: [main, "claude/**"]
+    paths: [ci/dispatch.txt]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      report: ${{ steps.run.outputs.report }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: ci
+      - name: Dispatch requests
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          report=false
+          while read -r wf args; do
+            case "$wf" in ""|\#*) continue ;; esac
+            if [ "$wf" = report ]; then report=true; continue; fi
+            f=()
+            for a in $args; do f+=(-f "$a"); done
+            echo "gh workflow run $wf.yml --ref $GITHUB_REF_NAME ${f[*]}"
+            gh workflow run "$wf.yml" -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" "${f[@]}"
+          done < ci/dispatch.txt
+          echo "report=$report" >> "$GITHUB_OUTPUT"
+  report:
+    needs: dispatch
+    if: needs.dispatch.outputs.report == 'true'
+    uses: ./.github/workflows/ci-report.yml
