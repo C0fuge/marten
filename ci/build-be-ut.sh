@@ -59,6 +59,8 @@ for lib in $(ldd "$bin" | awk '/not found/ {print $1}' | sort -u); do
     fi
 done
 ldd "$bin" | grep 'not found' || true
+# default config values expand ${STARROCKS_HOME}
+export STARROCKS_HOME=/workspace/output/be
 "$bin" --gtest_filter="${GTEST_FILTER:-*}" --gtest_output=xml:/workspace/ut-report/$TEST.xml 2>&1 |
     tee /workspace/ut-report/$TEST.log
 exit "${PIPESTATUS[0]}"
