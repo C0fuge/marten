@@ -40,9 +40,9 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  .../transformer/RelationTransformer.java      |   4 +
  .../sql/plan/PlanFragmentBuilder.java         |  39 ++
  .../flight/FlightPropertiesTest.java          | 104 ++++
- .../flight/FlightSqlRendererTest.java         | 124 +++++
+ .../flight/FlightSqlRendererTest.java         | 123 +++++
  .../flight/FlightTypeMapperTest.java          | 116 +++++
- 37 files changed, 2926 insertions(+), 4 deletions(-)
+ 37 files changed, 2925 insertions(+), 4 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -3182,10 +3182,10 @@ index 00000000..872574ab
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
 new file mode 100644
-index 00000000..154d4435
+index 00000000..3c2a91aa
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,123 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -3199,7 +3199,6 @@ index 00000000..154d4435
 +// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 +// See the License for the specific language governing permissions and
 +// limitations under the License.
-+package com.starrocks.connector.flight;
 +package com.starrocks.connector.flight;
 +
 +import com.google.common.collect.ImmutableList;
@@ -3312,7 +3311,7 @@ index 00000000..154d4435
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
 new file mode 100644
-index 00000000..3d3d4698
+index 00000000..4bc29fd3
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
 @@ -0,0 +1,116 @@
@@ -3409,9 +3408,9 @@ index 00000000..3d3d4698
 +    @Test
 +    public void testNestedTypes() {
 +        Field list = field("l", ArrowType.List.INSTANCE, field("item", new ArrowType.Int(32, true)));
-+        Type native_ = FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.NATIVE);
-+        Assertions.assertTrue(native_ instanceof ArrayType);
-+        Assertions.assertEquals(PrimitiveType.INT, ((ArrayType) native_).getItemType().getPrimitiveType());
++        Type nativeType = FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.NATIVE);
++        Assertions.assertTrue(nativeType instanceof ArrayType);
++        Assertions.assertEquals(PrimitiveType.INT, ((ArrayType) nativeType).getItemType().getPrimitiveType());
 +        Assertions.assertNull(FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.HIDE));
 +        Assertions.assertEquals(PrimitiveType.JSON,
 +                FlightTypeMapper.toStarRocksType(list, FlightProperties.NestedTypes.JSON).getPrimitiveType());
