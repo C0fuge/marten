@@ -13,11 +13,11 @@ and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescrip
  be/src/connector/CMakeLists.txt       |   1 +
  be/src/connector/connector.cpp        |   3 +
  be/src/connector/connector.h          |   2 +
- be/src/connector/flight_connector.cpp | 482 ++++++++++++++++++++++++++
+ be/src/connector/flight_connector.cpp | 488 ++++++++++++++++++++++++++
  be/src/connector/flight_connector.h   | 146 ++++++++
  be/src/exec/exec_node.cpp             |   7 +
  be/src/runtime/descriptors.cpp        |   5 +
- 7 files changed, 646 insertions(+)
+ 7 files changed, 652 insertions(+)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -83,10 +83,10 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..b8cc1603
+index 00000000..b7e80963
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,488 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -337,6 +337,12 @@ index 00000000..b8cc1603
 +    }
 +    if (node.__isset.tls_verify && !node.tls_verify) {
 +        options.disable_server_verification = true;
++    }
++    if (node.__isset.connect_timeout_ms && node.connect_timeout_ms > 0) {
++        // gRPC uses the minimum reconnect backoff as the deadline of one TCP/TLS connect attempt (default 20 s);
++        // the calls are not wait-for-ready, so an unreachable location fails after this and can be failed over
++        options.generic_options.emplace_back("grpc.min_reconnect_backoff_ms",
++                                             std::max<int32_t>(100, node.connect_timeout_ms));
 +    }
 +    bool failover = !node.__isset.location_failover || node.location_failover;
 +    if (failover && node.__isset.keepalive_ms && node.keepalive_ms > 0) {
