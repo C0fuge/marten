@@ -47,10 +47,16 @@ ls -la "$bin"
 mkdir -p /workspace/ut-report
 # starrocks_be links some libraries dynamically (libjvm.so, libjemalloc.so.2, ...); start_backend.sh puts
 # their directories on the library path. Do the same for whatever ldd cannot resolve.
-search=(/workspace/output/be/lib /workspace/be/output/lib "${STARROCKS_THIRDPARTY:-/var/local/thirdparty}"
-        "${JAVA_HOME:-/usr/lib/jvm}/" /usr/lib/jvm/)
+# (in the order of run-be-ut.sh: thirdparty jemalloc, the JDK; never the jemalloc-dbg build)
+tp=${STARROCKS_THIRDPARTY:-/var/local/thirdparty}
+search=("$tp/installed/jemalloc/lib-shared" "${JAVA_HOME:-/usr/lib/jvm}/" /usr/lib/jvm/ "$tp/installed"
+        /workspace/output/be/lib)
 for lib in $(ldd "$bin" | awk '/not found/ {print $1}' | sort -u); do
-    f=$(find "${search[@]}" -name "$lib" 2>/dev/null | head -1)
+    f=""
+    for d in "${search[@]}"; do
+        f=$(find "$d" -name "$lib" -not -path '*-dbg*' 2>/dev/null | head -1)
+        [ -n "$f" ] && break
+    done
     if [ -n "$f" ]; then
         echo "$lib from $(dirname "$f")"
         export LD_LIBRARY_PATH="$(dirname "$f"):${LD_LIBRARY_PATH:-}"
@@ -59,8 +65,11 @@ for lib in $(ldd "$bin" | awk '/not found/ {print $1}' | sort -u); do
     fi
 done
 ldd "$bin" | grep 'not found' || true
-# default config values expand ${STARROCKS_HOME}
+# default config values expand these (as in run-be-ut.sh)
 export STARROCKS_HOME=/workspace/output/be
+export UDF_RUNTIME_DIR=$STARROCKS_HOME/lib/udf-runtime
+export LOG_DIR=$STARROCKS_HOME/log
+mkdir -p "$UDF_RUNTIME_DIR" "$LOG_DIR"
 "$bin" --gtest_filter="${GTEST_FILTER:-*}" --gtest_output=xml:/workspace/ut-report/$TEST.xml 2>&1 |
     tee /workspace/ut-report/$TEST.log
 exit "${PIPESTATUS[0]}"
