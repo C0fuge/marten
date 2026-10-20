@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: starrocks-flight <starrocks-flight@localhost>
+Date: Tue, 20 Oct 2026 15:48:50 +0000
+Subject: [PATCH] fe: push TOP-N below pre-aggregation only when ORDER BY
+ covers all GROUP BY keys
+
+PushDownTopNToPreAggRule keeps a per-pipeline top-n of the local aggregation's partial groups. With
+GROUP BY a, b ORDER BY a LIMIT n, groups tied on a are cut differently in each pipeline and the global
+aggregation merges incomplete partial groups (wrong sums/counts). Require the ORDER BY columns to
+cover every grouping key; then the order is total and each final group survives in every pipeline.
+---
+ .../PushDownTopNToPreAggRule.java             | 13 +++-
+ .../PushDownTopNToPreAggRuleTest.java         | 65 +++++++++++++++++++
+ 2 files changed, 77 insertions(+), 1 deletion(-)
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRuleTest.java
+
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRule.java
+index 4298a01b..c6d8bbdf 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRule.java
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRule.java
+@@ -31,6 +31,8 @@ import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
+ import com.starrocks.sql.optimizer.rule.RuleType;
+ 
+ import java.util.List;
++import java.util.Set;
++import java.util.stream.Collectors;
+ 
+ /*
+  * When a top-n operator follows after a 2 phase aggregation, and the top-n order by columns do not depend
+@@ -125,7 +127,16 @@ public class PushDownTopNToPreAggRule extends TransformationRule {
+         // verify aggregation result columns are not used in the order by columns of topN.
+         List<Ordering> orderByElements = topn.getOrderByElements();
+         List<ColumnRefOperator> groupingKeys = aggGlobal.getGroupingKeys();
+-        return orderByElements.stream().allMatch(orderByElement -> groupingKeys.contains(orderByElement.getColumnRef()));
++        if (!orderByElements.stream().allMatch(ordering -> groupingKeys.contains(ordering.getColumnRef()))) {
++            return false;
++        }
++        // The order by columns must also cover every grouping key. Otherwise groups that tie on the order by
++        // columns (GROUP BY a, b ORDER BY a LIMIT n) are cut differently in each pipeline, and the global
++        // aggregation merges incomplete partial groups (wrong results). With all grouping keys the order is
++        // total, so every group of the final top-n is among the first n groups of each pipeline.
++        Set<ColumnRefOperator> orderByColumns =
++                orderByElements.stream().map(Ordering::getColumnRef).collect(Collectors.toSet());
++        return orderByColumns.containsAll(groupingKeys);
+     }
+ 
+     @Override
+diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRuleTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRuleTest.java
+new file mode 100644
+index 00000000..1da44d9c
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/PushDownTopNToPreAggRuleTest.java
+@@ -0,0 +1,65 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package com.starrocks.sql.optimizer.rule.transformation;
++
++import com.google.common.collect.ImmutableList;
++import com.google.common.collect.ImmutableMap;
++import com.starrocks.sql.optimizer.OptExpression;
++import com.starrocks.sql.optimizer.OptimizerContext;
++import com.starrocks.sql.optimizer.OptimizerFactory;
++import com.starrocks.sql.optimizer.base.ColumnRefFactory;
++import com.starrocks.sql.optimizer.base.Ordering;
++import com.starrocks.sql.optimizer.operator.AggType;
++import com.starrocks.sql.optimizer.operator.SortPhase;
++import com.starrocks.sql.optimizer.operator.logical.LogicalAggregationOperator;
++import com.starrocks.sql.optimizer.operator.logical.LogicalTopNOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
++import com.starrocks.type.IntegerType;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.Test;
++
++import java.util.ArrayList;
++import java.util.List;
++
++public class PushDownTopNToPreAggRuleTest {
++    private final ColumnRefOperator a = new ColumnRefOperator(1, IntegerType.INT, "a", true);
++    private final ColumnRefOperator b = new ColumnRefOperator(2, IntegerType.INT, "b", true);
++
++    /** TopN(order by, limit 10) -> Agg(GLOBAL, split, group by a, b) -> Agg(LOCAL, group by a, b). */
++    private OptExpression plan(ColumnRefOperator... orderBy) {
++        List<Ordering> orderings = new ArrayList<>();
++        for (ColumnRefOperator c : orderBy) {
++            orderings.add(new Ordering(c, true, true));
++        }
++        LogicalTopNOperator topn = new LogicalTopNOperator(orderings, 10, 0, SortPhase.PARTIAL);
++        List<ColumnRefOperator> keys = ImmutableList.of(a, b);
++        LogicalAggregationOperator global =
++                new LogicalAggregationOperator(AggType.GLOBAL, keys, keys, ImmutableMap.of(), true, -1, null);
++        LogicalAggregationOperator local = new LogicalAggregationOperator(AggType.LOCAL, keys, ImmutableMap.of());
++        return OptExpression.create(topn, OptExpression.create(global, OptExpression.create(local)));
++    }
++
++    @Test
++    public void testOrderByMustCoverAllGroupingKeys() {
++        OptimizerContext context = OptimizerFactory.mockContext(new ColumnRefFactory());
++        PushDownTopNToPreAggRule rule = PushDownTopNToPreAggRule.getInstance();
++        // GROUP BY a, b ORDER BY a LIMIT 10: groups tied on a would be cut differently in each pipeline
++        Assertions.assertFalse(rule.check(plan(a), context));
++        Assertions.assertFalse(rule.check(plan(b), context));
++        // the order by columns determine the group: safe
++        Assertions.assertTrue(rule.check(plan(a, b), context));
++        Assertions.assertTrue(rule.check(plan(b, a), context));
++    }
++}

@@ -7,22 +7,24 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 
 | M | Content | State |
 |---|---|---|
-| M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | FE done (run 39408957469). ccache resume probe OK (run 39408952022: part2 hit all 50 part1 objects). Full BE build (4.1.4 + thrift patch) run **39412648088** started 11:07 UTC |
-| M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | patch 0002 **compiles** (run 39412699319); masking added in PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs; unit tests running (run 39414525761) |
-| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift done (0001); FE FlightScanNode done; BE connector first draft in `wip/be-flight-connector.wip.diff` (not compiled, not yet a patch) |
-| M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | FE parts started inside patch 0002 (FlightSqlRenderer, FlightAggregationPushdown); todo |
-| M4 | Bench tests on the maintainer's local stand | not in the cloud; done locally after M3 |
-| M5 | Package: patch series + artifacts + install guide | todo |
+| M0 | CI builds unmodified 4.1.4 FE + BE; artifacts downloadable | **done**: FE run 39408957469; full BE (4.1.4 + thrift patch) run 39412648088, one job, Build BE 11:10–12:40 UTC (90 min, 4 vCPU, partly warm ccache); incremental BE with patch 0003: run 39447876098, Build BE 7 min |
+| M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
+| M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0002), BE connector patch 0003 **compiles and links** (run 39447876098, artifact `starrocks_be-4071a9de033827c6`); untested until M4 |
+| M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | projection/filters/LIMIT in 0002; `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)) and session switches in 0002; TOP-N fix patch 0004 (unit test); CI results see Log |
+| M4 | Bench tests on the maintainer's local stand | not in the cloud; test SQL prepared in `docs/M4-TESTS.md` |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch split and release todo |
 
 ## Patch series (on tag 4.1.4)
 
 | Patch | Content | State |
 |---|---|---|
 | 0001 thrift | TFlightScanNode, TFlightScanRange, TTableType FLIGHT_TABLE (free ids per RESEARCH.md) | done |
-| 0002 fe (WIP, compiles) | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient, FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`; optimizer: Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, edits in OperatorType, visitors, RuleSet/RuleType, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, StmtExecutor, Authorizer, Table, ConnectorType | compiles (run 39412699319, without the 2nd-session additions); now also FlightScanNode + PlanFragmentBuilder.visitPhysicalFlightScan, masking, renderer fix (pushed column names were unquoted), tests FlightTypeMapperTest/FlightSqlRendererTest/FlightPropertiesTest |
+| 0002 fe (WIP) | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient, FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`; `planner/FlightScanNode`; optimizer: Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, **FlightAggregationPushdownRule** (rewriteOnce in QueryOptimizer after RewriteSimpleAggToHDFSScanRule), edits in OperatorType, visitors, RuleSet/RuleType, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, PlanFragmentBuilder, StmtExecutor, Authorizer, Table, ConnectorType, Explain, LogicalPlanPrinter; SessionVariable `flight_filter_pushdown`, `flight_aggregate_pushdown`; masking (PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs); tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest | compiles; 14 tests pass (run 39447425479); rule test see Log |
+| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it) | compiles + links (run 39447876098) |
+| 0004 fe | PushDownTopNToPreAggRule: ORDER BY must cover all GROUP BY keys; PushDownTopNToPreAggRuleTest | see Log |
 
 Planned final split (PLAN.md §4 M5): thrift, FE connector, FE optimizer/planner, BE connector, TOP-N fix, tests.
-Split 0002 into "FE connector" and "FE optimizer/planner" once it compiles.
+Split 0002 into "FE connector" and "FE optimizer/planner" (it compiles now).
 
 ## CI
 
