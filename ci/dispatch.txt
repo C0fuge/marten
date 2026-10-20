@@ -1,4 +1,5 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
-fe tests=FlightSqlMetadataClientTest,FlightScanPlanTest,FlightAggregationPushdownRuleTest,FlightSqlRendererTest,FlightTypeMapperTest,FlightPropertiesTest,PushDownTopNToPreAggRuleTest
-# session 2026-10-20 19:4x (FE metadata client: connect probe bounded by flight.connect_timeout_ms)
+release tag=v4.1.4-flight.0-dryrun draft=true prerelease=true
+report
+# session 2026-10-20 21:1x (M5: dry run of the release workflow as a draft release)

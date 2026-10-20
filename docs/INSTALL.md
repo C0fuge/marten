@@ -13,6 +13,16 @@ From a green CI run (Actions → run → Artifacts), or a GitHub Release:
 | `fe-jars-<hash>` | `starrocks-fe.jar`, `fe-core-4.1.4.jar`, the other `fe-*-4.1.4.jar`, `starrocks-hadoop-ext.jar`, `fe-build-info.txt` |
 | `starrocks_be-<hash>` | `starrocks_be.zst` (Release build without debug info), `be-build-info.txt` |
 
+A GitHub Release `<tag>` carries the same files as `starrocks-flight-<tag>-fe-jars.tar` (jars +
+`fe-build-info.txt`), `starrocks-flight-<tag>-starrocks_be.zst`, `starrocks-flight-<tag>-patches.tar.gz` (the
+series; `0007` is a BE unit test, not needed at runtime), the two build-info files and `SHA256SUMS`
+(`sha256sum -c SHA256SUMS`). The release workflow only packs FE and BE built from the identical patch series.
+
+```bash
+mkdir fe-jars && tar -xf starrocks-flight-<tag>-fe-jars.tar -C fe-jars
+mv starrocks-flight-<tag>-starrocks_be.zst starrocks_be.zst
+```
+
 `*-build-info.txt` lists the patches and checksums. Check that both list the same `thrift:` patch.
 
 ```bash

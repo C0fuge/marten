@@ -1,0 +1,98 @@
+# GitHub Release from the cached FE and BE builds of the current patch series (manual dispatch only).
+# Builds nothing: run fe / be first. Takes the outputs from the fe-out / be-out caches, falling back to the
+# fe-jars-<hash> / starrocks_be-<hash> workflow artifacts. A draft release creates no git tag until published;
+# re-running with the tag of an existing draft replaces that draft, a published release is never touched.
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag, e.g. v4.1.4-flight.1"
+        required: true
+      draft:
+        description: "create as draft (dry run; publish by hand after M4)"
+        type: boolean
+        default: true
+      prerelease:
+        description: "mark as pre-release"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9A-Za-z._-]+$ ]] || { echo "::error::bad tag '$TAG'"; exit 1; }
+          if draft=$(gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            [ "$draft" = true ] || { echo "::error::release $TAG is already published"; exit 1; }
+          fi
+      - name: Prepare source
+        run: scripts/prepare-source.sh "$RUNNER_TEMP/src"
+      - name: Input hashes
+        id: hash
+        run: |
+          . ci/env.sh
+          echo "fe=$(scripts/input-hash.sh "$RUNNER_TEMP/src" fe)" >> "$GITHUB_OUTPUT"
+          echo "be=$(scripts/input-hash.sh "$RUNNER_TEMP/src" be)" >> "$GITHUB_OUTPUT"
+          echo "commit_hash=$STARROCKS_BASE_HASH-fl$(cat patches/*.patch | sha256sum | cut -c1-6)" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+      - name: Restore FE output
+        id: fe
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-fe-out
+          key: fe-out-${{ steps.hash.outputs.fe }}
+      - name: Restore BE output
+        id: be
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-out
+          key: be-out-${{ steps.hash.outputs.be }}
+      - name: Fall back to workflow artifacts
+        if: steps.fe.outputs.cache-hit != 'true' || steps.be.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fetch() { # artifact name, target dir
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$1&per_page=100" \
+                   --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')
+            [ -n "$id" ] || { echo "::error::no cached output and no artifact $1: run the build first"; exit 1; }
+            mkdir -p "$2"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/a.zip"
+            unzip -o -q "$RUNNER_TEMP/a.zip" -d "$2"
+          }
+          [ "${{ steps.fe.outputs.cache-hit }}" = true ] || fetch "fe-jars-${{ steps.hash.outputs.fe }}" /home/runner/sr-fe-out
+          [ "${{ steps.be.outputs.cache-hit }}" = true ] || fetch "starrocks_be-${{ steps.hash.outputs.be }}" /home/runner/sr-out
+      - name: Assemble assets
+        run: ci/release.sh /home/runner/sr-fe-out /home/runner/sr-out "${{ steps.hash.outputs.commit_hash }}" "${{ inputs.tag }}" "$RUNNER_TEMP/dist"
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          cd "$RUNNER_TEMP/dist"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" -R "$GITHUB_REPOSITORY" --yes
+          fi
+          flags=()
+          [ "${{ inputs.draft }}" = true ] && flags+=(--draft)
+          [ "${{ inputs.prerelease }}" = true ] && flags+=(--prerelease)
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" "${flags[@]}" \
+            --title "StarRocks 4.1.4 + Arrow Flight SQL catalog ($TAG)" --notes-file release-notes.md \
+            $(ls | grep -v '^release-notes.md$')
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY"

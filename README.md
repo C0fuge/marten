@@ -16,7 +16,8 @@ CI. It does not contain a copy of StarRocks.
 | `.github/workflows/fe.yml` | FE build → `starrocks-fe.jar`, `fe-core-4.1.4.jar`, other `fe-*` jars |
 | `.github/workflows/be.yml` | BE build → `starrocks_be` (Release, no debug info), resumable across up to 4 jobs |
 | `.github/workflows/be-ut.yml` | BE unit test `flight_connector_test` (in-process Flight server), built in the Release tree with the BE ccache (`ci/build-be-ut.sh`) |
-| `.github/workflows/dispatch.yml` | starts fe / be / be-ut / report runs from `ci/dispatch.txt` (for sessions that can only push) |
+| `.github/workflows/release.yml` | manual: GitHub Release (default draft) from the cached FE + BE outputs of the current series (`ci/release.sh`); builds nothing |
+| `.github/workflows/dispatch.yml` | starts fe / be / be-ut / release / report runs from `ci/dispatch.txt` (for sessions that can only push) |
 | `.github/workflows/ci-report.yml` | publishes CI state to branch `ci-status` (`STATUS-CI.md`) |
 | `docs/` | `STATUS.md` (current state), `PLAN.md` (design), `RESEARCH.md` (source survey), install guide |
 
