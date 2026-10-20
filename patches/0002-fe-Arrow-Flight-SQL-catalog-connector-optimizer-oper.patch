@@ -20,19 +20,24 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 166 +++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
- .../com/starrocks/planner/FlightScanNode.java | 299 ++++++++++++
+ .../com/starrocks/planner/FlightScanNode.java | 304 ++++++++++++
+ .../com/starrocks/qe/SessionVariable.java     |  25 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
+ .../main/java/com/starrocks/sql/Explain.java  |  20 +
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
+ .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
  .../sql/optimizer/OptExpressionVisitor.java   |   4 +
+ .../sql/optimizer/QueryOptimizer.java         |   3 +
  .../sql/optimizer/operator/OperatorType.java  |   2 +
  .../optimizer/operator/OperatorVisitor.java   |  10 +
  .../logical/LogicalFlightScanOperator.java    |  88 ++++
  .../operator/pattern/MultiOpPattern.java      |   1 +
  .../physical/PhysicalFlightScanOperator.java  |  60 +++
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
- .../sql/optimizer/rule/RuleType.java          |   1 +
+ .../sql/optimizer/rule/RuleType.java          |   2 +
  .../FlightScanImplementationRule.java         |  38 ++
+ .../FlightAggregationPushdownRule.java        | 252 ++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
@@ -42,7 +47,8 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  .../flight/FlightPropertiesTest.java          | 104 ++++
  .../flight/FlightSqlRendererTest.java         | 123 +++++
  .../flight/FlightTypeMapperTest.java          | 116 +++++
- 37 files changed, 2925 insertions(+), 4 deletions(-)
+ .../FlightAggregationPushdownRuleTest.java    |  67 +++
+ 43 files changed, 3303 insertions(+), 4 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -57,9 +63,11 @@ Subject: [PATCH] fe: Arrow Flight SQL catalog: connector, optimizer operators,
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/implementation/FlightScanImplementationRule.java
+ create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java b/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
 new file mode 100644
@@ -1545,7 +1553,7 @@ index 00000000..87c83807
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
 new file mode 100644
-index 00000000..0e39cd78
+index 00000000..0eb5249d
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
 @@ -0,0 +1,445 @@
@@ -1819,7 +1827,7 @@ index 00000000..0e39cd78
 +    }
 +
 +    /** Server SQL name of a numeric StarRocks type usable in CAST, or null. */
-+    static String numericSqlType(Type t) {
++    public static String numericSqlType(Type t) {
 +        switch (t.getPrimitiveType()) {
 +            case TINYINT:
 +                return "TINYINT";
@@ -2192,10 +2200,10 @@ index 5f93fd8a..ff21eb2f 100644
      private static void doMask(Map<String, String> properties, String configKey) {
 diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 new file mode 100644
-index 00000000..0eae8103
+index 00000000..548df763
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,304 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -2274,6 +2282,11 @@ index 00000000..0eae8103
 +        this.table = (FlightTable) desc.getTable();
 +    }
 +
++    private static boolean sessionFilterPushdown() {
++        ConnectContext ctx = ConnectContext.get();
++        return ctx == null || ctx.getSessionVariable().isFlightFilterPushdown();
++    }
++
 +    private FlightMetadata metadata() {
 +        FlightMetadata metadata = FlightConnector.metadataOf(table.getCatalogName());
 +        if (metadata == null) {
@@ -2320,7 +2333,7 @@ index 00000000..0eae8103
 +            where.addAll(aggregation.getWhere());
 +            groupBy = aggregation.getGroupBy();
 +            pushedConjuncts = totalConjuncts;
-+        } else if (props.isFilterPushdown() && !conjuncts.isEmpty()) {
++        } else if (props.isFilterPushdown() && sessionFilterPushdown() && !conjuncts.isEmpty()) {
 +            Map<ColumnRefOperator, String> pushable = new HashMap<>();
 +            for (Map.Entry<ColumnRefOperator, Column> e : columnRefs.entrySet()) {
 +                if (table.isFilterable(e.getValue().getName())) {
@@ -2495,6 +2508,56 @@ index 00000000..0eae8103
 +        return true;
 +    }
 +}
+diff --git a/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java b/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java
+index e6c38a1c..aea93d3a 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java
++++ b/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java
+@@ -923,6 +923,9 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
+     public static final String ENABLE_REWRITE_SUM_BY_ASSOCIATIVE_RULE = "enable_rewrite_sum_by_associative_rule";
+     public static final String ENABLE_REWRITE_SIMPLE_AGG_TO_META_SCAN = "enable_rewrite_simple_agg_to_meta_scan";
+     public static final String ENABLE_REWRITE_SIMPLE_AGG_TO_HDFS_SCAN = "enable_rewrite_simple_agg_to_hdfs_scan";
++    // Arrow Flight catalog: render WHERE / push GROUP BY aggregations into the remote Flight SQL query
++    public static final String FLIGHT_FILTER_PUSHDOWN = "flight_filter_pushdown";
++    public static final String FLIGHT_AGGREGATE_PUSHDOWN = "flight_aggregate_pushdown";
+     public static final String ENABLE_REWRITE_PARTITION_COLUMN_MINMAX = "enable_rewrite_partition_column_minmax";
+     public static final String ENABLE_MIN_MAX_OPTIMIZATION = "enable_min_max_optimization";
+     public static final String ENABLE_PRUNE_COMPLEX_TYPES = "enable_prune_complex_types";
+@@ -2169,6 +2172,12 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
+     @VarAttr(name = ENABLE_REWRITE_SIMPLE_AGG_TO_HDFS_SCAN)
+     private boolean enableRewriteSimpleAggToHdfsScan = true;
+ 
++    @VarAttr(name = FLIGHT_FILTER_PUSHDOWN)
++    private boolean flightFilterPushdown = true;
++
++    @VarAttr(name = FLIGHT_AGGREGATE_PUSHDOWN)
++    private boolean flightAggregatePushdown = true;
++
+     @VarAttr(name = ENABLE_EVALUATE_SCHEMA_SCAN_RULE)
+     private boolean enableEvaluateSchemaScanRule = true;
+ 
+@@ -5436,6 +5445,22 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
+         return this.enableRewriteSimpleAggToHdfsScan;
+     }
+ 
++    public boolean isFlightFilterPushdown() {
++        return flightFilterPushdown;
++    }
++
++    public void setFlightFilterPushdown(boolean flightFilterPushdown) {
++        this.flightFilterPushdown = flightFilterPushdown;
++    }
++
++    public boolean isFlightAggregatePushdown() {
++        return flightAggregatePushdown;
++    }
++
++    public void setFlightAggregatePushdown(boolean flightAggregatePushdown) {
++        this.flightAggregatePushdown = flightAggregatePushdown;
++    }
++
+     public boolean isEnableEvaluateSchemaScanRule() {
+         return enableEvaluateSchemaScanRule;
+     }
 diff --git a/fe/fe-core/src/main/java/com/starrocks/qe/StmtExecutor.java b/fe/fe-core/src/main/java/com/starrocks/qe/StmtExecutor.java
 index 551a17a9..f4d9be38 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/qe/StmtExecutor.java
@@ -2540,6 +2603,44 @@ index 88f6ba16..32434a39 100644
          } finally {
              writeUnLock();
          }
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/Explain.java b/fe/fe-core/src/main/java/com/starrocks/sql/Explain.java
+index 12a1aa95..5668719e 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/sql/Explain.java
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/Explain.java
+@@ -45,6 +45,7 @@ import com.starrocks.sql.optimizer.operator.physical.PhysicalDistributionOperato
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalEsScanOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalExceptOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalFilterOperator;
++import com.starrocks.sql.optimizer.operator.physical.PhysicalFlightScanOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalHashAggregateOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalHiveScanOperator;
+ import com.starrocks.sql.optimizer.operator.physical.PhysicalHudiScanOperator;
+@@ -341,6 +342,25 @@ public class Explain {
+             return new OperatorStr(sb.toString(), context.step, Collections.emptyList());
+         }
+ 
++        @Override
++        public OperatorStr visitPhysicalFlightScan(OptExpression optExpression,
++                                                   OperatorPrinter.ExplainContext context) {
++            PhysicalFlightScanOperator scan = (PhysicalFlightScanOperator) optExpression.getOp();
++            StringBuilder sb = new StringBuilder("- FLIGHT-SCAN [")
++                    .append(scan.getTable().getName())
++                    .append("]")
++                    .append(buildOutputColumns(scan,
++                            "[" + scan.getOutputColumns().stream().map(EXPR_PRINTER::print)
++                                    .collect(Collectors.joining(", ")) + "]"))
++                    .append("\n");
++            if (scan.getAggregationPushdown() != null) {
++                buildOperatorProperty(sb, "remote aggregation: " + scan.getAggregationPushdown(), context.step);
++            }
++            buildCostEstimate(sb, optExpression, context.step);
++            buildCommonProperty(sb, scan, context.step);
++            return new OperatorStr(sb.toString(), context.step, Collections.emptyList());
++        }
++
+         public OperatorStr visitPhysicalJDBCScan(OptExpression optExpression, OperatorPrinter.ExplainContext context) {
+             PhysicalJDBCScanOperator scan = (PhysicalJDBCScanOperator) optExpression.getOp();
+             StringBuilder sb = new StringBuilder("- JDBC-SCAN [")
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/analyzer/Authorizer.java b/fe/fe-core/src/main/java/com/starrocks/sql/analyzer/Authorizer.java
 index f0e54493..633c6ca4 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/analyzer/Authorizer.java
@@ -2552,6 +2653,22 @@ index f0e54493..633c6ca4 100644
                  // `privilegeType == null` meaning we don't check specified action, just any action
                  if (privilegeType == null) {
                      checkAnyActionOnTable(context, new TableName(tbl.getCatalogName(), dbName, tbl.getName()));
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/LogicalPlanPrinter.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/LogicalPlanPrinter.java
+index 03be2d8b..302c9b1c 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/LogicalPlanPrinter.java
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/LogicalPlanPrinter.java
+@@ -465,6 +465,11 @@ public class LogicalPlanPrinter {
+             return visitScanCommon(optExpression, step, "JDBC SCAN");
+         }
+ 
++        @Override
++        public OperatorStr visitPhysicalFlightScan(OptExpression optExpression, Integer step) {
++            return visitScanCommon(optExpression, step, "FLIGHT SCAN");
++        }
++
+         @Override
+         public OperatorStr visitPhysicalHiveScan(OptExpression optExpression, Integer step) {
+             return visitScanCommon(optExpression, step, "HIVE SCAN");
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/OptExpressionVisitor.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/OptExpressionVisitor.java
 index fbdf0cfb..00732b79 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/OptExpressionVisitor.java
@@ -2567,6 +2684,27 @@ index fbdf0cfb..00732b79 100644
      public R visitPhysicalSchemaScan(OptExpression optExpression, C context) {
          return visitPhysicalScan(optExpression, context);
      }
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java
+index a3cda600..726a2400 100644
+--- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java
+@@ -54,6 +54,7 @@ import com.starrocks.sql.optimizer.rule.transformation.EliminateAggFunctionRule;
+ import com.starrocks.sql.optimizer.rule.transformation.EliminateAggRule;
+ import com.starrocks.sql.optimizer.rule.transformation.EliminateConstantCTERule;
+ import com.starrocks.sql.optimizer.rule.transformation.EliminateSortColumnWithEqualityPredicateRule;
++import com.starrocks.sql.optimizer.rule.transformation.FlightAggregationPushdownRule;
+ import com.starrocks.sql.optimizer.rule.transformation.ForceCTEReuseRule;
+ import com.starrocks.sql.optimizer.rule.transformation.GroupByCountDistinctRewriteRule;
+ import com.starrocks.sql.optimizer.rule.transformation.HoistHeavyCostExprsUponTopnRule;
+@@ -737,6 +738,8 @@ public class QueryOptimizer extends Optimizer {
+         scheduler.rewriteOnce(tree, rootTaskContext, JsonPathRewriteRule.createForOlapScan());
+         scheduler.rewriteIterative(tree, rootTaskContext, new RewriteMinMaxByMonotonicFunctionRule());
+         scheduler.rewriteOnce(tree, rootTaskContext, RewriteSimpleAggToHDFSScanRule.SCAN_NO_PROJECT);
++        // Arrow Flight catalog: GROUP BY / count / sum / min / max computed by the Flight SQL server
++        scheduler.rewriteOnce(tree, rootTaskContext, FlightAggregationPushdownRule.INSTANCE);
+         // NOTE: This rule should be after MV Rewrite because MV Rewrite cannot handle
+         // select count(distinct c) from t group by a, b
+         // if this rule has applied before MV.
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/OperatorType.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/OperatorType.java
 index ace2bea4..f502b335 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/OperatorType.java
@@ -2822,10 +2960,18 @@ index b507f5f7..ce01c19f 100644
              new MysqlScanImplementationRule(),
              new EsScanImplementationRule(),
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java
-index 347f6340..1446c051 100644
+index 347f6340..73fe3638 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java
-@@ -263,6 +263,7 @@ public enum RuleType {
+@@ -147,6 +147,7 @@ public enum RuleType {
+     TF_REWRITE_GROUPING_SET,
+     TF_PUSHDOWN_AGG_GROUPING_SET,
+     TF_REWRITE_SIMPLE_AGG,
++    TF_FLIGHT_AGGREGATION_PUSHDOWN,
+     TF_REWRITE_MIN_MAX_COUNT_AGG,
+     TF_REWRITE_PARTITION_COLUMN_ONLY_AGG,
+     TF_REWRITE_SUM_BY_ASSOCIATIVE_RULE,
+@@ -263,6 +264,7 @@ public enum RuleType {
      IMP_ODPS_LSCAN_TO_PSCAN,
      IMP_ICEBERG_METADATA_LSCAN_TO_PSCAN,
      IMP_KUDU_LSCAN_TO_PSCAN,
@@ -2875,6 +3021,264 @@ index 00000000..5a9aeab3
 +    public List<OptExpression> transform(OptExpression input, OptimizerContext context) {
 +        LogicalFlightScanOperator scan = (LogicalFlightScanOperator) input.getOp();
 +        return Lists.newArrayList(new OptExpression(new PhysicalFlightScanOperator(scan)));
++    }
++}
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
+new file mode 100644
+index 00000000..54e295fa
+--- /dev/null
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
+@@ -0,0 +1,252 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.sql.optimizer.rule.transformation;
++
++import com.google.common.annotations.VisibleForTesting;
++import com.google.common.collect.ImmutableSet;
++import com.starrocks.catalog.Column;
++import com.starrocks.catalog.FlightTable;
++import com.starrocks.catalog.FunctionSet;
++import com.starrocks.connector.flight.FlightAggregationPushdown;
++import com.starrocks.connector.flight.FlightConnector;
++import com.starrocks.connector.flight.FlightMetadata;
++import com.starrocks.connector.flight.FlightProperties;
++import com.starrocks.connector.flight.FlightSqlRenderer;
++import com.starrocks.sql.optimizer.OptExpression;
++import com.starrocks.sql.optimizer.OptimizerContext;
++import com.starrocks.sql.optimizer.Utils;
++import com.starrocks.sql.optimizer.base.ColumnRefFactory;
++import com.starrocks.sql.optimizer.operator.OperatorType;
++import com.starrocks.sql.optimizer.operator.Projection;
++import com.starrocks.sql.optimizer.operator.logical.LogicalAggregationOperator;
++import com.starrocks.sql.optimizer.operator.logical.LogicalFlightScanOperator;
++import com.starrocks.sql.optimizer.operator.pattern.Pattern;
++import com.starrocks.sql.optimizer.operator.scalar.CallOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
++import com.starrocks.sql.optimizer.rewrite.ReplaceColumnRefRewriter;
++import com.starrocks.sql.optimizer.rule.RuleType;
++import com.starrocks.sql.optimizer.rule.transformation.materialization.common.AggregateFunctionRollupUtils;
++import com.starrocks.type.IntegerType;
++import com.starrocks.type.Type;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * Pushes a GROUP BY aggregation (count, sum, min, max) over an Arrow Flight scan to the Flight SQL server:
++ * <pre>
++ *   Agg(g, count(*), sum(x)) -> FlightScan(g, x, predicate)
++ * =>
++ *   Agg(g, sum(c0), sum(c1)) -> FlightScan(g, c0, c1) with remote
++ *   SELECT "g", count(*) AS "__flight_agg_0", CAST(sum("x") AS T) AS "__flight_agg_1" FROM t WHERE ... GROUP BY "g"
++ * </pre>
++ * Every endpoint returns partial groups; the StarRocks aggregation merges them (count -> sum, sum -> sum,
++ * min -> min, max -> max). The rule only fires when every conjunct of the scan predicate, every grouping key and
++ * every aggregate argument can be rendered exactly; otherwise the plan is left unchanged.
++ * Runs once after the projections were merged into their operators (see QueryOptimizer).
++ */
++public class FlightAggregationPushdownRule extends TransformationRule {
++    public static final FlightAggregationPushdownRule INSTANCE = new FlightAggregationPushdownRule();
++
++    private static final Set<String> FUNCTIONS =
++            ImmutableSet.of(FunctionSet.COUNT, FunctionSet.SUM, FunctionSet.MIN, FunctionSet.MAX);
++
++    private FlightAggregationPushdownRule() {
++        super(RuleType.TF_FLIGHT_AGGREGATION_PUSHDOWN, Pattern.create(OperatorType.LOGICAL_AGGR)
++                .addChildren(Pattern.create(OperatorType.LOGICAL_FLIGHT_SCAN)));
++    }
++
++    @Override
++    public boolean check(OptExpression input, OptimizerContext context) {
++        LogicalAggregationOperator agg = (LogicalAggregationOperator) input.getOp();
++        LogicalFlightScanOperator scan = (LogicalFlightScanOperator) input.inputAt(0).getOp();
++        if (!context.getSessionVariable().isFlightAggregatePushdown() || !agg.getType().isGlobal() || agg.isSplit()) {
++            return false;
++        }
++        if (scan.getAggregationPushdown() != null || scan.getLimit() >= 0
++                || !(scan.getTable() instanceof FlightTable)) {
++            return false;
++        }
++        if (scan.getProjection() != null && !scan.getProjection().getCommonSubOperatorMap().isEmpty()) {
++            return false;
++        }
++        FlightProperties props = properties((FlightTable) scan.getTable());
++        return props != null && props.isAggregatePushdown();
++    }
++
++    private static FlightProperties properties(FlightTable table) {
++        FlightMetadata metadata = FlightConnector.metadataOf(table.getCatalogName());
++        return metadata == null ? null : metadata.getProperties();
++    }
++
++    @Override
++    public List<OptExpression> transform(OptExpression input, OptimizerContext context) {
++        LogicalAggregationOperator agg = (LogicalAggregationOperator) input.getOp();
++        LogicalFlightScanOperator scan = (LogicalFlightScanOperator) input.inputAt(0).getOp();
++        FlightTable table = (FlightTable) scan.getTable();
++        FlightProperties props = properties(table);
++        ColumnRefFactory factory = context.getColumnRefFactory();
++        Map<ColumnRefOperator, Column> scanColumns = scan.getColRefToColumnMetaMap();
++
++        Map<ColumnRefOperator, String> pushable = new HashMap<>();
++        for (Map.Entry<ColumnRefOperator, Column> e : scanColumns.entrySet()) {
++            if (table.isFilterable(e.getValue().getName())) {
++                pushable.put(e.getKey(), e.getValue().getName());
++            }
++        }
++        FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(pushable);
++        Map<ColumnRefOperator, ScalarOperator> projection = scan.getProjection() == null ? null :
++                scan.getProjection().getColumnRefMap();
++        ReplaceColumnRefRewriter resolver = projection == null ? null : new ReplaceColumnRefRewriter(projection);
++
++        // WHERE: every conjunct, since the server aggregates the filtered rows
++        List<String> where = new ArrayList<>();
++        List<ScalarOperator> conjuncts = Utils.extractConjuncts(scan.getPredicate());
++        boolean filterPushdown = props != null && props.isFilterPushdown()
++                && context.getSessionVariable().isFlightFilterPushdown();
++        if (!conjuncts.isEmpty() && !filterPushdown) {
++            return Collections.emptyList();
++        }
++        for (ScalarOperator conjunct : conjuncts) {
++            String p = FlightSqlRenderer.predicate(conjunct, cols);
++            if (p == null) {
++                return Collections.emptyList();
++            }
++            where.add(p);
++        }
++
++        // GROUP BY: scan columns passed through unchanged
++        Map<ColumnRefOperator, Column> newScanColumns = new LinkedHashMap<>();
++        List<String> groupBy = new ArrayList<>();
++        for (ColumnRefOperator key : agg.getGroupingKeys()) {
++            ScalarOperator resolved = resolver == null ? key : projection.get(key);
++            if (!key.equals(resolved) || !scanColumns.containsKey(key) || cols.remoteName(key) == null) {
++                return Collections.emptyList();
++            }
++            newScanColumns.put(key, scanColumns.get(key));
++            groupBy.add(scanColumns.get(key).getName());
++        }
++
++        Integer relationId = scanColumns.isEmpty() ? null :
++                factory.getRelationId(scanColumns.keySet().iterator().next().getId());
++        if (relationId == null) {
++            return Collections.emptyList();
++        }
++
++        Map<String, String> remoteAggregates = new LinkedHashMap<>();
++        Map<ColumnRefOperator, CallOperator> newAggregations = new HashMap<>();
++        // count outputs: count -> sum(partial) is nullable, and without GROUP BY it must be coalesced to 0
++        Map<ColumnRefOperator, ScalarOperator> replaced = new HashMap<>();
++        boolean hasGroupBy = !agg.getGroupingKeys().isEmpty();
++        int i = 0;
++        for (Map.Entry<ColumnRefOperator, CallOperator> e : agg.getAggregations().entrySet()) {
++            CallOperator call = e.getValue();
++            String fn = call.getFnName();
++            if (call.isDistinct() || !FUNCTIONS.contains(fn) || call.getArguments().size() > 1) {
++                return Collections.emptyList();
++            }
++            ScalarOperator arg = call.getArguments().isEmpty() ? null : call.getArguments().get(0);
++            if (arg != null && resolver != null) {
++                arg = resolver.rewrite(arg);
++            }
++            String remote = renderAggregate(fn, arg, call.getType(), cols);
++            if (remote == null) {
++                return Collections.emptyList();
++            }
++            String name = FlightAggregationPushdown.SYNTHETIC_PREFIX + i++;
++            Type type = FunctionSet.COUNT.equals(fn) ? IntegerType.BIGINT : call.getType();
++            Column column = new Column(name, type, true);
++            ColumnRefOperator partial = factory.create(name, type, true);
++            factory.updateColumnToRelationIds(partial.getId(), relationId);
++            factory.updateColumnRefToColumns(partial, column, table);
++            newScanColumns.put(partial, column);
++            remoteAggregates.put(name, remote);
++
++            CallOperator rollup = AggregateFunctionRollupUtils.getRollupAggregateFunc(call, partial, false);
++            if (rollup == null) {
++                return Collections.emptyList();
++            }
++            if (FunctionSet.COUNT.equals(fn)) {
++                ColumnRefOperator merged = factory.create("sum_" + name, rollup.getType(), true);
++                newAggregations.put(merged, rollup);
++                replaced.put(e.getKey(), AggregateFunctionRollupUtils.genRollupProject(call, merged, hasGroupBy));
++            } else {
++                newAggregations.put(e.getKey(), rollup);
++            }
++        }
++        if (newScanColumns.isEmpty()) {
++            return Collections.emptyList();
++        }
++
++        Map<Column, ColumnRefOperator> newScanMeta = new HashMap<>();
++        newScanColumns.forEach((ref, column) -> newScanMeta.put(column, ref));
++        LogicalFlightScanOperator newScan =
++                new LogicalFlightScanOperator(table, newScanColumns, newScanMeta, scan.getLimit(), null);
++        newScan.setAggregationPushdown(new FlightAggregationPushdown(groupBy, remoteAggregates, where));
++
++        LogicalAggregationOperator.Builder builder = LogicalAggregationOperator.builder().withOperator(agg)
++                .setAggregations(newAggregations);
++        if (!replaced.isEmpty()) {
++            ReplaceColumnRefRewriter rewriter = new ReplaceColumnRefRewriter(replaced);
++            Map<ColumnRefOperator, ScalarOperator> outputs = new LinkedHashMap<>();
++            if (agg.getProjection() == null) {
++                agg.getGroupingKeys().forEach(k -> outputs.put(k, k));
++                agg.getAggregations().keySet().forEach(k -> outputs.put(k, rewriter.rewrite(k)));
++            } else {
++                agg.getProjection().getColumnRefMap().forEach((k, v) -> outputs.put(k, rewriter.rewrite(v)));
++            }
++            builder.setProjection(new Projection(outputs));
++            if (agg.getPredicate() != null) {
++                builder.setPredicate(rewriter.rewrite(agg.getPredicate()));
++            }
++        }
++        return Collections.singletonList(OptExpression.create(builder.build(), OptExpression.create(newScan)));
++    }
++
++    /** Remote partial aggregate whose result has the StarRocks type of the partial column, or null. */
++    @VisibleForTesting
++    static String renderAggregate(String fn, ScalarOperator arg, Type resultType,
++                                          FlightSqlRenderer.Columns cols) {
++        if (FunctionSet.COUNT.equals(fn)) {
++            if (arg == null || (arg instanceof ConstantOperator && !arg.isConstantNull())) {
++                return "count(*)";
++            }
++            String in = FlightSqlRenderer.aggregateInput(arg, cols);
++            return in == null ? null : "count(" + in + ")";
++        }
++        if (arg == null) {
++            return null;
++        }
++        String in = FlightSqlRenderer.aggregateInput(arg, cols);
++        if (in == null) {
++            return null;
++        }
++        String sqlType = FlightSqlRenderer.numericSqlType(resultType);
++        if (FunctionSet.SUM.equals(fn)) {
++            // the server's sum type differs (e.g. HUGEINT for integers): cast to the StarRocks result type
++            return sqlType == null ? null : "CAST(sum(" + in + ") AS " + sqlType + ")";
++        }
++        if (arg instanceof ColumnRefOperator) {
++            return fn + "(" + in + ")";
++        }
++        return sqlType == null ? null : "CAST(" + fn + "(" + in + ") AS " + sqlType + ")";
 +    }
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/MergeLimitDirectRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/MergeLimitDirectRule.java
@@ -3429,5 +3833,78 @@ index 00000000..4bc29fd3
 +        // a struct with an unsupported child is hidden as a whole
 +        Field badStruct = field("s", ArrowType.Struct.INSTANCE, field("t", new ArrowType.Time(TimeUnit.SECOND, 32)));
 +        Assertions.assertNull(FlightTypeMapper.toStarRocksType(badStruct, FlightProperties.NestedTypes.NATIVE));
++    }
++}
+diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
+new file mode 100644
+index 00000000..118c9c55
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
+@@ -0,0 +1,67 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.sql.optimizer.rule.transformation;
++
++import com.google.common.collect.ImmutableMap;
++import com.starrocks.catalog.FunctionSet;
++import com.starrocks.connector.flight.FlightSqlRenderer;
++import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
++import com.starrocks.type.FloatType;
++import com.starrocks.type.IntegerType;
++import com.starrocks.type.Type;
++import com.starrocks.type.TypeFactory;
++import com.starrocks.type.VarcharType;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.Test;
++
++public class FlightAggregationPushdownRuleTest {
++    private final ColumnRefOperator id = new ColumnRefOperator(1, IntegerType.INT, "id", true);
++    private final ColumnRefOperator name = new ColumnRefOperator(2, VarcharType.VARCHAR, "name", true);
++    private final ColumnRefOperator price = new ColumnRefOperator(3, FloatType.FLOAT, "price", true);
++    private final FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(ImmutableMap.of(id, "id", name, "name"));
++
++    private String render(String fn, ColumnRefOperator arg, Type type) {
++        return FlightAggregationPushdownRule.renderAggregate(fn, arg, type, cols);
++    }
++
++    @Test
++    public void testCount() {
++        Assertions.assertEquals("count(*)", render(FunctionSet.COUNT, null, IntegerType.BIGINT));
++        Assertions.assertEquals("count(*)", FlightAggregationPushdownRule.renderAggregate(FunctionSet.COUNT,
++                ConstantOperator.createInt(1), IntegerType.BIGINT, cols));
++        Assertions.assertNull(FlightAggregationPushdownRule.renderAggregate(FunctionSet.COUNT,
++                ConstantOperator.createNull(IntegerType.INT), IntegerType.BIGINT, cols));
++        Assertions.assertEquals("count(\"name\")", render(FunctionSet.COUNT, name, IntegerType.BIGINT));
++        // no exact remote column
++        Assertions.assertNull(render(FunctionSet.COUNT, price, IntegerType.BIGINT));
++    }
++
++    @Test
++    public void testSumIsCastToTheStarRocksType() {
++        Assertions.assertEquals("CAST(sum(\"id\") AS BIGINT)", render(FunctionSet.SUM, id, IntegerType.BIGINT));
++        Assertions.assertEquals("CAST(sum(\"id\") AS DECIMAL(38,2))",
++                render(FunctionSet.SUM, id, TypeFactory.createDecimalV3NarrowestType(38, 2)));
++        // no SQL type for LARGEINT
++        Assertions.assertNull(render(FunctionSet.SUM, id, IntegerType.LARGEINT));
++        Assertions.assertNull(render(FunctionSet.SUM, null, IntegerType.BIGINT));
++    }
++
++    @Test
++    public void testMinMax() {
++        Assertions.assertEquals("min(\"name\")", render(FunctionSet.MIN, name, VarcharType.VARCHAR));
++        Assertions.assertEquals("max(\"id\")", render(FunctionSet.MAX, id, IntegerType.INT));
++        Assertions.assertNull(render(FunctionSet.MAX, price, FloatType.FLOAT));
 +    }
 +}
