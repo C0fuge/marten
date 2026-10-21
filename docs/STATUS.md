@@ -164,6 +164,14 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+0. **New server build `arrow-flight-server-1.0.0-int2.jar`** in release `m4-assets` (branch integration ac20b00,
+   default profile, same `flight-server-libs`; sha256 e0216cf9bf2a667f82bec9634dd4aa9469413619c928114ca40f40c7aed8c008,
+   not yet in SHA256SUMS — add it). It fixes both server findings: (a) partial mode now answers SQL with
+   expressions over aggregates (and FILTER/OVER, GROUP BY expressions) as ONE complete endpoint instead of a Binder
+   Error (it also used to drop FILTER/OVER silently = wrong results); (b) unsigned ints are widened in partial mode
+   too (UBIGINT → decimal128(20,0) in every mode). Make `m4.yml` take the server jar as an input (default int2),
+   run all checks against int2 (and keep int1 runnable). Keep the connector workarounds (UInt64 widening,
+   no integer `CAST(sum)` push in partial) — older servers stay supported; only revisit if int2 shows a reason.
 1. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
    `docs/M4-RESULTS.md`; fix failures in the patches (then FE + BE of the new series, `m4` of the touched checks,
    refresh the draft). If `bench/reference/sf10` has another layout, adapt `load_ref` in `ci/m4/m4.py`.
@@ -190,3 +198,4 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   creates the git tag) is left to you after M4.
 - 2026-10-21 (maintainer): M4 moves to CI as far as possible (docs/M4-CI.md); only a short final check runs on
   the local stand. The repo is private again because the `m4-assets` release holds our server build.
+- 2026-10-22 02:30 MSK (local coordinator): server fixes for both M4 findings are in int2 (see Next steps 0). The local final check (agent on the maintainer's stand) starts after the running speed benchmark; it writes its results here and to M4-RESULTS.md.
