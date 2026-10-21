@@ -13,8 +13,8 @@ generated at test time (root certs + override hostname, hostname mismatch, untru
 tls_verify=false, plain client against a TLS server).
 ---
  be/test/CMakeLists.txt                      |   3 +
- be/test/connector/flight_connector_test.cpp | 890 ++++++++++++++++++++
- 2 files changed, 893 insertions(+)
+ be/test/connector/flight_connector_test.cpp | 916 ++++++++++++++++++++
+ 2 files changed, 919 insertions(+)
  create mode 100644 be/test/connector/flight_connector_test.cpp
 
 diff --git a/be/test/CMakeLists.txt b/be/test/CMakeLists.txt
@@ -30,10 +30,10 @@ index 4e533869..67b2a33a 100644
 +ADD_BE_TEST(connector/flight_connector_test)
 diff --git a/be/test/connector/flight_connector_test.cpp b/be/test/connector/flight_connector_test.cpp
 new file mode 100644
-index 00000000..f73eb4c3
+index 00000000..a1612ce8
 --- /dev/null
 +++ b/be/test/connector/flight_connector_test.cpp
-@@ -0,0 +1,890 @@
+@@ -0,0 +1,916 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -252,6 +252,16 @@ index 00000000..f73eb4c3
 +        const std::string& t = request.ticket;
 +        if (t == "types") {
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({types_batch()}));
++            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            return arrow::Status::OK();
++        }
++        if (t == "u64") {
++            arrow::UInt64Builder b;
++            EXPECT_TRUE(b.Append(std::numeric_limits<uint64_t>::max()).ok());
++            EXPECT_TRUE(b.Append(9223372036854775808ULL).ok());
++            EXPECT_TRUE(b.AppendNull().ok());
++            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("c", arrow::uint64())}), 3, {finish(&b)});
++            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({batch}));
 +            *stream = std::make_unique<fl::RecordBatchStream>(reader);
 +            return arrow::Status::OK();
 +        }
@@ -657,6 +667,22 @@ index 00000000..f73eb4c3
 +    EXPECT_EQ("1969-12-31 23:59:59.999999", value(1));   // -1 us
 +    EXPECT_EQ("1969-12-31 23:59:59.999999", value(2));   // -1 ns, truncated to us
 +    EXPECT_EQ("1969-12-30 23:59:59.999999", value(3));   // -1 day -1 us
++}
++
++// The server's metadata says decimal128(20,0) but the stream carries UInt64 (result mode partial): no wrap.
++TEST_F(FlightConnectorTest, WidensUInt64ForDecimalSlot) {
++    create_state({{"c", TypeDescriptor::create_decimalv3_type(TYPE_DECIMAL128, 20, 0)}});
++    auto source = create_source("u64");
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    ASSERT_EQ(1, chunks.size());
++    auto column = chunks[0]->get_column_by_slot_id(0);
++    ASSERT_EQ(3, column->size());
++    EXPECT_TRUE(column->get(0).get_int128() == static_cast<int128_t>(std::numeric_limits<uint64_t>::max()));
++    EXPECT_TRUE(column->get(1).get_int128() == static_cast<int128_t>(9223372036854775808ULL));
++    EXPECT_TRUE(column->get(2).is_null());
 +}
 +
 +TEST_F(FlightConnectorTest, SlicesLargeBatchesIntoChunks) {

@@ -1,6 +1,5 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
-fe force=false tests=FlightAggregationPushdownRuleTest,FlightScanPlanTest,FlightSqlRendererTest,FlightTypeMapperTest,FlightPropertiesTest,FlightSqlMetadataClientTest,PushDownTopNToPreAggRuleTest
 be
 be-ut
-# session 2026-10-21 19:3x: dispatched directly (MCP) with a [skip ci] push; fixes from M4 run 39658484728
+# session 2026-10-21 19:5x: dispatched directly (MCP) with a [skip ci] push; UInt64 -> DECIMAL widening (0003/0007)

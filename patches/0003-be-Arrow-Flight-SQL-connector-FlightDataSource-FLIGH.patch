@@ -13,12 +13,12 @@ and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescrip
  be/src/connector/CMakeLists.txt              |   1 +
  be/src/connector/connector.cpp               |   3 +
  be/src/connector/connector.h                 |   2 +
- be/src/connector/flight_connector.cpp        | 488 +++++++++++++++++++
+ be/src/connector/flight_connector.cpp        | 521 +++++++++++++++++++
  be/src/connector/flight_connector.h          | 146 ++++++
  be/src/exec/arrow_to_starrocks_converter.cpp |  23 +-
  be/src/exec/exec_node.cpp                    |   7 +
  be/src/runtime/descriptors.cpp               |   5 +
- 8 files changed, 672 insertions(+), 3 deletions(-)
+ 8 files changed, 705 insertions(+), 3 deletions(-)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -84,10 +84,10 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..aa4fb523
+index 00000000..01a834a7
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,488 @@
+@@ -0,0 +1,521 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,6 +104,8 @@ index 00000000..aa4fb523
 +
 +#include "connector/flight_connector.h"
 +
++#include <arrow/array.h>
++#include <arrow/builder.h>
 +#include <arrow/flight/client.h>
 +#include <arrow/flight/types.h>
 +#include <arrow/record_batch.h>
@@ -191,6 +193,33 @@ index 00000000..aa4fb523
 +    std::unordered_set<FlightDataSource*> _sources;
 +    bool _started = false;
 +};
++
++// Our server streams UInt64 in result mode partial for a column its metadata declares decimal128(20,0) (M4 run
++// 39663221891); the UInt64 -> DECIMAL converter would wrap values >= 2^63, so such columns are widened first.
++arrow::Result<std::shared_ptr<arrow::RecordBatch>> widen_uint64_for_decimal(std::shared_ptr<arrow::RecordBatch> batch,
++                                                                            const std::vector<SlotDescriptor*>& slots) {
++    for (size_t i = 0; i < slots.size(); i++) {
++        const auto& array = batch->column(static_cast<int>(i));
++        if (array->type_id() != arrow::Type::UINT64 || !slots[i]->type().is_decimal_type()) {
++            continue;
++        }
++        const auto& u = static_cast<const arrow::UInt64Array&>(*array);
++        arrow::Decimal128Builder b(arrow::decimal128(20, 0));
++        ARROW_RETURN_NOT_OK(b.Reserve(u.length()));
++        for (int64_t r = 0; r < u.length(); r++) {
++            if (u.IsNull(r)) {
++                ARROW_RETURN_NOT_OK(b.AppendNull());
++            } else {
++                ARROW_RETURN_NOT_OK(b.Append(arrow::Decimal128(0, u.Value(r))));
++            }
++        }
++        std::shared_ptr<arrow::Array> out;
++        ARROW_RETURN_NOT_OK(b.Finish(&out));
++        auto field = arrow::field(batch->schema()->field(static_cast<int>(i))->name(), out->type());
++        ARROW_ASSIGN_OR_RAISE(batch, batch->SetColumn(static_cast<int>(i), field, out));
++    }
++    return batch;
++}
 +
 +} // namespace
 +
@@ -464,7 +493,11 @@ index 00000000..aa4fb523
 +        if (next->data->num_rows() == 0) {
 +            continue;
 +        }
-+        _batch = std::move(next->data);
++        auto widened = widen_uint64_for_decimal(std::move(next->data), _slots);
++        if (!widened.ok()) {
++            return to_status(widened.status());
++        }
++        _batch = std::move(widened).ValueOrDie();
 +        _batch_offset = 0;
 +        _last_batch_bytes = arrow::util::TotalBufferSize(*_batch);
 +        _bytes_read += _last_batch_bytes;
