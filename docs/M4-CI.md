@@ -115,5 +115,10 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   columns.
 - Output: artifact `m4-<run>` (results.md/json, all container logs, fe/be logs) and branch `m4-results`
   (`latest.md`, `runs/<run>.md`): `git fetch origin m4-results && git show origin/m4-results:latest.md`.
-- To do: checks 6–9 (second server `flight2` with `--hosts flight1,flight2`, KILL QUERY, token/TLS server modes,
-  memory limit).
+- Checks 6–9 (written, not yet run) restart the Flight server through `stack.sh`: 6 = cluster flight1+flight2,
+  full lineitem scan with `flight_aggregate_pushdown=false`, flight2 stopped before / SIGKILLed 1.5 s into the read;
+  7 = 8-way UNION ALL scan, `KILL QUERY` after 4 s, must end < 2 s; 8 = token server (right / wrong / missing
+  token, basic user:<token>, password masked), TLS server with a job-generated cert (CA file copied into `sr`,
+  host alias `flight1-alias` for the mismatch, untrusted, `tls.verify=false`, plain client); 9 = 3-key GROUP BY
+  over lineitem under `query_mem_limit`=100 MB must fail with a memory error, BE alive. Each restores the open
+  single-server setup at the end.

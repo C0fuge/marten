@@ -11,7 +11,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests on the maintainer's local stand | not in the cloud; test SQL prepared in `docs/M4-TESTS.md` |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **in progress**: workflow `m4.yml` + `ci/m4/` (checks 1–9 written; see M4-CI §7); results on branch `m4-results` |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for the current series `4a9848e-fl80f999` (run 39527877395); publish after M4 |
 
 ## Patch series (on tag 4.1.4)
@@ -40,6 +40,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   < 6 h, ccache carried in actions/cache); if 4 parts are not enough the run re-dispatches itself.
 - Builds are skipped when an output for the same input hash is cached (`fe-out-<hash>`, `be-out-<hash>`); a
   forced rebuild (or an FE build with tests) replaces the cache entry.
+- `m4.yml` (manual, `m4 checks=1,2,3` in `ci/dispatch.txt`): MinIO + our Flight server (release `m4-assets`) +
+  allin1 4.1.4 overlaid with the current series' FE/BE outputs, checks `ci/m4/m4.py`; results artifact `m4-<run>`
+  and branch `m4-results` (`git show origin/m4-results:latest.md`). Details: `docs/M4-CI.md` §7.
 - `release.yml` (manual, `release tag=v… draft=true prerelease=true` in `ci/dispatch.txt`): builds nothing; takes
   the FE/BE outputs of the current input hashes from the caches (or the newest `fe-jars-*` / `starrocks_be-*`
   artifact when the cache is missing or stale), requires both to report the series hash `4.1.4-<base>-fl<patches>`

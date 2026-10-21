@@ -27,10 +27,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Free disk
+        timeout-minutes: 5
         run: |
-          # only the two largest trees (removing the tool cache as well took > 5 min)
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android &
-          df -h / ; wait; df -h /
+          # the allin1 image (~3.2 GB compressed) + assets need room; the first run hung > 15 min here when it
+          # also removed the tool cache in the background
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android || true
+          df -h /
       - name: Prepare source
         run: scripts/prepare-source.sh "$RUNNER_TEMP/src"
       - name: Input hashes
