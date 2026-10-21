@@ -49,7 +49,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - Push-triggered builds (branches `main` and `claude/**`) react only to their patch areas (`*-thrift-*`,
   `*-fe-*`, `*-be-*`). `concurrency: cancel-in-progress` — a new push touching BE patches CANCELS a running BE
   build on the same branch.
-- The repo is public (free Actions minutes). A full BE build on the 4-vCPU runner is many hours; incremental BE builds with a warm ccache are short. Any change to patch 0001 (thrift) regenerates headers used
+- The repo is private again since 2026-10-21 (~2000 Actions minutes/month; see CLAUDE.md). A full BE build on the 4-vCPU runner is many hours; incremental BE builds with a warm ccache are short. Any change to patch 0001 (thrift) regenerates headers used
   everywhere = near-full BE rebuild, so batch thrift changes and avoid them.
 
 ## Log
@@ -132,20 +132,23 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
-1. React to M4 results from the maintainer (failures go here as new steps).
-2. After M4 passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false prerelease=false` (or
-   publish a draft by hand); delete the `v4.1.4-flight.0-dryrun` draft. FE and BE outputs of the current series
-   are cached (FE run 39526375694, BE run 39514450436); after any later patch change rebuild the other side with
-   `force=true` before `release` (see CI above). Retention: the `fe-jars-*` / `starrocks_be-*` artifacts are kept
-   7 days (expire ~2026-10-27/28) and Actions caches (outputs + BE ccache) are evicted after 7 days without
-   access. After that the draft release's own assets are the only copy: publish that draft by hand instead of
-   re-running `release`, which would need fresh FE/BE builds (and, with the ccache gone, a full multi-hour BE build).
+1. **M4 in CI** (brief: `docs/M4-CI.md`, inputs: release `m4-assets` + `tests/m4/`): workflow `m4.yml`
+   (dispatch `m4 checks=…` via `ci/dispatch.txt`) that starts MinIO + our server + StarRocks 4.1.4 overlaid with
+   the current series and runs the checks of M4-CI §4; results to `docs/M4-RESULTS.md`. Build it incrementally
+   (first checks 1–4, then 5–9).
+2. Fix every M4 failure in the patches (new series → FE/BE builds → rerun only the affected checks).
+3. `docs/LOCAL-FINAL-CHECK.md` for the maintainer (M4-CI §6), then refresh the draft release for the final series.
+4. After the maintainer's final check passes and they agree: `release tag=v4.1.4-flight.1 draft=false
+   prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
+   after 7 days without access — after a long pause expect a full BE rebuild (~90 min).
 
 ## Open questions for the maintainer
 
 - Not a decision, a heads-up: a first M4 smoke is possible now with the assets of the **draft** release
-  `v4.1.4-flight.0-dryrun` (Releases page, visible to you only; refreshed 2026-10-21 01:32 UTC: FE run
+  `v4.1.4-flight.0-dryrun` (Releases page; refreshed 2026-10-21 01:32 UTC: FE run
   39526375694 + BE run 39514450436, series `4a9848e-fl80f999`, starrocks_be sha256 fa59da66…), installed per `docs/INSTALL.md` (the allin1 image paths there are unverified),
   queries in `docs/M4-TESTS.md`. Nothing in the cloud work depends on it.
 - Release naming: the workflow takes any tag `v…`; proposed `v4.1.4-flight.N`. Publishing (draft → public, which
   creates the git tag) is left to you after M4.
+- 2026-10-21 (maintainer): M4 moves to CI as far as possible (docs/M4-CI.md); only a short final check runs on
+  the local stand. The repo is private again because the `m4-assets` release holds our server build.

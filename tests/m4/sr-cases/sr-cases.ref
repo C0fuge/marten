@@ -1,0 +1,94 @@
+### SELECT count(*), sum(l_extendedprice) FROM tpch.lineitem WHERE l_orderkey IN (SELECT o_orderkey FROM tpch.orders WHERE o_orderdate = DATE '1995-03-15')
+25236	966634734.32
+### SELECT count(*), sum(o_totalprice) FROM tpch.orders WHERE o_orderdate >= DATE '1998-07-01'
+205989	31091761840.95
+### SELECT o_orderpriority, count(*), sum(o_totalprice) FROM tpch.orders WHERE o_orderdate >= DATE '1997-01-01' GROUP BY o_orderpriority
+3-MEDIUM	720140	108791268291.33
+2-HIGH	722374	109079086000.08
+1-URGENT	723918	109332711168.94
+4-NOT SPECIFIED	721572	109020469510.95
+5-LOW	720721	108891887884.01
+### SELECT count(*) FROM tpch.orders WHERE o_orderdate >= '1998-08-01'
+12466
+### SELECT n_name FROM tpch.nation WHERE (n_name = 'O''Brien')
+### SELECT n_name FROM tpch.nation WHERE (n_name = 'O\'Brien')
+### SELECT n_name FROM tpch.nation WHERE (n_name = 'a "tpch" b')
+### SELECT n_regionkey FROM "tpch"."nation"
+0
+1
+1
+1
+4
+0
+3
+3
+2
+2
+4
+4
+2
+4
+0
+0
+0
+1
+2
+3
+4
+2
+3
+3
+1
+### SELECT "n_name" FROM "tpch"."nation" WHERE ("n_nationkey" = 5)
+ETHIOPIA
+### SELECT count(*) FROM tpch.orders WHERE o_orderkey < 1000
+255
+### SELECT count(*) FROM tpch.orders WHERE o_custkey = 370
+25
+### SELECT count(*) FROM tpch.orders WHERE o_orderdate = DATE '1995-03-15'
+6268
+### SELECT count(*) FROM tpch.orders WHERE o_orderdate >= DATE '1998-08-01'
+12466
+### SELECT count(*) FROM tpch.orders WHERE o_orderdate BETWEEN DATE '1995-01-01' AND DATE '1995-01-31'
+193902
+### SELECT count(*) FROM tpch.orders WHERE o_orderpriority IN ('1-URGENT','2-HIGH')
+6003154
+### SELECT count(*) FROM tpch.orders WHERE o_totalprice > 500000.00
+183
+### SELECT count(*) FROM tpch.orders WHERE o_totalprice BETWEEN 1000.00 AND 1100.50
+3427
+### SELECT count(*) FROM tpch.orders WHERE o_clerk LIKE 'Clerk#00000000%'
+13435
+### SELECT count(*) FROM tpch.orders WHERE o_comment LIKE '%special requests%'
+111084
+### SELECT count(*) FROM tpch.orders WHERE o_comment IS NULL
+0
+### SELECT o_orderstatus, count(*), sum(o_totalprice), min(o_orderdate), max(o_orderdate) FROM tpch.orders GROUP BY o_orderstatus ORDER BY o_orderstatus
+F	7309184	1097976414715.33	1992-01-01	1995-06-16
+O	7307464	1097461633118.62	1995-02-17	1998-08-02
+P	383352	70860142914.48	1995-02-17	1995-06-16
+### SELECT l_returnflag, l_linestatus, count(*), sum(l_quantity), sum(l_extendedprice), min(l_shipdate), max(l_shipdate), avg(l_discount) FROM tpch.lineitem GROUP BY l_returnflag, l_linestatus ORDER BY 1, 2
+A	F	14804077	377518399.00	566065727797.25	1992-01-02	1995-06-16	0.0500065745402432
+N	F	385998	9851614.00	14767438399.17	1995-05-19	1995-06-17	0.04997336773765667
+N	O	29987794	764635193.00	1146548935600.94	1995-06-18	1998-12-01	0.050001036755154445
+R	F	14808183	377732830.00	566431054976.00	1992-01-02	1995-06-16	0.04999679231408742
+### SELECT o_orderkey, o_totalprice, o_orderdate FROM tpch.orders ORDER BY o_totalprice DESC, o_orderkey LIMIT 5
+39394405	558822.56	1992-01-04
+3578692	558702.81	1998-06-10
+42290181	558289.17	1997-11-26
+2745894	557664.53	1996-07-04
+36667107	550142.18	1997-06-06
+### SELECT l_orderkey, l_linenumber, l_extendedprice FROM tpch.lineitem ORDER BY l_extendedprice DESC, l_orderkey, l_linenumber LIMIT 5
+16734176	2	104949.50
+508289	5	104949.00
+42768227	5	104949.00
+15556965	1	104947.00
+21953730	2	104945.50
+### SELECT n_name, count(*), sum(o_totalprice) FROM tpch.orders JOIN tpch.customer ON o_custkey = c_custkey JOIN tpch.nation ON c_nationkey = n_nationkey WHERE o_orderdate >= DATE '1998-07-01' GROUP BY n_name ORDER BY n_name LIMIT 5
+ALGERIA	8208	1228026807.64
+ARGENTINA	8090	1239270630.01
+BRAZIL	8227	1247590419.66
+CANADA	8200	1231098356.41
+CHINA	8297	1258702092.13
+### SELECT count(*), sum(l_extendedprice) FROM tpch.lineitem JOIN tpch.orders ON l_orderkey = o_orderkey WHERE o_orderdate = DATE '1995-03-15'
+25236	966634734.32

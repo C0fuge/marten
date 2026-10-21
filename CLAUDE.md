@@ -32,16 +32,18 @@ This repo is developed by a recurring cloud session that starts from zero contex
 
 ## Rules
 
-- The repo is **public** (since 2026-10-20, so Actions minutes are free; it may become private again later).
-  Everything you push is visible to anyone: double-check for secrets. Still keep builds lean — runners are slow
-  (full BE build ≈ many hours) and each build delays feedback. Before pushing a thrift or BE patch change, check `STATUS-CI.md`: a push touching BE patches cancels a
+- The repo is **private** (again since 2026-10-21): release `m4-assets` holds the maintainer's server build.
+  Never make the repo public and never copy those assets elsewhere. Actions minutes are limited (~2000/month for
+  everything): one full M4 run ≈ 45–75 min, so rerun only the checks a fix touches; check the minutes in
+  `STATUS-CI.md` and stop starting long runs (note it under Open questions) when the month's budget looks nearly
+  spent. Before pushing a thrift or BE patch change, check `STATUS-CI.md`: a push touching BE patches cancels a
   running BE build on the same branch. Batch BE changes; touch the thrift patch as rarely as possible. Don't use
   `force=true` without a reason. Never re-run a build that failed for the same reason without a fix.
 - No secrets, credentials, personal data or other projects' code in the repo. No copy of StarRocks sources
   (only patches).
 - Commit/push only to this repository. Don't open issues or PRs elsewhere.
-- M4 (tests against a real Arrow Flight server and the bench data) is done by the maintainer locally. Cloud
-  sessions do M1–M3 and M5 and FE unit tests; prepare M4 by writing the test SQL and expected results.
+- M4 runs in GitHub Actions as far as possible (`docs/M4-CI.md`); the maintainer runs only a short final check
+  locally (M4-CI §6). M4 failures are fixed here.
 - Anything that needs the maintainer's decision goes to "Open questions for the maintainer" in `docs/STATUS.md`;
   meanwhile continue with work that does not depend on it.
 - Write docs and commit messages in English.
