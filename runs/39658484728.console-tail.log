@@ -1,0 +1,60 @@
+- PASS `q16 topn=default` rows 18314/18314 0.32s
+- PASS `q17 topn=default` rows 1/1 0.83s
+- **FAIL** `q18 topn=default` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(l_quantity) as decimal(38, 2))" not found in FROM clause!')
+- PASS `q19 topn=default` rows 1/1 0.58s
+- **FAIL** `q20 topn=default` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(l_quantity) as decimal(38, 2))" not found in FROM clause!')
+- PASS `q21 topn=default` rows 100/100 1.84s
+- **FAIL** `q22 topn=default` ERROR ProgrammingError: (1064, "Getting syntax error at line 7, column 26. Detail message: Unexpected input 'FROM', the most similar input is {',', ')'}.")
+- **FAIL** `q01 topn=0` rows 4/4 1.47s | only in sr: [('A', 'F', '37734107', '56586554400.73', '53758257134.87', '55909065222.8277', '25.5220058', '38273.1297', '0.0499853', '1478493'), ('N', 'F', '991417', '1487504710.38', '1413082168.0541', '1469649223.1944', '25.5164719', '38284.4678', '0.05009343', '38854')] | only in ref: [('A', 'F', '37734107', '56586554400.73', '53758257134.87', '55909065222.8277', '25.5220059', '38273.1297', '0.0499852958', '1478493'), ('N', 'F', '991417', '1487504710.38', '1413082168.0541', '1469649223.1944', '25.5164719', '38284.4678', '0.0500934267', '38854')]
+- PASS `q02 topn=0` rows 100/100 0.42s
+- PASS `q03 topn=0` rows 10/10 1.18s
+- PASS `q04 topn=0` rows 5/5 0.57s
+- PASS `q05 topn=0` rows 5/5 1.19s
+- **FAIL** `q06 topn=0` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum((cast(l_extendedprice as decimal(15, 2)) * cast(l_discount as decimal(15, 2)))) as decimal(38, 4))" not found in FROM clause!')
+- PASS `q07 topn=0` rows 4/4 1.04s
+- PASS `q08 topn=0` rows 2/2 1.19s
+- PASS `q09 topn=0` rows 175/175 1.56s
+- PASS `q10 topn=0` rows 20/20 0.98s
+- PASS `q11 topn=0` rows 1048/1048 0.31s
+- PASS `q12 topn=0` rows 2/2 0.60s
+- PASS `q13 topn=0` rows 42/42 0.62s
+- PASS `q14 topn=0` rows 1/1 0.49s
+- **FAIL** `q15 topn=0` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum((cast(l_extendedprice as decimal(15, 2)) * cast((1 - cast(l_discount as decimal(16, 2))) as decimal(16, 2)))) as decimal(38, 4))" not found in FROM clause!')
+- PASS `q16 topn=0` rows 18314/18314 0.28s
+- PASS `q17 topn=0` rows 1/1 0.64s
+- **FAIL** `q18 topn=0` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(l_quantity) as decimal(38, 2))" not found in FROM clause!')
+- PASS `q19 topn=0` rows 1/1 0.50s
+- **FAIL** `q20 topn=0` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(l_quantity) as decimal(38, 2))" not found in FROM clause!')
+- PASS `q21 topn=0` rows 100/100 2.42s
+- **FAIL** `q22 topn=0` ERROR ProgrammingError: (1064, "Getting syntax error at line 7, column 26. Detail message: Unexpected input 'FROM', the most similar input is {',', ')'}.")
+- note: timings (s): q01/default=1.47, q02/default=0.80, q03/default=1.33, q04/default=0.70, q05/default=1.63, q07/default=1.21, q08/default=1.92, q09/default=1.89, q10/default=1.09, q11/default=0.43, q12/default=0.59, q13/default=0.83, q14/default=0.51, q16/default=0.32, q17/default=0.83, q19/default=0.58, q21/default=1.84, q01/0=1.47, q02/0=0.42, q03/0=1.18, q04/0=0.57, q05/0=1.19, q07/0=1.04, q08/0=1.19, q09/0=1.56, q10/0=0.98, q11/0=0.31, q12/0=0.60, q13/0=0.62, q14/0=0.49, q16/0=0.28, q17/0=0.64, q19/0=0.50, q21/0=2.42
+
+## Check 5: sr-cases on SF1
+
+- PASS `SELECT count(*), sum(l_extendedprice) FROM flight.tpch.lineitem WHERE l_orderkey IN (SELECT o_orderkey FROM flight.tpch.orders WHERE o_orderdate = DATE '1995-03-15')` rows 1
+- **FAIL** `SELECT count(*), sum(o_totalprice) FROM tpch.orders WHERE o_orderdate >= DATE '1998-07-01'` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(o_totalprice) as decimal(38, 2))" not found in FROM clause!')
+- **FAIL** `SELECT o_orderpriority, count(*), sum(o_totalprice) FROM tpch.orders WHERE o_orderdate >= DATE '1997-01-01' GROUP BY o_orderpriority` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(o_totalprice) as decimal(38, 2))" not found in FROM clause!')
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate >= '1998-08-01'` rows 1
+- PASS `SELECT n_name FROM flight.tpch.nation WHERE (n_name = 'O''Brien')` rows 0
+- PASS `SELECT n_name FROM flight.tpch.nation WHERE (n_name = 'O\'Brien')` rows 0
+- PASS `SELECT n_name FROM flight.tpch.nation WHERE (n_name = 'a "tpch" b')` rows 0
+- PASS `SELECT n_regionkey FROM flight.tpch.`nation`` rows 25
+- PASS `SELECT `n_name` FROM flight.tpch.`nation` WHERE (`n_nationkey` = 5)` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderkey < 1000` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_custkey = 370` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate = DATE '1995-03-15'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate >= DATE '1998-08-01'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate BETWEEN DATE '1995-01-01' AND DATE '1995-01-31'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderpriority IN ('1-URGENT','2-HIGH')` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_totalprice > 500000.00` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_totalprice BETWEEN 1000.00 AND 1100.50` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_clerk LIKE 'Clerk#00000000%'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_comment LIKE '%special requests%'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_comment IS NULL` rows 1
+- **FAIL** `SELECT o_orderstatus, count(*), sum(o_totalprice), min(o_orderdate), max(o_orderdate) FROM tpch.orders GROUP BY o_orderstatus ORDER BY o_orderstatus` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Binder Error: Referenced column "cast(sum(o_totalprice) as decimal(38, 2))" not found in FROM clause!')
+- **FAIL** `SELECT l_returnflag, l_linestatus, count(*), sum(l_quantity), sum(l_extendedprice), min(l_shipdate), max(l_shipdate), avg(l_discount) FROM flight.tpch.lineitem GROUP BY l_returnflag, l_linestatus ORDE` rows 4 | sr=[('A', 'F', '1478493', '37734107', '56586554400.73', '1992-01-02', '1995-06-16', '0.05'), ('N', 'F', '38854', '991417', '1487504710.38', '1995-05-19', '1995-06-17', '0.0501'), ('N', 'O', '3004998', '76633518', '114935210409.19', '1995-06-18', '1998-12-01', '0.05')] duck=[('A', 'F', '1478493', '37734107', '56586554400.73', '1992-01-02', '1995-06-16', '0.0499852958'), ('N', 'F', '38854', '991417', '1487504710.38', '1995-05-19', '1995-06-17', '0.0500934267'), ('N', 'O', '3004998', '76633518', '114935210409.19', '1995-06-18', '1998-12-01', '0.0500002596')]
+- PASS `SELECT o_orderkey, o_totalprice, o_orderdate FROM flight.tpch.orders ORDER BY o_totalprice DESC, o_orderkey LIMIT 5` rows 5
+- PASS `SELECT l_orderkey, l_linenumber, l_extendedprice FROM flight.tpch.lineitem ORDER BY l_extendedprice DESC, l_orderkey, l_linenumber LIMIT 5` rows 5
+- PASS `SELECT n_name, count(*), sum(o_totalprice) FROM flight.tpch.orders JOIN flight.tpch.customer ON o_custkey = c_custkey JOIN flight.tpch.nation ON c_nationkey = n_nationkey WHERE o_orderdate >= DATE '19` rows 5
+- PASS `SELECT count(*), sum(l_extendedprice) FROM flight.tpch.lineitem JOIN flight.tpch.orders ON l_orderkey = o_orderkey WHERE o_orderdate = DATE '1995-03-15'` rows 1
+
