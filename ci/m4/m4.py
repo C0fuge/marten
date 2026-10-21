@@ -5,6 +5,13 @@
 
 Expects StarRocks on 127.0.0.1:9030 (root, no password) whose BE reaches the Flight server at $M4_FLIGHT_URI.
 Every check compares StarRocks with DuckDB on the same parquet files (or with tests/m4/reference/sf1).
+
+On the maintainer's stand (docs/LOCAL-FINAL-CHECK.md), with an existing catalog and no parquet files:
+
+    m4.py --checks 4,5 --out DIR --existing-catalog flight --reference bench/reference/sf10 \
+          --ref-catalog jdbc --sr-cases-ref tests/m4/sr-cases/sr-cases.ref
+
+StarRocks connection from $M4_SR_HOST / $M4_SR_PORT / $M4_SR_USER / $M4_SR_PASSWORD (defaults as above).
 Writes DIR/results.md (summary + details) and DIR/results.json; exit code 0 even on failed checks (the
 workflow decides), 2 on harness errors.
 """
@@ -24,7 +31,9 @@ FLIGHT_URI = os.environ.get("M4_FLIGHT_URI", "grpc://flight1:32010")
 # ---------------------------------------------------------------- connections
 
 def sr_connect():
-    c = pymysql.connect(host="127.0.0.1", port=9030, user="root", password="", autocommit=True,
+    c = pymysql.connect(host=os.environ.get("M4_SR_HOST", "127.0.0.1"), port=int(os.environ.get("M4_SR_PORT", "9030")),
+                        user=os.environ.get("M4_SR_USER", "root"), password=os.environ.get("M4_SR_PASSWORD", ""),
+                        autocommit=True,
                         read_timeout=1800, write_timeout=600)
     with c.cursor() as cur:
         cur.execute("SET time_zone = 'UTC'")
@@ -369,17 +378,17 @@ def check3(conn, args, res):
 
 # ---------------------------------------------------------------- check 4: TPC-H SF1
 
-def load_ref(q):
-    ref = os.path.join(M4, "reference", "sf1")
+def load_ref(q, ref):
     cols = [l.rstrip("\n").split("\t") for l in open(f"{ref}/{q}.cols") if l.strip()]
     rows = [l.rstrip("\n").split("\t") for l in open(f"{ref}/{q}.tsv") if l.rstrip("\n") != ""]
     return cols, rows
 
 
 def check4(conn, args, res):
-    sr(conn, "SET CATALOG flight")
+    sr(conn, f"SET CATALOG {args.catalog}")
     sr(conn, "USE tpch")
     timings = []
+    ref_timings = []
     topn_default = sr(conn, "SHOW VARIABLES LIKE 'cbo_push_down_topn_limit'")[0][1]
     try:
         for topn in ("default", "0"):
@@ -392,11 +401,28 @@ def check4(conn, args, res):
                     # StarRocks has no SQL-standard substring(x FROM a FOR b) (q22)
                     sql = re.sub(r"substring\(\s*([\w.]+)\s+FROM\s+(\d+)\s+FOR\s+(\d+)\s*\)",
                                  r"substring(\1, \2, \3)", sql, flags=re.I)
-                    cols, ref = load_ref(q)
+                    cols, ref = load_ref(q, args.reference)
                     t0 = time.time()
                     got = sr(conn, sql)
                     secs = time.time() - t0
                     timings.append((q, topn, secs))
+                    if args.ref_catalog:
+                        # same query on the other catalog (e.g. the JDBC bridge): equal rows, timing for comparison
+                        sr(conn, f"SET CATALOG {args.ref_catalog}")
+                        try:
+                            sr(conn, "USE tpch")
+                            t1 = time.time()
+                            other = sr(conn, sql)
+                            ref_timings.append((q, topn, time.time() - t1))
+                        finally:
+                            sr(conn, f"SET CATALOG {args.catalog}")
+                            sr(conn, "USE tpch")
+                        a = [tuple(norm(v) for v in r) for r in got]
+                        b = [tuple(norm(v) for v in r) for r in other]
+                        same = sorted(a) == sorted(b) and ("ORDER BY" not in sql.upper() or a == b)
+                        res.add(f"{q} topn={topn} = {args.ref_catalog}", same,
+                                f"rows {len(a)}/{len(b)}" + ("" if same else f" | {args.catalog}={a[:2]} "
+                                                             f"{args.ref_catalog}={b[:2]}"))
                     types = [c[1] for c in cols]
                     g = [tuple(norm_sr_as(v, ty) for v, ty in zip(r, types)) for r in got]
                     e = [tuple(norm_text(v, ty) for v, ty in zip(r, types)) for r in ref]
@@ -413,22 +439,51 @@ def check4(conn, args, res):
     finally:
         sr(conn, f"SET cbo_push_down_topn_limit = {topn_default}")
         sr(conn, "SET CATALOG default_catalog")
-    res.notes.append("timings (s): " + ", ".join(f"{q}/{t}={s:.2f}" for q, t, s in timings))
+    res.notes.append(f"timings {args.catalog} (s): " + ", ".join(f"{q}/{t}={s:.2f}" for q, t, s in timings))
+    if ref_timings:
+        res.notes.append(f"timings {args.ref_catalog} (s): " +
+                         ", ".join(f"{q}/{t}={s:.2f}" for q, t, s in ref_timings))
+        res.notes.append(f"total (s): {args.catalog} {sum(t[2] for t in timings):.1f}, "
+                         f"{args.ref_catalog} {sum(t[2] for t in ref_timings):.1f}")
 
 
 # ---------------------------------------------------------------- check 5: sr-cases on SF1
 
+def load_sr_cases_ref(path):
+    """sr-cases.ref (JDBC bridge answers): '### <query>' followed by its rows, tab-separated text."""
+    ref, cur = {}, None
+    for line in open(path):
+        line = line.rstrip("\n")
+        if line.startswith("### "):
+            cur = ref.setdefault(line[4:], [])
+        elif cur is not None and line != "":
+            cur.append(tuple(norm_ref_cell(c) for c in line.split("\t")))
+    return ref
+
+
+def norm_ref_cell(cell):
+    if re.fullmatch(r"-?\d+(\.\d+)?([eE][-+]?\d+)?", cell):
+        return norm(Decimal(cell))
+    return cell
+
+
 def check5(conn, args, res):
     d = args.duck
+    refs = load_sr_cases_ref(args.sr_cases_ref) if args.sr_cases_ref else None
     sr(conn, "SET CATALOG default_catalog")
     for q in [l.rstrip("\n") for l in open(os.path.join(M4, "sr-cases", "sr-cases.sql")) if l.strip()]:
         def one(q=q):
             # same rewriting as sr_cases.py: "x" identifiers become `x` unless the query has string literals
             sq = q if "'" in q else q.replace('"', '`')
-            sq = re.sub(r"\btpch\.", "flight.tpch.", sq).replace("`tpch`.", "flight.tpch.")
+            sq = re.sub(r"\btpch\.", f"{args.catalog}.tpch.", sq).replace("`tpch`.", f"{args.catalog}.tpch.")
             got = [tuple(norm(v) for v in r) for r in sr(conn, sq)]
-            dq = q.replace("\\'", "''")   # DuckDB has no backslash escapes
-            exp = [tuple(norm(v) for v in r) for r in d.execute(dq).fetchall()]
+            if refs is not None:
+                if q not in refs:
+                    raise KeyError(f"query not in {args.sr_cases_ref}")
+                exp = refs[q]
+            else:
+                dq = q.replace("\\'", "''")   # DuckDB has no backslash escapes
+                exp = [tuple(norm(v) for v in r) for r in d.execute(dq).fetchall()]
             ordered = "ORDER BY" in q.upper()
             ok = (got == exp) if ordered else (sorted(got) == sorted(exp))
             res.add(sq, ok, f"rows {len(got)}" + ("" if ok else f" | sr={got[:3]} duck={exp[:3]}"))
@@ -648,18 +703,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checks", default="1,2,3,4,5")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--tpch", required=True)
-    ap.add_argument("--types", required=True)
+    ap.add_argument("--tpch", help="TPC-H parquet dir (DuckDB side; needed by checks 1-3, 5 without "
+                                   "--sr-cases-ref, 6)")
+    ap.add_argument("--types", help="types tables parquet dir (checks 1-3)")
+    ap.add_argument("--catalog", default="flight", help="catalog under test in checks 4 and 5")
+    ap.add_argument("--existing-catalog", action="store_true",
+                    help="use the existing catalog --catalog as is: check 1 is not run implicitly")
+    ap.add_argument("--reference", default=os.path.join(M4, "reference", "sf1"),
+                    help="TPC-H answers for check 4 (qNN.tsv + qNN.cols)")
+    ap.add_argument("--ref-catalog", default="", help="check 4 also runs every query on this catalog "
+                                                      "(e.g. the JDBC bridge) and compares rows and timings")
+    ap.add_argument("--sr-cases-ref", default="", help="check 5 compares with this file (sr-cases.ref format) "
+                                                       "instead of DuckDB")
     ap.add_argument("--token", default=os.environ.get("M4_TOKEN", ""))
     ap.add_argument("--series", default="")
     ap.add_argument("--assets", default=os.path.expanduser("~/m4-assets"))
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    args.duck = duck(args.tpch, args.types)
+    args.duck = duck(args.tpch, args.types) if args.tpch and args.types else None
     conn = sr_connect()
     results = []
     nums = [int(x) for x in args.checks.split(",") if x.strip()]
-    if any(n > 1 for n in nums) and 1 not in nums:
+    if any(n > 1 for n in nums) and 1 not in nums and not args.existing_catalog:
         nums = [1] + nums      # later checks need the catalog
     for n in nums:
         if n not in FUNCS:

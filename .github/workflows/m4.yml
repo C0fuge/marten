@@ -9,6 +9,9 @@ on:
       checks:
         description: "comma-separated check numbers of docs/M4-CI.md §4 (implemented: 1-9; 6-9 restart the Flight server)"
         default: "1,2,3,4,5"
+      ref_catalog:
+        description: "check 4 also compares every query with this catalog (m4.py --ref-catalog; flight_c exists after check 3)"
+        default: ""
 
 concurrency:
   group: m4
@@ -102,6 +105,7 @@ jobs:
       - name: Checks
         env:
           CHECKS: ${{ inputs.checks }}
+          REF_CATALOG: ${{ inputs.ref_catalog }}
           SERIES: 4.1.4-${{ steps.hash.outputs.commit_hash }}
         run: |
           # Catalog token: a random dummy value (the server runs open for checks 1-5); it must never show up in
@@ -109,7 +113,8 @@ jobs:
           M4_TOKEN=m4tok$(openssl rand -hex 12); export M4_TOKEN
           echo "M4_TOKEN=$M4_TOKEN" >> "$GITHUB_ENV"
           python3 ci/m4/m4.py --checks "$CHECKS" --out "$RUNNER_TEMP/m4" \
-            --tpch /home/runner/m4-assets/x/sf1/tpch --types tests/m4/data/types --series "$SERIES" 2>&1 | tee "$RUNNER_TEMP/m4-console.log"
+            --tpch /home/runner/m4-assets/x/sf1/tpch --types tests/m4/data/types --series "$SERIES" \
+            ${REF_CATALOG:+--ref-catalog "$REF_CATALOG"} 2>&1 | tee "$RUNNER_TEMP/m4-console.log"
           exit "${PIPESTATUS[0]}"
       - name: Logs and token grep
         if: always()

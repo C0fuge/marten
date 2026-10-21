@@ -1,5 +1,5 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
-be
-be-ut
-# session 2026-10-21 19:5x: dispatched directly (MCP) with a [skip ci] push; UInt64 -> DECIMAL widening (0003/0007)
+m4 checks=1,3,4 ref_catalog=flight_c
+release tag=v4.1.4-flight.0-dryrun draft=true prerelease=true
+# session 2026-10-21 20:2x: test m4.py --ref-catalog (local final check path); refresh the draft for series 4a9848e-fl598360
