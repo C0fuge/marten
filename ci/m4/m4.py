@@ -720,6 +720,10 @@ def main():
     ap.add_argument("--assets", default=os.path.expanduser("~/m4-assets"))
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    if os.path.abspath(args.reference) != os.path.join(M4, "reference", "sf1"):
+        TITLES[4] = f"TPC-H q01–q22 vs {os.path.basename(os.path.normpath(args.reference))}, topn default and 0"
+    if args.sr_cases_ref:
+        TITLES[5] = f"sr-cases vs {os.path.basename(args.sr_cases_ref)}"
     args.duck = duck(args.tpch, args.types) if args.tpch and args.types else None
     conn = sr_connect()
     results = []
