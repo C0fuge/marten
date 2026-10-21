@@ -60,3 +60,12 @@ BE 39664594320, be-ut 39664598409 20/20).
 
 Harness test for the local final check (`m4.py --ref-catalog`): 1 PASS 15/15, 3 PASS 21/21, 4 **PASS 88/88**
 (44 against `reference/sf1`, 44 against the same query on catalog `flight_c`, result mode complete).
+
+## 2026-10-21, run 39688089343 — series `4a9848e-fl598360`, checks 1, 6, 8 (hardened harness)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | + exact `DESC` vs the PLAN §2.2 mapping of the server's GetTables schema (all 10 tables) | PASS 25/25 (hidden as designed: `c_time` time64[us], `c_interval` month_day_nano_interval) |
+| 6 | "during" now reads lineitem 3x (5.5 s), flight2 SIGKILLed at 35% (2.2 s in) | PASS 6/6: query ended 3.4 s after the kill with correct rows, **FailoverCount=3** in its profile (endpoints of flight2 failed over to flight1 before delivering data) |
+| 8 | + token / password not in the query profiles of a token and a basic-auth scan | PASS 14/14 |
+| log masking | | PASS |

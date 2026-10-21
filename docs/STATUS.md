@@ -11,7 +11,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6), checklist **`docs/LOCAL-FINAL-CHECK.md`** (ready) |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Hardened checks 1/6/8 (exact DESC vs PLAN §2.2, failover kill proven to hit the read, profile grep) green (run 39688089343). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6), checklist **`docs/LOCAL-FINAL-CHECK.md`** (ready) |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test; current series `4a9848e-fl598360`, FE 39664615702, BE 39664594320); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for series `4a9848e-fl598360` (release run 39670616758; FE 39664615702, BE 39664594320); publish after the local final check |
 
 ## Patch series (on tag 4.1.4)
@@ -153,18 +153,21 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   `m4.yml` the input `ref_catalog`; tested by m4 run 39670612956 (checks 1,3,4 vs `flight_c`: 15/15, 21/21,
   88/88). Draft release `v4.1.4-flight.0-dryrun` refreshed for series `4a9848e-fl598360` (release run
   39670616758). No patch changed.
+- 2026-10-21 22:36–23:00 UTC (cloud session): Next step 1 (M4 CI hardening) done, harness only (`ci/m4/m4.py`, no
+  patch change): check 1 compares every DESC exactly with the PLAN §2.2 mapping (`plan_type`, mirrors
+  FlightTypeMapper) of the server's GetTables schema; check 6 "during" reads lineitem 3x and kills flight2 at 35%
+  of the measured read, and requires proof that the kill hit the read (error, or `FailoverCount` > 0 in the query
+  profile); check 8 fetches the query profiles (`get_query_profile`) of a token and a basic-auth scan and greps
+  them for the token. m4 run 39688089343 (checks 1,6,8): all PASS — 25/25, 6/6 (FailoverCount=3, correct rows,
+  query ended 3.4 s after the kill), 14/14. Side note: PLAN §2.2 lists Decimal256 p≤38 → DECIMAL, the code hides
+  every Decimal256 (BE has no Decimal256 converter); no effect with DuckDB (max precision 38 → decimal128).
 
 ## Next steps
 
-1. M4 CI hardening (small, rerun only the touched check): check 8 should also grep a query profile for the
-   token; check 6 "during" should prove the kill overlapped the read (in run 39665941130 the read finished
-   correctly 1.2 s after the kill, so a failover/abort may not have been exercised — e.g. a bigger scan or a
-   kill at a fixed fraction of the measured read time); check 1 could compare DESC of the types tables with
-   PLAN §2.2 exactly. Any new failure: fix in the patches, rebuild, rerun only that check.
-2. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
+1. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
    `docs/M4-RESULTS.md`; fix failures in the patches (then FE + BE of the new series, `m4` of the touched checks,
    refresh the draft). If `bench/reference/sf10` has another layout, adapt `load_ref` in `ci/m4/m4.py`.
-3. After the final check passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false
+2. After the final check passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false
    prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
    after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
    FE **and** BE outputs of the new series before `m4` or `release` (the other side: `fe/be force=true`).
