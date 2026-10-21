@@ -6,6 +6,7 @@
 #   ci/m4/stack.sh minio   ASSET_DIR                 start MinIO, upload tpch (SF1) + types tables to s3://lake/parquet
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
+#   ci/m4/stack.sh wait    NAME                      wait until the Flight server NAME is started (M4_NO_WAIT=1 skips it in `flight`)
 #   ci/m4/stack.sh stop|kill NAME...                 remove (stop) or SIGKILL Flight server containers
 #   ci/m4/stack.sh certs   DIR HOST                  self-signed EC cert for HOST (DIR/server.crt, PKCS#8 server.key)
 #   ci/m4/stack.sh logs    DIR                       copy all container logs into DIR
@@ -121,6 +122,11 @@ flight)
         ${FLIGHT_JAVA_OPTS:-} -Xmx2g -XX:MaxDirectMemorySize=1g \
         -cp "/srv/server.jar:/srv/libs/*" pro.surpin.data.arrowflight.server.HadoopArrowFlightServer \
         --localhost "$NAME" --hosts "$HOSTS" >/dev/null
+    [ -z "${M4_NO_WAIT:-}" ] || exit 0
+    exec "$0" wait "$NAME"
+    ;;
+wait)
+    NAME=$2
     for i in $(seq 180); do
         log=$(docker logs "$NAME" 2>&1 || true)
         if grep -q "Server Arrow Flight SQL started" <<<"$log"; then echo "$NAME started after ${i}s"; exit 0; fi

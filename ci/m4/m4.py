@@ -191,7 +191,7 @@ def type_ok(duck_type, sr_type):
     simple = {
         "BOOLEAN": ["BOOLEAN"], "TINYINT": ["TINYINT"], "SMALLINT": ["SMALLINT"], "INTEGER": ["INT"],
         "BIGINT": ["BIGINT"], "UTINYINT": ["SMALLINT"], "USMALLINT": ["INT"], "UINTEGER": ["BIGINT"],
-        "UBIGINT": ["LARGEINT"], "FLOAT": ["FLOAT"], "DOUBLE": ["DOUBLE"], "DATE": ["DATE"],
+        "UBIGINT": ["LARGEINT", "DECIMAL(20,0)", "DECIMAL128(20,0)"], "FLOAT": ["FLOAT"], "DOUBLE": ["DOUBLE"], "DATE": ["DATE"],
         "TIMESTAMP": ["DATETIME"], "TIMESTAMP_NS": ["DATETIME"], "TIMESTAMP WITH TIME ZONE": ["DATETIME"],
         "BLOB": ["VARBINARY"], "UUID": ["VARBINARY", "VARCHAR", None, ""],
         "TIME": [None, ""], "INTERVAL": [None, ""],
@@ -215,10 +215,11 @@ def type_ok(duck_type, sr_type):
 
 # ---------------------------------------------------------------- check 2: every column of the types tables
 
-def adbc_probe(sql):
+def adbc_probe(sql, headers=None):
     """Ask the Flight server directly (ADBC Flight SQL), bypassing StarRocks: (schema, rows) as text."""
     import adbc_driver_flightsql.dbapi as fs
-    with fs.connect(FLIGHT_URI) as c, c.cursor() as cur:
+    kw = {f"adbc.flight.sql.rpc.call_header.{k}": v for k, v in (headers or {}).items()}
+    with fs.connect(FLIGHT_URI, db_kwargs=kw) as c, c.cursor() as cur:
         cur.execute(sql)
         t = cur.fetch_arrow_table()
         return str(t.schema).replace("\n", "; "), t.to_pylist()
@@ -226,12 +227,20 @@ def adbc_probe(sql):
 
 def check2(conn, args, res):
     d = args.duck
-    for sql in ("SELECT id, c_ubigint, c_ts, c_uuid FROM types.alltypes_full WHERE id IN (2, 3) ORDER BY id",):
+    sql = "SELECT id, c_ubigint FROM types.alltypes_full WHERE id IN (2, 3) ORDER BY id"
+    for hdr in ({}, {"x-flight-result-mode": "partial"}, {"x-flight-result-mode": "complete"}):
         try:
-            sch, rows = adbc_probe(sql)
-            res.notes.append(f"server direct (ADBC): {sql} -> schema {sch}; rows {rows}")
+            sch, rows = adbc_probe(sql, hdr)
+            res.notes.append(f"server direct (ADBC, headers {hdr}): {sql} -> schema {sch}; rows {rows}")
         except Exception as e:
-            res.notes.append(f"server direct (ADBC) failed: {type(e).__name__}: {e}"[:500])
+            res.notes.append(f"server direct (ADBC, headers {hdr}) failed: {type(e).__name__}: {e}"[:500])
+    try:   # same column through StarRocks with result mode complete
+        catalog(conn, "flight_cmp", flight__result_mode="complete")
+        rows = sr(conn, "SELECT id, c_ubigint FROM flight_cmp.types.alltypes_full WHERE id IN (2, 3) ORDER BY id")
+        res.notes.append(f"StarRocks, result_mode=complete: c_ubigint id 2,3 = {rows}")
+        sr(conn, "DROP CATALOG flight_cmp")
+    except Exception as e:
+        res.notes.append(f"StarRocks complete-mode probe failed: {type(e).__name__}: {e}"[:400])
         try:
             import adbc_driver_flightsql.dbapi as fs
             with fs.connect(FLIGHT_URI) as c:
@@ -253,7 +262,14 @@ def check2(conn, args, res):
             def one(c=c):
                 kind = "float" if dk.get(c) == "FLOAT" else "exact"
                 got = {r[0]: norm(r[1], kind) for r in sr(conn, f"SELECT id, `{c}` FROM flight.types.{t}")}
-                exp = {r[0]: norm(r[1], kind) for r in d.execute(f'SELECT id, "{c}" FROM types.{t}').fetchall()}
+                if dk.get(c) == "TIMESTAMP_NS":
+                    # DuckDB's Python conversion truncates ns toward zero; the BE floors to microseconds
+                    q = f'SELECT id, epoch_ns("{c}") FROM types.{t}'
+                    epoch = datetime.datetime(1970, 1, 1)
+                    exp = {r[0]: norm(None if r[1] is None else epoch + datetime.timedelta(microseconds=r[1] // 1000))
+                           for r in d.execute(q).fetchall()}
+                else:
+                    exp = {r[0]: norm(r[1], kind) for r in d.execute(f'SELECT id, "{c}" FROM types.{t}').fetchall()}
                 diff = [i for i in exp if got.get(i, "<missing>") != exp[i]]
                 extra = len(set(got) - set(exp))
                 det = f"{len(diff)}/{len(exp)} differ" + (f", {extra} extra ids" if extra else "")
@@ -435,8 +451,11 @@ def stack(*a, env=None):
 def flight_restart(args, servers=("flight1",), env=None):
     """Replace all Flight servers by `servers` (one cluster), started with the extra FLIGHT_* env."""
     stack("stop", "flight1", "flight2")
+    # cluster members wait for each other before "started": start all, then wait for each
     for n in servers:
-        stack("flight", args.assets, n, ",".join(servers), env=env)
+        stack("flight", args.assets, n, ",".join(servers), env=dict(env or {}, M4_NO_WAIT="1"))
+    for n in servers:
+        stack("wait", n)
 
 
 def catalog(conn, name, uri=None, **props):
@@ -488,7 +507,7 @@ def check6(conn, args, res):
                 f"{secs:.1f}s got={got}")
 
         stack("flight", args.assets, "flight2", "flight1,flight2")
-        time.sleep(5)
+        time.sleep(10)
         out = {}
         def run():
             c2 = sr_connect()
