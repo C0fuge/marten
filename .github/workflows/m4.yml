@@ -90,7 +90,7 @@ jobs:
           path: /home/runner/m4-assets
           key: m4-assets-int1-v1
       - name: Python
-        run: pip install --quiet duckdb==1.4.1 pymysql pytz
+        run: pip install --quiet duckdb==1.4.1 pymysql pytz boto3
       - name: MinIO + data
         run: ci/m4/stack.sh minio /home/runner/m4-assets
       - name: Flight server

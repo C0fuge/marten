@@ -21,8 +21,10 @@ M4_STATE=${M4_STATE:-$HOME/.m4-state}
 SR_HOME=/data/deploy/starrocks
 SR_IMAGE=docker.io/starrocks/allin1-ubuntu:4.1.4
 JDK_IMAGE=docker.io/library/eclipse-temurin:21-jre
-MINIO_IMAGE=docker.io/minio/minio:latest
-MC_IMAGE=docker.io/minio/mc:latest
+# docker.io/minio/minio no longer exists (2026-10-21: "pull access denied"); first image that pulls wins.
+# Format: image|args (args empty = the image's own entrypoint/cmd serves /data, as bitnami does).
+MINIO_IMAGES=("quay.io/minio/minio:latest|server /data" "docker.io/bitnamilegacy/minio:latest|"
+              "cgr.dev/chainguard/minio:latest|server /data")
 
 net() { docker network inspect m4 >/dev/null 2>&1 || docker network create m4 >/dev/null; }
 
@@ -55,12 +57,39 @@ minio)
         printf 'MINIO_ROOT_USER=m4%s\nMINIO_ROOT_PASSWORD=%s\n' "$(openssl rand -hex 6)" "$(openssl rand -hex 16)" > "$M4_STATE/minio.env"
     fi
     . "$M4_STATE/minio.env"
-    docker run -d --name minio --network m4 --env-file "$M4_STATE/minio.env" "$MINIO_IMAGE" server /data >/dev/null
-    for i in $(seq 60); do docker exec minio mc ready local >/dev/null 2>&1 && break; sleep 1; done
-    docker run --rm --network m4 --env-file "$M4_STATE/minio.env" \
-        -v "$A/x/sf1/tpch:/up/tpch:ro" -v "$REPO_ROOT/tests/m4/data/types:/up/types:ro" --entrypoint sh "$MC_IMAGE" -c '
-        mc alias set m http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null &&
-        mc mb -p m/lake && mc mirror -q /up m/lake/parquet && mc du --depth 2 m/lake/parquet'
+    started=
+    for c in "${MINIO_IMAGES[@]}"; do
+        img=${c%%|*} margs=${c#*|}
+        docker pull -q "$img" >/dev/null 2>&1 || { echo "cannot pull $img"; continue; }
+        # shellcheck disable=SC2086
+        docker run -d --name minio --network m4 -p 127.0.0.1:9000:9000 --env-file "$M4_STATE/minio.env" "$img" $margs >/dev/null
+        for i in $(seq 60); do
+            curl -sf http://127.0.0.1:9000/minio/health/ready >/dev/null && { started=$img; break; }
+            sleep 1
+        done
+        [ -n "$started" ] && break
+        docker logs minio 2>&1 | tail -20; docker rm -f minio >/dev/null
+    done
+    [ -n "$started" ] || { echo "no MinIO image worked" >&2; exit 1; }
+    echo "MinIO: $started"
+    # upload with boto3 (the mc image is gone as well)
+    MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD python3 - "$A/x/sf1/tpch" "$REPO_ROOT/tests/m4/data/types" <<'PY'
+import os, sys, boto3
+s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:9000", region_name="us-east-1",
+                  aws_access_key_id=os.environ["MINIO_ROOT_USER"], aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"])
+s3.create_bucket(Bucket="lake")
+n = 0
+for src in sys.argv[1:]:
+    schema = os.path.basename(src.rstrip("/"))
+    for root, _, files in os.walk(src):
+        for f in files:
+            p = os.path.join(root, f)
+            s3.upload_file(p, "lake", f"parquet/{schema}/{os.path.relpath(p, src)}")
+            n += 1
+print(f"uploaded {n} files")
+for o in s3.list_objects_v2(Bucket="lake", Prefix="parquet/types/")["Contents"]:
+    print(o["Key"], o["Size"])
+PY
     ;;
 flight)
     A=$2 NAME=$3 HOSTS=${4:-$3}; net
