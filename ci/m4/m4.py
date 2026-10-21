@@ -390,11 +390,210 @@ def check5(conn, args, res):
         guarded(res, q, one)
 
 
+# ---------------------------------------------------------------- server control (checks 6–9)
+
+import subprocess, threading
+
+def stack(*a, env=None):
+    e = dict(os.environ)
+    e.update(env or {})
+    p = subprocess.run([os.path.join(REPO, "ci", "m4", "stack.sh"), *a], env=e, capture_output=True, text=True)
+    if p.returncode:
+        raise RuntimeError(f"stack.sh {' '.join(a)} failed: {(p.stdout + p.stderr)[-1500:]}")
+    return p.stdout
+
+
+def flight_restart(args, servers=("flight1",), env=None):
+    """Replace all Flight servers by `servers` (one cluster), started with the extra FLIGHT_* env."""
+    stack("stop", "flight1", "flight2")
+    for n in servers:
+        stack("flight", args.assets, n, ",".join(servers), env=env)
+
+
+def catalog(conn, name, uri=None, **props):
+    p = {"type": "flight", "flight.uri": uri or FLIGHT_URI}
+    p.update({k.replace("__", "."): v for k, v in props.items()})
+    sr(conn, f"DROP CATALOG IF EXISTS {name}")
+    sr(conn, f"CREATE EXTERNAL CATALOG {name} PROPERTIES (" +
+       ", ".join(f'"{k}" = "{v}"' for k, v in p.items()) + ")")
+
+
+def try_sql(conn, sql):
+    t0 = time.time()
+    try:
+        return True, sr(conn, sql), time.time() - t0
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}".replace("\n", " ")[:400], time.time() - t0
+
+
+def be_alive(conn):
+    with conn.cursor() as cur:
+        cur.execute("SHOW BACKENDS")
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+    return bool(rows) and all(r[cols.index("Alive")] == "true" for r in rows)
+
+
+SCAN_Q = "SELECT count(*), sum(l_quantity), sum(length(l_comment)) FROM {c}.tpch.lineitem"
+
+
+# ---------------------------------------------------------------- check 6: failover (two servers)
+
+def check6(conn, args, res):
+    exp = [tuple(norm(v) for v in r) for r in args.duck.execute(SCAN_Q.format(c="x").replace("x.tpch.", "tpch.")).fetchall()]
+    try:
+        flight_restart(args, ("flight1", "flight2"))
+        catalog(conn, "flight_fo", "grpc://flight1:32010,grpc://flight2:32010")
+        sr(conn, "SET flight_aggregate_pushdown = false")   # the BE must read every endpoint
+        q = SCAN_Q.format(c="flight_fo")
+        ok, r, secs = try_sql(conn, q)
+        got = [tuple(norm(v) for v in x) for x in r] if ok else r
+        res.add("both servers up: full scan correct", ok and got == exp, f"{secs:.1f}s got={got} exp={exp}")
+        n_ep = remote_sql(conn, q)[1].count("flight")  # informational
+        res.notes.append(f"plan of the failover scan mentions 'flight' {n_ep}x")
+
+        stack("stop", "flight2")
+        ok, r, secs = try_sql(conn, q)
+        got = [tuple(norm(v) for v in x) for x in r] if ok else r
+        res.add("flight2 stopped before the query: succeeds via backup locations", ok and got == exp,
+                f"{secs:.1f}s got={got}")
+
+        stack("flight", args.assets, "flight2", "flight1,flight2")
+        time.sleep(5)
+        out = {}
+        def run():
+            c2 = sr_connect()
+            sr(c2, "SET flight_aggregate_pushdown = false")
+            out["r"] = try_sql(c2, q)
+            c2.close()
+        th = threading.Thread(target=run)
+        th.start()
+        time.sleep(1.5)
+        stack("kill", "flight2")
+        th.join(600)
+        ok, r, secs = out.get("r", (False, "no result (hung)", 0))
+        if ok:
+            got = [tuple(norm(v) for v in x) for x in r]
+            res.add("flight2 killed during the read: no wrong/duplicate rows", got == exp,
+                    f"query succeeded in {secs:.1f}s got={got} exp={exp}")
+        else:
+            res.add("flight2 killed during the read: clean error", "hung" not in r, f"{secs:.1f}s {r}")
+        res.add("BE alive after failover tests", be_alive(conn))
+    finally:
+        sr(conn, "SET flight_aggregate_pushdown = true")
+        flight_restart(args)
+
+
+# ---------------------------------------------------------------- check 7: KILL QUERY during a long scan
+
+def check7(conn, args, res):
+    branch = "SELECT l_comment FROM flight.tpch.lineitem"
+    q = "SELECT count(*), sum(length(l_comment)) FROM (" + " UNION ALL ".join([branch] * 8) + ") t"
+    c2 = sr_connect()
+    cid = sr(c2, "SELECT CONNECTION_ID()")[0][0]
+    out = {}
+    def run():
+        out["r"] = try_sql(c2, q)
+        out["t"] = time.time()
+    th = threading.Thread(target=run)
+    th.start()
+    time.sleep(4)
+    if not th.is_alive():
+        res.add("scan still running after 4 s (precondition)", False, str(out.get("r"))[:300])
+        return
+    t_kill = time.time()
+    sr(conn, f"KILL QUERY {cid}")
+    th.join(120)
+    if th.is_alive():
+        res.add("KILL QUERY stops the scan", False, "query still running 120 s after KILL")
+        return
+    ok, r, _ = out["r"]
+    dt = out["t"] - t_kill
+    res.add("KILL QUERY stops the scan within ~1 s", not ok and dt < 2.0, f"{dt:.2f}s after KILL: {r}")
+    time.sleep(2)
+    log = subprocess.run(["docker", "logs", "--since", "60s", "flight1"], capture_output=True, text=True)
+    hits = [l for l in (log.stdout + log.stderr).splitlines() if re.search(r"cancel", l, re.I)]
+    res.notes.append(f"flight1 log lines with 'cancel' after the KILL: {len(hits)}; " + " / ".join(hits[:3])[:400])
+    ok2, r2, _ = try_sql(conn, "SELECT count(*) FROM flight.tpch.nation")
+    res.add("next query works", ok2 and r2[0][0] == 25, str(r2)[:200])
+    c2.close()
+
+
+# ---------------------------------------------------------------- check 8: token and TLS
+
+def check8(conn, args, res):
+    tok = args.token or ("m4tok" + os.urandom(12).hex())
+    q = "SELECT count(*) FROM {c}.tpch.nation"
+    def expect(cat, good, label):
+        ok, r, secs = try_sql(conn, q.format(c=cat))
+        passed = (ok and r[0][0] == 25) if good else not ok
+        res.add(label, passed, f"{'ok ' + str(r) if ok else r}")
+        if not ok and tok in str(r):
+            res.add(label + ": token not in the error", False, "token appears in the error text")
+    try:
+        flight_restart(args, env={"FLIGHT_AUTH_PROVIDER": "token", "FLIGHT_AUTH_TOKEN": tok})
+        catalog(conn, "f_tok", flight__token=tok)
+        expect("f_tok", True, "token server, right token")
+        catalog(conn, "f_bad", flight__token="wrong" + tok[5:])
+        expect("f_bad", False, "token server, wrong token fails")
+        catalog(conn, "f_none")
+        expect("f_none", False, "token server, no token fails")
+        catalog(conn, "f_basic", flight__user="m4", flight__password=tok)
+        expect("f_basic", True, "token server, basic auth user:<token>")
+        txt = " ".join(str(c) for r in sr(conn, "SHOW CREATE CATALOG f_basic") for c in r)
+        res.add("SHOW CREATE CATALOG masks the password", tok not in txt, txt[:300])
+
+        certs = os.path.join(os.environ.get("M4_STATE", os.path.expanduser("~/.m4-state")), "certs")
+        stack("certs", certs, "flight1")
+        flight_restart(args, env={"FLIGHT_TLS_CERT": "/certs/server.crt", "FLIGHT_TLS_KEY": "/certs/server.key",
+                                  "FLIGHT_BEARER_TOKEN": tok, "M4_CERTS": certs})
+        subprocess.run(["docker", "cp", os.path.join(certs, "server.crt"), "sr:/tmp/m4-ca.pem"], check=True)
+        tls = "grpc+tls://flight1:32010"
+        catalog(conn, "f_tls", tls, flight__token=tok, flight__tls__ca_file="/tmp/m4-ca.pem")
+        expect("f_tls", True, "TLS, trusted CA file")
+        catalog(conn, "f_tls_host", "grpc+tls://flight1-alias:32010", flight__token=tok,
+                flight__tls__ca_file="/tmp/m4-ca.pem")
+        expect("f_tls_host", False, "TLS, wrong host name fails")
+        catalog(conn, "f_tls_noca", tls, flight__token=tok)
+        expect("f_tls_noca", False, "TLS, untrusted certificate fails")
+        catalog(conn, "f_tls_noverify", tls, flight__token=tok, flight__tls__verify="false")
+        expect("f_tls_noverify", True, "TLS, flight.tls.verify=false")
+        catalog(conn, "f_plain_vs_tls", flight__token=tok)
+        expect("f_plain_vs_tls", False, "plain client against the TLS server fails")
+    finally:
+        for c in ("f_tok", "f_bad", "f_none", "f_basic", "f_tls", "f_tls_host", "f_tls_noca", "f_tls_noverify",
+                  "f_plain_vs_tls"):
+            sr(conn, f"DROP CATALOG IF EXISTS {c}")
+        flight_restart(args)
+    # the token grep over fe.log / be.INFO / be.WARNING runs in the workflow after all checks (M4_TOKEN)
+
+
+# ---------------------------------------------------------------- check 9: memory limit
+
+def check9(conn, args, res):
+    q = ("SELECT count(*) FROM (SELECT l_comment, l_orderkey, l_partkey FROM flight.tpch.lineitem "
+         "GROUP BY l_comment, l_orderkey, l_partkey) t")
+    sr(conn, "SET flight_aggregate_pushdown = false")
+    sr(conn, "SET query_mem_limit = 104857600")
+    try:
+        ok, r, secs = try_sql(conn, q)
+        res.add("big aggregation under query_mem_limit=100MB fails cleanly", not ok and re.search(r"mem|limit", str(r), re.I),
+                f"{secs:.1f}s {'succeeded: ' + str(r) if ok else r}")
+    finally:
+        sr(conn, "SET query_mem_limit = 0")
+        sr(conn, "SET flight_aggregate_pushdown = true")
+    time.sleep(3)
+    res.add("BE alive afterwards", be_alive(conn))
+    ok, r, _ = try_sql(conn, "SELECT count(*) FROM flight.tpch.nation")
+    res.add("next query works", ok and r[0][0] == 25, str(r)[:200])
+
+
 # ---------------------------------------------------------------- main
 
 TITLES = {1: "catalog, SHOW, DESC, masking", 2: "types tables, every column", 3: "M4-TESTS §1–2 (EXPLAIN + results)",
-          4: "TPC-H SF1 q01–q22, topn default and 0", 5: "sr-cases on SF1"}
-FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5}
+          4: "TPC-H SF1 q01–q22, topn default and 0", 5: "sr-cases on SF1", 6: "failover (2 servers)",
+          7: "KILL QUERY during a long scan", 8: "token and TLS", 9: "memory limit"}
+FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8, 9: check9}
 
 
 def main():
@@ -405,6 +604,7 @@ def main():
     ap.add_argument("--types", required=True)
     ap.add_argument("--token", default=os.environ.get("M4_TOKEN", ""))
     ap.add_argument("--series", default="")
+    ap.add_argument("--assets", default=os.path.expanduser("~/m4-assets"))
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     args.duck = duck(args.tpch, args.types)

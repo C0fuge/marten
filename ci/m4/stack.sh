@@ -6,7 +6,13 @@
 #   ci/m4/stack.sh minio   ASSET_DIR                 start MinIO, upload tpch (SF1) + types tables to s3://lake/parquet
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
+#   ci/m4/stack.sh stop|kill NAME...                 remove (stop) or SIGKILL Flight server containers
+#   ci/m4/stack.sh certs   DIR HOST                  self-signed EC cert for HOST (DIR/server.crt, PKCS#8 server.key)
 #   ci/m4/stack.sh logs    DIR                       copy all container logs into DIR
+#
+# `flight` passes every FLIGHT_* variable of the environment to the server (open mode when neither
+# FLIGHT_AUTH_PROVIDER nor FLIGHT_TLS_CERT is set) and mounts $M4_CERTS at /certs when set. flight1 is also
+# reachable as flight1-alias (TLS host name mismatch test).
 #
 # MinIO credentials are throwaway values generated per job and kept in $M4_STATE (never in the repo).
 set -euo pipefail
@@ -60,6 +66,10 @@ flight)
     A=$2 NAME=$3 HOSTS=${4:-$3}; net
     . "$M4_STATE/minio.env"
     extra_env=()
+    [ -z "${M4_CERTS:-}" ] || extra_env+=(-v "$M4_CERTS:/certs:ro")
+    [ "$NAME" != flight1 ] || extra_env+=(--network-alias flight1-alias)
+    # a stopped container of the same name (logs kept for the artifact) must make room
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
     for v in $(compgen -e | grep '^FLIGHT_' || true); do extra_env+=(-e "$v"); done
     [ -n "${FLIGHT_AUTH_PROVIDER:-}${FLIGHT_TLS_CERT:-}" ] || extra_env+=(-e FLIGHT_ALLOW_INSECURE=true)
     docker run -d --name "$NAME" --hostname "$NAME" --network m4 --memory 4g -v "$A/x:/srv:ro" -w /srv \
@@ -114,11 +124,28 @@ EOF
     done
     docker logs sr 2>&1 | tail -80; echo "StarRocks did not come up" >&2; exit 1
     ;;
+stop)
+    shift; for n in "$@"; do
+        docker logs "$n" >> "$M4_STATE/$n.previous.log" 2>&1 || true
+        docker rm -f "$n" >/dev/null 2>&1 || true
+    done
+    ;;
+kill)
+    shift; for n in "$@"; do docker kill "$n" >/dev/null; done
+    ;;
+certs)
+    D=$2 H=$3; mkdir -p "$D"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 -subj "/CN=$H" \
+        -addext "subjectAltName=DNS:$H" -keyout "$D/key.pem" -out "$D/server.crt" 2>/dev/null
+    openssl pkcs8 -topk8 -nocrypt -in "$D/key.pem" -out "$D/server.key"
+    chmod 644 "$D/server.key" "$D/server.crt"
+    ;;
 logs)
     D=$2; mkdir -p "$D"
     for c in $(docker ps -a --format '{{.Names}}'); do docker logs "$c" > "$D/$c.docker.log" 2>&1 || true; done
     docker cp sr:$SR_HOME/fe/log "$D/fe-log" 2>/dev/null || true
     docker cp sr:$SR_HOME/be/log "$D/be-log" 2>/dev/null || true
+    cp "$M4_STATE"/*.previous.log "$D/" 2>/dev/null || true
     ;;
 *) echo "usage: see header" >&2; exit 2 ;;
 esac

@@ -98,3 +98,22 @@ before the final local check. Cache the docker images / assets with actions/cach
 Only what CI cannot do: HDFS data path (hadoopfs) at SF10 with `bench/reference/sf10`, 3-node server cluster
 kill tests, speed vs the JDBC bridge and the Trino plugin on the same machine, the stand's production-like server
 build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
+
+## 7. Implementation (state)
+
+- `.github/workflows/m4.yml` (dispatch `m4 checks=1,2,3` in `ci/dispatch.txt`): prepares the source only for the
+  input hashes, takes the FE/BE outputs of the current series like `release.yml` (cache, else newest artifact;
+  both must report the current series hash), downloads `m4-assets` (draft release: looked up through the release
+  list, cached as `m4-assets-int1-v1`; bump the key when the assets change), then `ci/m4/stack.sh`: docker network
+  `m4` with `minio` (throwaway credentials, `s3://lake/parquet/{tpch,types}`), `flight1` (eclipse-temurin:21-jre,
+  open mode), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).
+- `ci/m4/m4.py` runs the checks with pymysql against 127.0.0.1:9030 and DuckDB 1.4.1 on the same parquet files
+  (types tables, M4-TESTS §1–2, sr-cases) or `tests/m4/reference/sf1` (TPC-H). Implemented: checks 1–5 (+ the
+  log grep of check 8 for the dummy catalog token, + TPC-H timings of check 10). Normalisation: decimals
+  rounded to 4 places (exact for the types tables), DOUBLE 9 / FLOAT 6 significant digits, timestamps in UTC
+  (session `time_zone='UTC'`), binary/UUID as hex; TPC-H rows compared as multisets plus the order of the `key`
+  columns.
+- Output: artifact `m4-<run>` (results.md/json, all container logs, fe/be logs) and branch `m4-results`
+  (`latest.md`, `runs/<run>.md`): `git fetch origin m4-results && git show origin/m4-results:latest.md`.
+- To do: checks 6–9 (second server `flight2` with `--hosts flight1,flight2`, KILL QUERY, token/TLS server modes,
+  memory limit).
