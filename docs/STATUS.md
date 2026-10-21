@@ -127,6 +127,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   for the series hash after the 0007 change (FE run 39526375694, 5 min, no tests), then the draft
   `v4.1.4-flight.0-dryrun` re-created for series `4a9848e-fl80f999` (release run 39527877395 green; FE 39526375694,
   BE 39514450436). No patch changed.
+- 2026-10-21 16:27 UTC (cloud session): no M4 results yet; noted the 7-day artifact/cache retention under Next
+  step 2. No patch changed, no CI run.
 
 ## Next steps
 
@@ -134,7 +136,10 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 2. After M4 passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false prerelease=false` (or
    publish a draft by hand); delete the `v4.1.4-flight.0-dryrun` draft. FE and BE outputs of the current series
    are cached (FE run 39526375694, BE run 39514450436); after any later patch change rebuild the other side with
-   `force=true` before `release` (see CI above).
+   `force=true` before `release` (see CI above). Retention: the `fe-jars-*` / `starrocks_be-*` artifacts are kept
+   7 days (expire ~2026-10-27/28) and Actions caches (outputs + BE ccache) are evicted after 7 days without
+   access. After that the draft release's own assets are the only copy: publish that draft by hand instead of
+   re-running `release`, which would need fresh FE/BE builds (and, with the ccache gone, a full multi-hour BE build).
 
 ## Open questions for the maintainer
 
