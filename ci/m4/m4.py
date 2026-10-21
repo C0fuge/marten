@@ -897,7 +897,7 @@ def main():
     run = os.environ.get("GITHUB_RUN_ID", "local")
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "

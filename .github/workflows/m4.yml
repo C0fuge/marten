@@ -12,6 +12,9 @@ on:
       ref_catalog:
         description: "check 4 also compares every query with this catalog (m4.py --ref-catalog; flight_c exists after check 3)"
         default: ""
+      server:
+        description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes)"
+        default: "arrow-flight-server-1.0.0-int2.jar"
 
 concurrency:
   group: m4
@@ -27,8 +30,12 @@ jobs:
     timeout-minutes: 100
     env:
       GH_TOKEN: ${{ github.token }}
+      M4_SERVER_JAR: ${{ inputs.server }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check inputs
+        run: |
+          [[ "$M4_SERVER_JAR" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
       - name: Free disk
         timeout-minutes: 5
         continue-on-error: true
@@ -83,7 +90,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-int1-v1
+          key: m4-assets-v2
       - name: Download m4 assets
         run: ci/m4/stack.sh assets /home/runner/m4-assets
       - name: Save m4 assets
@@ -91,7 +98,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-int1-v1
+          key: m4-assets-v2
       - name: Python
         run: |
           pip install --quiet duckdb==1.4.1 pymysql pytz boto3 pyarrow adbc-driver-flightsql

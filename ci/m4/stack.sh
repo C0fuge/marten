@@ -2,7 +2,8 @@
 # M4 test stack on one GitHub runner (docs/M4-CI.md §2–3): docker network `m4` with MinIO, our Arrow Flight SQL
 # server(s) and StarRocks 4.1.4 (allin1 image overlaid with the FE/BE outputs of the current series).
 #
-#   ci/m4/stack.sh assets  ASSET_DIR                 download + unpack release m4-assets (needs GH_TOKEN)
+#   ci/m4/stack.sh assets  ASSET_DIR [JAR]           download + unpack release m4-assets (needs GH_TOKEN); JAR = server
+#                                                    jar asset to run (default $M4_SERVER_JAR), copied to x/server.jar
 #   ci/m4/stack.sh minio   ASSET_DIR                 start MinIO, upload tpch (SF1) + types tables to s3://lake/parquet
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
@@ -22,6 +23,7 @@ M4_STATE=${M4_STATE:-$HOME/.m4-state}
 SR_HOME=/data/deploy/starrocks
 SR_IMAGE=docker.io/starrocks/allin1-ubuntu:4.1.4
 JDK_IMAGE=docker.io/library/eclipse-temurin:21-jre
+M4_SERVER_JAR=${M4_SERVER_JAR:-arrow-flight-server-1.0.0-int2.jar}
 # docker.io/minio/minio no longer exists (2026-10-21: "pull access denied"); first image that pulls wins.
 # Format: image|args (args empty = the image's own entrypoint/cmd serves /data, as bitnami does).
 MINIO_IMAGES=("quay.io/minio/minio:latest|server /data" "docker.io/bitnamilegacy/minio:latest|"
@@ -31,8 +33,8 @@ net() { docker network inspect m4 >/dev/null 2>&1 || docker network create m4 >/
 
 case "$1" in
 assets)
-    A=$2; mkdir -p "$A"
-    if [ ! -s "$A/SHA256SUMS" ]; then
+    A=$2; JAR=${3:-$M4_SERVER_JAR}; mkdir -p "$A"
+    if [ ! -s "$A/SHA256SUMS" ] || [ ! -s "$A/$JAR" ]; then
         # m4-assets is a draft release: the tag endpoint does not see it, so look it up in the release list.
         rel=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name=="m4-assets") | .id' | head -1)
         [ -n "$rel" ] || { echo "release m4-assets not found" >&2; exit 1; }
@@ -43,10 +45,17 @@ assets)
         done
     fi
     (cd "$A" && sha256sum -c SHA256SUMS)
+    # Server jars added to the release after its SHA256SUMS was written are pinned in the repo.
+    if ! grep -q " \*\?$JAR\$" "$A/SHA256SUMS"; then
+        grep " $JAR\$" "$REPO_ROOT/ci/m4/server-jars.sha256" > "$A/jar.sha256" ||
+            { echo "$JAR: no checksum in SHA256SUMS or ci/m4/server-jars.sha256" >&2; exit 1; }
+        (cd "$A" && sha256sum -c jar.sha256)
+    fi
     mkdir -p "$A/x"
     [ -d "$A/x/libs" ] || tar -C "$A/x" --zstd -xf "$A/flight-server-libs.tar.zst"
     [ -d "$A/x/sf1" ] || tar -C "$A/x" --zstd -xf "$A/tpch-sf1-parquet.tar.zst"
-    cp "$A/arrow-flight-server-1.0.0-int1.jar" "$A/x/server.jar"
+    cp "$A/$JAR" "$A/x/server.jar"
+    echo "Flight server: $JAR"
     if [ ! -s "$A/x/httpfs.duckdb_extension" ]; then
         curl -sSfL http://extensions.duckdb.org/v1.4.1/linux_amd64/httpfs.duckdb_extension.gz | gunzip > "$A/x/httpfs.duckdb_extension"
     fi

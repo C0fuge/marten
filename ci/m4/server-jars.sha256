@@ -1,0 +1,2 @@
+# sha256 of server jars in release m4-assets that its SHA256SUMS does not list (format of sha256sum)
+e0216cf9bf2a667f82bec9634dd4aa9469413619c928114ca40f40c7aed8c008  arrow-flight-server-1.0.0-int2.jar

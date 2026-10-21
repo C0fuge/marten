@@ -15,6 +15,7 @@ Release `m4-assets` (prerelease, not a product release; download in a workflow w
 | Asset | Content |
 |---|---|
 | `arrow-flight-server-1.0.0-int1.jar` | our Arrow Flight SQL server (DuckDB 1.4.1 inside), shaded, Linux only. Needs **JDK 21** (not 24+) |
+| `arrow-flight-server-1.0.0-int2.jar` | same, branch integration ac20b00: partial mode answers expressions over aggregates as one complete endpoint; UBIGINT → decimal128(20,0) in every mode. Not in the release's SHA256SUMS: pinned in `ci/m4/server-jars.sha256`. Default of `m4.yml` |
 | `flight-server-libs.tar.zst` | `libs/` — runtime jars that must be on the classpath next to the server jar (`-cp "server.jar:libs/*"`) |
 | `tpch-sf1-parquet.tar.zst` | `sf1/tpch/<table>/data_N.parquet` — TPC-H SF1, the exact files `tests/m4/reference/sf1` was computed from |
 | `SHA256SUMS` | checksums |
@@ -104,7 +105,9 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
 - `.github/workflows/m4.yml` (dispatch `m4 checks=1,2,3` in `ci/dispatch.txt`): prepares the source only for the
   input hashes, takes the FE/BE outputs of the current series like `release.yml` (cache, else newest artifact;
   both must report the current series hash), downloads `m4-assets` (draft release: looked up through the release
-  list, cached as `m4-assets-int1-v1`; bump the key when the assets change), then `ci/m4/stack.sh`: docker network
+  list, cached as `m4-assets-v2` with all server jars; bump the key when the assets change; input `server` picks the
+  jar, default `arrow-flight-server-1.0.0-int2.jar`, e.g. `m4 checks=1,2 server=arrow-flight-server-1.0.0-int1.jar`;
+  results.md names it), then `ci/m4/stack.sh`: docker network
   `m4` with `minio` (throwaway credentials, `s3://lake/parquet/{tpch,types}`), `flight1` (eclipse-temurin:21-jre,
   open mode; flight1 also on 127.0.0.1:32010 for ADBC probes), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).
 - `ci/m4/m4.py` runs the checks with pymysql against 127.0.0.1:9030 and DuckDB 1.4.1 on the same parquet files
