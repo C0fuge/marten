@@ -1,0 +1,60 @@
+- PASS `q17 topn=default = flight_c` rows 1/1
+- PASS `q17 topn=default` rows 1/1 0.73s
+- PASS `q18 topn=default = flight_c` rows 57/57
+- PASS `q18 topn=default` rows 57/57 1.55s
+- PASS `q19 topn=default = flight_c` rows 1/1
+- PASS `q19 topn=default` rows 1/1 1.07s
+- PASS `q20 topn=default = flight_c` rows 186/186
+- PASS `q20 topn=default` rows 186/186 0.81s
+- PASS `q21 topn=default = flight_c` rows 100/100
+- PASS `q21 topn=default` rows 100/100 2.07s
+- PASS `q22 topn=default = flight_c` rows 7/7
+- PASS `q22 topn=default` rows 7/7 0.39s
+- PASS `q01 topn=0 = flight_c` rows 4/4
+- PASS `q01 topn=0` rows 4/4 1.45s
+- PASS `q02 topn=0 = flight_c` rows 100/100
+- PASS `q02 topn=0` rows 100/100 0.30s
+- PASS `q03 topn=0 = flight_c` rows 10/10
+- PASS `q03 topn=0` rows 10/10 1.04s
+- PASS `q04 topn=0 = flight_c` rows 5/5
+- PASS `q04 topn=0` rows 5/5 0.62s
+- PASS `q05 topn=0 = flight_c` rows 5/5
+- PASS `q05 topn=0` rows 5/5 1.45s
+- PASS `q06 topn=0 = flight_c` rows 1/1
+- PASS `q06 topn=0` rows 1/1 0.37s
+- PASS `q07 topn=0 = flight_c` rows 4/4
+- PASS `q07 topn=0` rows 4/4 1.09s
+- PASS `q08 topn=0 = flight_c` rows 2/2
+- PASS `q08 topn=0` rows 2/2 1.47s
+- PASS `q09 topn=0 = flight_c` rows 175/175
+- PASS `q09 topn=0` rows 175/175 1.93s
+- PASS `q10 topn=0 = flight_c` rows 20/20
+- PASS `q10 topn=0` rows 20/20 0.93s
+- PASS `q11 topn=0 = flight_c` rows 1048/1048
+- PASS `q11 topn=0` rows 1048/1048 0.33s
+- PASS `q12 topn=0 = flight_c` rows 2/2
+- PASS `q12 topn=0` rows 2/2 0.78s
+- PASS `q13 topn=0 = flight_c` rows 42/42
+- PASS `q13 topn=0` rows 42/42 0.67s
+- PASS `q14 topn=0 = flight_c` rows 1/1
+- PASS `q14 topn=0` rows 1/1 0.51s
+- PASS `q15 topn=0 = flight_c` rows 1/1
+- PASS `q15 topn=0` rows 1/1 0.78s
+- PASS `q16 topn=0 = flight_c` rows 18314/18314
+- PASS `q16 topn=0` rows 18314/18314 0.26s
+- PASS `q17 topn=0 = flight_c` rows 1/1
+- PASS `q17 topn=0` rows 1/1 1.08s
+- PASS `q18 topn=0 = flight_c` rows 57/57
+- PASS `q18 topn=0` rows 57/57 1.62s
+- PASS `q19 topn=0 = flight_c` rows 1/1
+- PASS `q19 topn=0` rows 1/1 0.58s
+- PASS `q20 topn=0 = flight_c` rows 186/186
+- PASS `q20 topn=0` rows 186/186 0.71s
+- PASS `q21 topn=0 = flight_c` rows 100/100
+- PASS `q21 topn=0` rows 100/100 2.03s
+- PASS `q22 topn=0 = flight_c` rows 7/7
+- PASS `q22 topn=0` rows 7/7 0.41s
+- note: timings flight (s): q01/default=1.65, q02/default=0.62, q03/default=1.12, q04/default=0.73, q05/default=1.33, q06/default=0.32, q07/default=1.03, q08/default=1.62, q09/default=2.58, q10/default=0.98, q11/default=0.40, q12/default=0.61, q13/default=0.65, q14/default=0.51, q15/default=0.66, q16/default=0.32, q17/default=0.73, q18/default=1.55, q19/default=1.07, q20/default=0.81, q21/default=2.07, q22/default=0.39, q01/0=1.45, q02/0=0.30, q03/0=1.04, q04/0=0.62, q05/0=1.45, q06/0=0.37, q07/0=1.09, q08/0=1.47, q09/0=1.93, q10/0=0.93, q11/0=0.33, q12/0=0.78, q13/0=0.67, q14/0=0.51, q15/0=0.78, q16/0=0.26, q17/0=1.08, q18/0=1.62, q19/0=0.58, q20/0=0.71, q21/0=2.03, q22/0=0.41
+- note: timings flight_c (s): q01/default=1.53, q02/default=0.47, q03/default=1.08, q04/default=0.63, q05/default=1.13, q06/default=0.30, q07/default=0.90, q08/default=1.62, q09/default=2.36, q10/default=0.92, q11/default=0.31, q12/default=0.56, q13/default=0.73, q14/default=0.57, q15/default=0.94, q16/default=0.24, q17/default=0.82, q18/default=1.39, q19/default=0.60, q20/default=0.74, q21/default=1.84, q22/default=0.29, q01/0=1.43, q02/0=0.36, q03/0=1.00, q04/0=0.51, q05/0=1.27, q06/0=0.40, q07/0=1.37, q08/0=1.51, q09/0=1.61, q10/0=0.99, q11/0=0.37, q12/0=0.66, q13/0=0.58, q14/0=0.40, q15/0=0.62, q16/0=0.24, q17/0=0.84, q18/0=1.53, q19/0=0.61, q20/0=0.61, q21/0=2.06, q22/0=0.37
+- note: total (s): flight 42.2, flight_c 39.3
+
