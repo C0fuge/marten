@@ -69,3 +69,12 @@ Harness test for the local final check (`m4.py --ref-catalog`): 1 PASS 15/15, 3 
 | 6 | "during" now reads lineitem 3x (5.5 s), flight2 SIGKILLed at 35% (2.2 s in) | PASS 6/6: query ended 3.4 s after the kill with correct rows, **FailoverCount=3** in its profile (endpoints of flight2 failed over to flight1 before delivering data) |
 | 8 | + token / password not in the query profiles of a token and a basic-auth scan | PASS 14/14 |
 | log masking | | PASS |
+
+## 2026-10-21, run 39695113106 — series `4a9848e-fl598360`, server **int2**, checks 1–9
+
+All 9 checks **PASS** (25/25, 49/49, 21/21, 44/44, 26/26, 6/6, 2/2, 14/14, 3/3; log masking PASS) against
+`arrow-flight-server-1.0.0-int2.jar` (the new `m4.yml` default). int2 streams `c_ubigint` as decimal128(20,0) in
+partial mode too (server finding (b) fixed; the connector's UInt64 widening is now unused with int2 but kept for
+older servers). TPC-H timings 0.3–3.2 s per query, as with int1. Run 39696030255 (checks 1,2, server int1):
+PASS 25/25, 49/49 — int1 still streams `uint64` in partial mode and the connector still widens it, so int1 stays
+supported and runnable (`m4 … server=arrow-flight-server-1.0.0-int1.jar`).

@@ -11,7 +11,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Hardened checks 1/6/8 (exact DESC vs PLAN §2.2, failover kill proven to hit the read, profile grep) green (run 39688089343). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6), checklist **`docs/LOCAL-FINAL-CHECK.md`** (ready) |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Hardened checks 1/6/8 (exact DESC vs PLAN §2.2, failover kill proven to hit the read, profile grep) green (run 39688089343). Server int2 (new default, input `server`): checks 1–9 all pass (run 39695113106); int1 still passes 1,2 (run 39696030255). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6), checklist **`docs/LOCAL-FINAL-CHECK.md`** (ready) |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test; current series `4a9848e-fl598360`, FE 39664615702, BE 39664594320); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for series `4a9848e-fl598360` (release run 39670616758; FE 39664615702, BE 39664594320); publish after the local final check |
 
 ## Patch series (on tag 4.1.4)
@@ -162,16 +162,15 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   query ended 3.4 s after the kill), 14/14. Side note: PLAN §2.2 lists Decimal256 p≤38 → DECIMAL, the code hides
   every Decimal256 (BE has no Decimal256 converter); no effect with DuckDB (max precision 38 → decimal128).
 
+- 2026-10-21 23:40–00:05 UTC (cloud session): old Next step 0 done. `m4.yml` input `server` (jar asset of
+  `m4-assets`, default `arrow-flight-server-1.0.0-int2.jar`, name validated), assets cache key `m4-assets-v2`
+  (all jars), `stack.sh assets DIR [JAR]` re-downloads when the jar is missing and checks jars absent from the
+  release's SHA256SUMS against `ci/m4/server-jars.sha256` (int2 pinned); results.md names the server. m4 run
+  39695113106 (int2, checks 1–9): all PASS; m4 run 39696030255 (int1, checks 1,2): PASS. Connector workarounds
+  kept. No patch changed (no source preparation needed). Note: a `[skip ci]` commit does not trigger dispatch.yml.
+
 ## Next steps
 
-0. **New server build `arrow-flight-server-1.0.0-int2.jar`** in release `m4-assets` (branch integration ac20b00,
-   default profile, same `flight-server-libs`; sha256 e0216cf9bf2a667f82bec9634dd4aa9469413619c928114ca40f40c7aed8c008,
-   not yet in SHA256SUMS — add it). It fixes both server findings: (a) partial mode now answers SQL with
-   expressions over aggregates (and FILTER/OVER, GROUP BY expressions) as ONE complete endpoint instead of a Binder
-   Error (it also used to drop FILTER/OVER silently = wrong results); (b) unsigned ints are widened in partial mode
-   too (UBIGINT → decimal128(20,0) in every mode). Make `m4.yml` take the server jar as an input (default int2),
-   run all checks against int2 (and keep int1 runnable). Keep the connector workarounds (UInt64 widening,
-   no integer `CAST(sum)` push in partial) — older servers stay supported; only revisit if int2 shows a reason.
 1. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
    `docs/M4-RESULTS.md`; fix failures in the patches (then FE + BE of the new series, `m4` of the touched checks,
    refresh the draft). If `bench/reference/sf10` has another layout, adapt `load_ref` in `ci/m4/m4.py`.
@@ -182,11 +181,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Open questions for the maintainer
 
-- Server findings from M4 CI (not connector bugs; the connector now works around both): (a) in result mode
-  `partial` the server rejects any expression around an aggregate (`CAST(sum(x) AS T) AS a` → Binder Error
-  "Referenced column … not found"), so integer `sum` is no longer pushed in partial mode; (b) in partial mode a
-  DuckDB UBIGINT column is streamed as `uint64` while GetTables/complete mode say `decimal128(20,0)`. Worth fixing
-  in the server; tell me if the connector should instead push integer sums as `sum(CAST(x AS DECIMAL(38,0)))`.
+- Server findings (a) partial mode rejecting `CAST(sum(x))`, (b) UBIGINT streamed as `uint64` in partial mode:
+  fixed in server int2 (verified by m4 run 39695113106). The connector keeps its workarounds (no integer
+  `sum` push in partial mode, UInt64 → DECIMAL(20,0) widening) so int1-era servers stay supported. If you want
+  integer sums pushed in partial mode for int2+ servers, say so (it would need a server-version or catalog switch).
+- Release `m4-assets`: its SHA256SUMS does not list the int2 jar; the hash is pinned in
+  `ci/m4/server-jars.sha256` instead. If you re-upload SHA256SUMS with int2, nothing needs to change here.
 
 - **Ready for you: `docs/LOCAL-FINAL-CHECK.md`** (≈2–3 h on the stand: SF10 hadoopfs vs `bench/reference/sf10`
   and the JDBC catalog with `ci/m4/m4.py`, Trino timings, 3-node kill tests, auth/TLS/profile/log grep). Build
@@ -198,4 +198,4 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   creates the git tag) is left to you after M4.
 - 2026-10-21 (maintainer): M4 moves to CI as far as possible (docs/M4-CI.md); only a short final check runs on
   the local stand. The repo is private again because the `m4-assets` release holds our server build.
-- 2026-10-22 02:30 MSK (local coordinator): server fixes for both M4 findings are in int2 (see Next steps 0). The local final check (agent on the maintainer's stand) starts after the running speed benchmark; it writes its results here and to M4-RESULTS.md.
+- 2026-10-22 02:30 MSK (local coordinator): server fixes for both M4 findings are in int2 (now the m4 default; all checks pass, m4 run 39695113106). The local final check (agent on the maintainer's stand) starts after the running speed benchmark; it writes its results here and to M4-RESULTS.md.
