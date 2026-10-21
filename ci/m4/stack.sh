@@ -75,7 +75,14 @@ minio)
     # upload with boto3 (the mc image is gone as well)
     MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD python3 - "$A/x/sf1/tpch" "$REPO_ROOT/tests/m4/data/types" <<'PY'
 import os, sys, boto3
-s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:9000", region_name="us-east-1",
+from botocore.config import Config
+# Single PUTs, no multipart: run 39656873818 failed with "ClientDisconnected" on UploadPart against MinIO.
+try:
+    cfg = Config(s3={"addressing_style": "path"}, request_checksum_calculation="when_required",
+                 response_checksum_validation="when_required")
+except TypeError:   # older botocore
+    cfg = Config(s3={"addressing_style": "path"})
+s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:9000", region_name="us-east-1", config=cfg,
                   aws_access_key_id=os.environ["MINIO_ROOT_USER"], aws_secret_access_key=os.environ["MINIO_ROOT_PASSWORD"])
 s3.create_bucket(Bucket="lake")
 n = 0
@@ -84,7 +91,9 @@ for src in sys.argv[1:]:
     for root, _, files in os.walk(src):
         for f in files:
             p = os.path.join(root, f)
-            s3.upload_file(p, "lake", f"parquet/{schema}/{os.path.relpath(p, src)}")
+            with open(p, "rb") as fh:
+                s3.put_object(Bucket="lake", Key=f"parquet/{schema}/{os.path.relpath(p, src)}", Body=fh,
+                              ContentLength=os.path.getsize(p))
             n += 1
 print(f"uploaded {n} files")
 for o in s3.list_objects_v2(Bucket="lake", Prefix="parquet/types/")["Contents"]:
