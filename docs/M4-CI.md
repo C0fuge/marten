@@ -116,9 +116,12 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
 - Output: artifact `m4-<run>` (results.md/json, all container logs, fe/be logs) and branch `m4-results`
   (`latest.md`, `runs/<run>.md`): `git fetch origin m4-results && git show origin/m4-results:latest.md`.
 - Checks 6–9 (all green since run 39665941130) restart the Flight server through `stack.sh`: 6 = cluster flight1+flight2,
-  full lineitem scan with `flight_aggregate_pushdown=false`, flight2 stopped before / SIGKILLed 1.5 s into the read;
+  full lineitem scan with `flight_aggregate_pushdown=false`, flight2 stopped before; "during" reads lineitem 3x (UNION ALL), SIGKILLs flight2 at 35% of the measured read time and requires proof that the kill hit the read (query error, or `FailoverCount` > 0 in its profile);
   7 = 8-way UNION ALL scan, `KILL QUERY` after 4 s, must end < 2 s; 8 = token server (right / wrong / missing
-  token, basic user:<token>, password masked), TLS server with a job-generated cert (CA file copied into `sr`,
+  token, basic user:<token>, password masked, token absent from the query profiles of both catalogs), TLS server with a job-generated cert (CA file copied into `sr`,
   host alias `flight1-alias` for the mismatch, untrusted, `tls.verify=false`, plain client); 9 = 3-key GROUP BY
   over lineitem under `query_mem_limit`=100 MB must fail with a memory error, BE alive. Each restores the open
   single-server setup at the end.
+- Check 1 also compares each `DESC` exactly (order, names, types) with the PLAN §2.2 mapping (`plan_type` in
+  m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`) of the Arrow schema the server returns in
+  GetTables(include_schema).
