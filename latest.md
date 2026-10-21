@@ -1,12 +1,18 @@
-# M4 run 39663221891
+# M4 run 39665941130
 
-2026-10-21 19:44 UTC, series `4.1.4-4a9848e-fla2cd40`, checks 1,2,6
+2026-10-21 20:04 UTC, series `4.1.4-4a9848e-fl598360`, checks 1,2,3,4,5,6,7,8,9
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 15/15 | 3 s |
-| 2 | types tables, every column | FAIL | 47/49 | 12 s |
-| 6 | failover (2 servers) | PASS | 4/4 | 69 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 15/15 | 2 s |
+| 2 | types tables, every column | PASS | 49/49 | 11 s |
+| 3 | M4-TESTS §1–2 (EXPLAIN + results) | PASS | 21/21 | 11 s |
+| 4 | TPC-H SF1 q01–q22, topn default and 0 | PASS | 44/44 | 45 s |
+| 5 | sr-cases on SF1 | PASS | 26/26 | 7 s |
+| 6 | failover (2 servers) | PASS | 4/4 | 57 s |
+| 7 | KILL QUERY during a long scan | PASS | 2/2 | 6 s |
+| 8 | token and TLS | PASS | 10/10 | 21 s |
+| 9 | memory limit | PASS | 3/3 | 5 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
@@ -39,7 +45,7 @@
 - PASS `types.alltypes.c_utinyint (UTINYINT)` 0/5000 differ
 - PASS `types.alltypes.c_usmallint (USMALLINT)` 0/5000 differ
 - PASS `types.alltypes.c_uinteger (UINTEGER)` 0/5000 differ
-- **FAIL** `types.alltypes.c_ubigint (UBIGINT)` 2244/5000 differ; e.g. id=2: sr='-1' duck='18446744073709551615'; id=3: sr='-9223372036854775808' duck='9223372036854775808'; id=154: sr='-9206744073709551616' duck='9240000000000000000'
+- PASS `types.alltypes.c_ubigint (UBIGINT)` 0/5000 differ
 - PASS `types.alltypes.c_hugeint (DOUBLE)` 0/5000 differ
 - PASS `types.alltypes.c_float (FLOAT)` 0/5000 differ
 - PASS `types.alltypes.c_double (DOUBLE)` 0/5000 differ
@@ -61,7 +67,7 @@
 - PASS `types.alltypes_full.c_utinyint (UTINYINT)` 0/5000 differ
 - PASS `types.alltypes_full.c_usmallint (USMALLINT)` 0/5000 differ
 - PASS `types.alltypes_full.c_uinteger (UINTEGER)` 0/5000 differ
-- **FAIL** `types.alltypes_full.c_ubigint (UBIGINT)` 2244/5000 differ; e.g. id=2: sr='-1' duck='18446744073709551615'; id=3: sr='-9223372036854775808' duck='9223372036854775808'; id=154: sr='-9206744073709551616' duck='9240000000000000000'
+- PASS `types.alltypes_full.c_ubigint (UBIGINT)` 0/5000 differ
 - PASS `types.alltypes_full.c_hugeint (DOUBLE)` 0/5000 differ
 - PASS `types.alltypes_full.c_float (FLOAT)` 0/5000 differ
 - PASS `types.alltypes_full.c_double (DOUBLE)` 0/5000 differ
@@ -86,13 +92,144 @@
 - note: types.alltypes: hidden columns ['c_time']
 - note: types.alltypes_full: hidden columns ['c_time', 'c_interval']
 
+## Check 3: M4-TESTS §1–2 (EXPLAIN + results)
+
+- PASS `1.1 SELECT l_orderkey, l_quantity FROM flight.tpch.lineitem WHERE l_shipdate >= DATE '1998-09-01' AND l_returnflag = 'R'` REMOTE SQL: SELECT "l_orderkey", "l_quantity", "l_returnflag", "l_shipdate" FROM "tpch"."lineitem" WHERE ("l_shipdate" >= DATE '1998-09-01') AND ("l_returnflag" = 'R') | rows 0 (0.58s)
+- PASS `1.2 SELECT * FROM flight.tpch.nation LIMIT 5` REMOTE SQL: SELECT "n_nationkey", "n_name", "n_regionkey", "n_comment" FROM "tpch"."nation" LIMIT 5 | rows 5 (0.06s)
+- PASS `1.3 SELECT * FROM flight.tpch.nation WHERE n_name LIKE 'A%' LIMIT 3` REMOTE SQL: SELECT "n_nationkey", "n_name", "n_regionkey", "n_comment" FROM "tpch"."nation" WHERE ("n_name" LIKE 'A%') LIMIT 3 | rows 2 (0.09s)
+- PASS `1.4 SELECT count(*) FROM flight.tpch.customer WHERE c_comment LIKE '%a\\_b%'` REMOTE SQL: SELECT "c_comment" FROM "tpch"."customer" | rows 1 (0.17s)
+- PASS `1.5 SELECT l_orderkey, l_quantity FROM flight.tpch.lineitem WHERE l_shipdate >= DATE '1998-09-01' AND l_returnflag = 'R'` REMOTE SQL: SELECT "l_orderkey", "l_quantity", "l_returnflag", "l_shipdate" FROM "tpch"."lineitem" | rows 0 (1.15s)
+- PASS `2.1 SELECT count(*) FROM flight.tpch.lineitem` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" | rows 1 (0.10s)
+- PASS `2.1 (complete) SELECT count(*) FROM flight_c.tpch.lineitem` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" | rows 1 (0.08s)
+- PASS `2.2 SELECT count(*) FROM flight.tpch.lineitem WHERE l_quantity > 45` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" WHERE ("l_quantity" > 45) | rows 1 (0.17s)
+- PASS `2.2 (complete) SELECT count(*) FROM flight_c.tpch.lineitem WHERE l_quantity > 45` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" WHERE ("l_quantity" > 45) | rows 1 (0.13s)
+- PASS `2.3 SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", min("l_shipdate") AS "__flight_agg_1", max("l_discount") AS "__flight_agg_2", count(*) AS "__flight_agg_3" FROM "tpch"."lineitem" GROUP BY "l_returnflag", "l_linestatus" | rows 4 (0.40s)
+- PASS `2.3 (complete) SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight_c.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", min("l_shipdate") AS "__flight_agg_1", max("l_discount") AS "__flight_agg_2", count(*) AS "__flight_agg_3" FROM "tpch"."lineitem" GROUP BY "l_returnflag", "l_linestatus" | rows 4 (0.53s)
+- PASS `2.4 SELECT DISTINCT n_regionkey FROM flight.tpch.nation` REMOTE SQL: SELECT "n_regionkey" FROM "tpch"."nation" GROUP BY "n_regionkey" | rows 5 (0.06s)
+- PASS `2.4 (complete) SELECT DISTINCT n_regionkey FROM flight_c.tpch.nation` REMOTE SQL: SELECT "n_regionkey" FROM "tpch"."nation" GROUP BY "n_regionkey" | rows 5 (0.10s)
+- PASS `2.5 SELECT avg(l_quantity) FROM flight.tpch.lineitem` REMOTE SQL: SELECT "l_quantity" FROM "tpch"."lineitem" | rows 1 (0.40s)
+- PASS `2.6 SELECT count(DISTINCT l_suppkey) FROM flight.tpch.lineitem` REMOTE SQL: SELECT "l_suppkey" FROM "tpch"."lineitem" | rows 1 (0.35s)
+- PASS `2.7 SELECT o_orderpriority, count(*) FROM flight.tpch.orders WHERE o_comment LIKE '%a\\_b%' GROUP BY 1` REMOTE SQL: SELECT "o_orderpriority", "o_comment" FROM "tpch"."orders" | rows 0 (0.69s)
+- PASS `2.8 SELECT count(*) FROM flight.tpch.nation WHERE n_nationkey < 0` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."nation" WHERE ("n_nationkey" < 0) | rows 1 (0.10s)
+- PASS `2.9 SELECT l_returnflag, count(*) c FROM flight.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000` REMOTE SQL: SELECT "l_returnflag", count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" GROUP BY "l_returnflag" | rows 3 (0.17s)
+- PASS `2.9 (complete) SELECT l_returnflag, count(*) c FROM flight_c.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000` REMOTE SQL: SELECT "l_returnflag", count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" GROUP BY "l_returnflag" | rows 3 (0.24s)
+- PASS `2.10 SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_quantity", "l_discount", "l_returnflag", "l_linestatus", "l_shipdate" FROM "tpch"."lineitem" | rows 4 (1.37s)
+- PASS `2.11 (flight.pushdown.aggregate=false) SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight_noagg.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_quantity", "l_discount", "l_returnflag", "l_linestatus", "l_shipdate" FROM "tpch"."lineitem" | rows 4 (0.97s)
+
+## Check 4: TPC-H SF1 q01–q22, topn default and 0
+
+- PASS `q01 topn=default` rows 4/4 1.78s
+- PASS `q02 topn=default` rows 100/100 0.80s
+- PASS `q03 topn=default` rows 10/10 1.43s
+- PASS `q04 topn=default` rows 5/5 0.74s
+- PASS `q05 topn=default` rows 5/5 1.51s
+- PASS `q06 topn=default` rows 1/1 0.36s
+- PASS `q07 topn=default` rows 4/4 1.09s
+- PASS `q08 topn=default` rows 2/2 1.80s
+- PASS `q09 topn=default` rows 175/175 2.43s
+- PASS `q10 topn=default` rows 20/20 1.09s
+- PASS `q11 topn=default` rows 1048/1048 0.40s
+- PASS `q12 topn=default` rows 2/2 0.66s
+- PASS `q13 topn=default` rows 42/42 0.71s
+- PASS `q14 topn=default` rows 1/1 0.65s
+- PASS `q15 topn=default` rows 1/1 1.26s
+- PASS `q16 topn=default` rows 18314/18314 0.41s
+- PASS `q17 topn=default` rows 1/1 0.79s
+- PASS `q18 topn=default` rows 57/57 1.70s
+- PASS `q19 topn=default` rows 1/1 0.63s
+- PASS `q20 topn=default` rows 186/186 0.69s
+- PASS `q21 topn=default` rows 100/100 1.95s
+- PASS `q22 topn=default` rows 7/7 0.40s
+- PASS `q01 topn=0` rows 4/4 1.61s
+- PASS `q02 topn=0` rows 100/100 0.41s
+- PASS `q03 topn=0` rows 10/10 0.99s
+- PASS `q04 topn=0` rows 5/5 0.61s
+- PASS `q05 topn=0` rows 5/5 1.72s
+- PASS `q06 topn=0` rows 1/1 0.36s
+- PASS `q07 topn=0` rows 4/4 1.43s
+- PASS `q08 topn=0` rows 2/2 1.43s
+- PASS `q09 topn=0` rows 175/175 2.04s
+- PASS `q10 topn=0` rows 20/20 1.19s
+- PASS `q11 topn=0` rows 1048/1048 0.44s
+- PASS `q12 topn=0` rows 2/2 0.55s
+- PASS `q13 topn=0` rows 42/42 0.78s
+- PASS `q14 topn=0` rows 1/1 0.48s
+- PASS `q15 topn=0` rows 1/1 0.70s
+- PASS `q16 topn=0` rows 18314/18314 0.33s
+- PASS `q17 topn=0` rows 1/1 0.82s
+- PASS `q18 topn=0` rows 57/57 1.62s
+- PASS `q19 topn=0` rows 1/1 0.60s
+- PASS `q20 topn=0` rows 186/186 0.72s
+- PASS `q21 topn=0` rows 100/100 1.98s
+- PASS `q22 topn=0` rows 7/7 0.39s
+- note: timings (s): q01/default=1.78, q02/default=0.80, q03/default=1.43, q04/default=0.74, q05/default=1.51, q06/default=0.36, q07/default=1.09, q08/default=1.80, q09/default=2.43, q10/default=1.09, q11/default=0.40, q12/default=0.66, q13/default=0.71, q14/default=0.65, q15/default=1.26, q16/default=0.41, q17/default=0.79, q18/default=1.70, q19/default=0.63, q20/default=0.69, q21/default=1.95, q22/default=0.40, q01/0=1.61, q02/0=0.41, q03/0=0.99, q04/0=0.61, q05/0=1.72, q06/0=0.36, q07/0=1.43, q08/0=1.43, q09/0=2.04, q10/0=1.19, q11/0=0.44, q12/0=0.55, q13/0=0.78, q14/0=0.48, q15/0=0.70, q16/0=0.33, q17/0=0.82, q18/0=1.62, q19/0=0.60, q20/0=0.72, q21/0=1.98, q22/0=0.39
+
+## Check 5: sr-cases on SF1
+
+- PASS `SELECT count(*), sum(l_extendedprice) FROM flight.tpch.lineitem WHERE l_orderkey IN (SELECT o_orderkey FROM flight.tpch.orders WHERE o_orderdate = DATE '1995-03-15')` rows 1
+- PASS `SELECT count(*), sum(o_totalprice) FROM flight.tpch.orders WHERE o_orderdate >= DATE '1998-07-01'` rows 1
+- PASS `SELECT o_orderpriority, count(*), sum(o_totalprice) FROM flight.tpch.orders WHERE o_orderdate >= DATE '1997-01-01' GROUP BY o_orderpriority` rows 5
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate >= '1998-08-01'` rows 1
+- PASS `SELECT n_name FROM flight.tpch.nation WHERE (n_name = 'O''Brien')` rows 0
+- PASS `SELECT n_name FROM flight.tpch.nation WHERE (n_name = 'O\'Brien')` rows 0
+- PASS `SELECT n_name FROM flight.tpch.nation WHERE (n_name = 'a "tpch" b')` rows 0
+- PASS `SELECT n_regionkey FROM flight.tpch.`nation`` rows 25
+- PASS `SELECT `n_name` FROM flight.tpch.`nation` WHERE (`n_nationkey` = 5)` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderkey < 1000` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_custkey = 370` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate = DATE '1995-03-15'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate >= DATE '1998-08-01'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderdate BETWEEN DATE '1995-01-01' AND DATE '1995-01-31'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_orderpriority IN ('1-URGENT','2-HIGH')` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_totalprice > 500000.00` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_totalprice BETWEEN 1000.00 AND 1100.50` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_clerk LIKE 'Clerk#00000000%'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_comment LIKE '%special requests%'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_comment IS NULL` rows 1
+- PASS `SELECT o_orderstatus, count(*), sum(o_totalprice), min(o_orderdate), max(o_orderdate) FROM flight.tpch.orders GROUP BY o_orderstatus ORDER BY o_orderstatus` rows 3
+- PASS `SELECT l_returnflag, l_linestatus, count(*), sum(l_quantity), sum(l_extendedprice), min(l_shipdate), max(l_shipdate), avg(l_discount) FROM flight.tpch.lineitem GROUP BY l_returnflag, l_linestatus ORDE` rows 4
+- PASS `SELECT o_orderkey, o_totalprice, o_orderdate FROM flight.tpch.orders ORDER BY o_totalprice DESC, o_orderkey LIMIT 5` rows 5
+- PASS `SELECT l_orderkey, l_linenumber, l_extendedprice FROM flight.tpch.lineitem ORDER BY l_extendedprice DESC, l_orderkey, l_linenumber LIMIT 5` rows 5
+- PASS `SELECT n_name, count(*), sum(o_totalprice) FROM flight.tpch.orders JOIN flight.tpch.customer ON o_custkey = c_custkey JOIN flight.tpch.nation ON c_nationkey = n_nationkey WHERE o_orderdate >= DATE '19` rows 5
+- PASS `SELECT count(*), sum(l_extendedprice) FROM flight.tpch.lineitem JOIN flight.tpch.orders ON l_orderkey = o_orderkey WHERE o_orderdate = DATE '1995-03-15'` rows 1
+
 ## Check 6: failover (2 servers)
 
-- PASS `both servers up: full scan correct` 6.4s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
-- PASS `flight2 stopped before the query: succeeds via backup locations` 11.7s got=[('6001215', '153078795', '158997209')]
-- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 2.8s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
+- PASS `both servers up: full scan correct` 4.8s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
+- PASS `flight2 stopped before the query: succeeds via backup locations` 11.5s got=[('6001215', '153078795', '158997209')]
+- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 2.7s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
 - PASS `BE alive after failover tests` 
 - note: plan of the failover scan mentions 'flight' 0x
+
+## Check 7: KILL QUERY during a long scan
+
+- PASS `KILL QUERY stops the scan within ~1 s` 0.01s after KILL: OperationalError: (1317, 'killed manually: KILL QUERY 33554443')
+- PASS `next query works` [(25,)]
+- note: flight1 log lines with 'cancel' after the KILL: 33; [flight-server-default-executor-6] INFO pro.surpin.data.arrowflight.server.adapters.DuckDbAdapter - qid=c9fd04fb-8 node=flight1 backpressure=cancelled waited=8.26ms / [flight-server-default-executor-6] INFO pro.surpin.data.arrowflight.server.adapters.FlightSqlProducer - qid=c9fd04fb-8 node=flight1 thread=flight-server-default-executor-6 execution=failed server=grpc+tcp://flight1:32010 elapsedMs=24
+
+## Check 8: token and TLS
+
+- PASS `token server, right token` ok [(25,)]
+- PASS `token server, wrong token fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAUTHENTICATED: Missing or wrong access token\nFlightRuntimeException: Missing or wrong access token')
+- PASS `token server, no token fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAUTHENTICATED: Missing or wrong access token\nFlightRuntimeException: Missing or wrong access token')
+- PASS `token server, basic auth user:<token>` ok [(25,)]
+- PASS `SHOW CREATE CATALOG masks the password` f_basic CREATE EXTERNAL CATALOG `f_basic`
+PROPERTIES ("flight.password"  =  "******",
+"type"  =  "flight",
+"flight.uri"  =  "grpc://flight1:32010",
+"flight.user"  =  "m4"
+)
+- PASS `TLS, trusted CA file` ok [(25,)]
+- PASS `TLS, wrong host name fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline$TailContext#0]\nFlightRuntimeException: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline
+- PASS `TLS, untrusted certificate fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline$TailContext#0]\nFlightRuntimeException: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline
+- PASS `TLS, flight.tls.verify=false` ok [(25,)]
+- PASS `plain client against the TLS server fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: Network closed for unknown reason\nFlightRuntimeException: Network closed for unknown reason')
+
+## Check 9: memory limit
+
+- PASS `big aggregation under query_mem_limit=100MB fails cleanly` 1.9s ProgrammingError: (1064, 'Memory of Query01a16010-3f71-7245-b767-7561475dc958 exceed limit. Pipeline Backend: 127.0.0.1, fragment: 01a16010-3f71-7245-b767-7561475dc95b Used: 107644816, Limit: 104857600. Mem usage has exceed the limit of single query, You can change the limit by set session variable query_mem_limit.: BE:10001')
+- PASS `BE alive afterwards` 
+- PASS `next query works` [(25,)]
 
 ## Log masking
 
