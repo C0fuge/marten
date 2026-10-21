@@ -1,5 +1,3 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
-m4 checks=1,3,4 ref_catalog=flight_c
-release tag=v4.1.4-flight.0-dryrun draft=true prerelease=true
-# session 2026-10-21 20:2x: test m4.py --ref-catalog (local final check path); refresh the draft for series 4a9848e-fl598360
+# (none; last: m4 checks=1,3,4 ref_catalog=flight_c -> 39670612956, release dry run -> 39670616758)

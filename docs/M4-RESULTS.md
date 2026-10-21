@@ -55,3 +55,8 @@ BE 39664594320, be-ut 39664598409 20/20).
 | 8 | token / basic / TLS | PASS 10/10 |
 | 9 | memory limit | PASS 3/3 |
 | log masking | tokens in fe.log / be.INFO / be.WARNING / container logs | PASS |
+
+## 2026-10-21, run 39670612956 — series `4a9848e-fl598360`, checks 1, 3, 4 with `ref_catalog=flight_c`
+
+Harness test for the local final check (`m4.py --ref-catalog`): 1 PASS 15/15, 3 PASS 21/21, 4 **PASS 88/88**
+(44 against `reference/sf1`, 44 against the same query on catalog `flight_c`, result mode complete).

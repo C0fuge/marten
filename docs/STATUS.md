@@ -11,8 +11,8 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6) |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test; current series `4a9848e-fl598360`, FE 39664615702, BE 39664594320); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` is for the old series `4a9848e-fl80f999` (run 39527877395) — refresh; publish after M4 |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6), checklist **`docs/LOCAL-FINAL-CHECK.md`** (ready) |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test; current series `4a9848e-fl598360`, FE 39664615702, BE 39664594320); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for series `4a9848e-fl598360` (release run 39670616758; FE 39664615702, BE 39664594320); publish after the local final check |
 
 ## Patch series (on tag 4.1.4)
 
@@ -43,6 +43,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - `m4.yml` (manual, `m4 checks=1,2,3` in `ci/dispatch.txt`): MinIO + our Flight server (release `m4-assets`) +
   allin1 4.1.4 overlaid with the current series' FE/BE outputs, checks `ci/m4/m4.py`; results artifact `m4-<run>`
   and branch `m4-results` (`git show origin/m4-results:latest.md`). Details: `docs/M4-CI.md` §7.
+- `m4.yml` input `ref_catalog` (`m4 checks=1,3,4 ref_catalog=flight_c`): check 4 also compares every TPC-H query
+  with that catalog (path used by the local final check against the JDBC bridge).
 - `release.yml` (manual, `release tag=v… draft=true prerelease=true` in `ci/dispatch.txt`): builds nothing; takes
   the FE/BE outputs of the current input hashes from the caches (or the newest `fe-jars-*` / `starrocks_be-*`
   artifact when the cache is missing or stale), requires both to report the series hash `4.1.4-<base>-fl<patches>`
@@ -144,18 +146,25 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   FE 39660196425 (7 Flight test classes green), BE 39660201177, be-ut 39660205090; then FE 39664615702, BE
   39664594320, be-ut 39664598409 (20/20). M4 runs 39661743301, 39663221891, and **39665941130: all 9 checks pass**
   on series `4a9848e-fl598360`. ci-report now follows m4 and prints billable minutes correctly (was ms).
+- 2026-10-21 20:26–20:45 UTC (cloud session): Next step 1 done. `docs/LOCAL-FINAL-CHECK.md` for the maintainer
+  (SF10 hadoopfs vs `bench/reference/sf10` + JDBC catalog, Trino timings, 3-node kill tests B1–B7, auth/TLS/
+  profile/log grep C1–C5, report table). `ci/m4/m4.py` gained the options it uses (`--existing-catalog`,
+  `--catalog`, `--reference`, `--ref-catalog`, `--sr-cases-ref`, `M4_SR_*` connection; CI defaults unchanged),
+  `m4.yml` the input `ref_catalog`; tested by m4 run 39670612956 (checks 1,3,4 vs `flight_c`: 15/15, 21/21,
+  88/88). Draft release `v4.1.4-flight.0-dryrun` refreshed for series `4a9848e-fl598360` (release run
+  39670616758). No patch changed.
 
 ## Next steps
 
-1. `docs/LOCAL-FINAL-CHECK.md` for the maintainer (M4-CI §6: HDFS/hadoopfs SF10 with `bench/reference/sf10`,
-   3-node kill tests, speed vs JDBC bridge and Trino plugin, production-like server build), then refresh the
-   draft release for series `4a9848e-fl598360` (`release tag=v4.1.4-flight.0-dryrun draft=true prerelease=true`;
-   FE 39664615702 and BE 39664594320 are current).
-2. M4 CI hardening (small, rerun only the touched check): check 8 should also grep a query profile for the
+1. M4 CI hardening (small, rerun only the touched check): check 8 should also grep a query profile for the
    token; check 6 "during" should prove the kill overlapped the read (in run 39665941130 the read finished
-   correctly 1.2 s after the kill, so a failover/abort may not have been exercised); check 1 could compare DESC of
-   the types tables with PLAN §2.2 exactly. Any new failure: fix in the patches, rebuild, rerun only that check.
-3. After the maintainer's final check passes and they agree: `release tag=v4.1.4-flight.1 draft=false
+   correctly 1.2 s after the kill, so a failover/abort may not have been exercised — e.g. a bigger scan or a
+   kill at a fixed fraction of the measured read time); check 1 could compare DESC of the types tables with
+   PLAN §2.2 exactly. Any new failure: fix in the patches, rebuild, rerun only that check.
+2. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
+   `docs/M4-RESULTS.md`; fix failures in the patches (then FE + BE of the new series, `m4` of the touched checks,
+   refresh the draft). If `bench/reference/sf10` has another layout, adapt `load_ref` in `ci/m4/m4.py`.
+3. After the final check passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false
    prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
    after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
    FE **and** BE outputs of the new series before `m4` or `release` (the other side: `fe/be force=true`).
@@ -168,8 +177,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   DuckDB UBIGINT column is streamed as `uint64` while GetTables/complete mode say `decimal128(20,0)`. Worth fixing
   in the server; tell me if the connector should instead push integer sums as `sum(CAST(x AS DECIMAL(38,0)))`.
 
-- Heads-up: the draft release `v4.1.4-flight.0-dryrun` still holds the old series `4a9848e-fl80f999` (before the M4
-  fixes); it is refreshed in Next step 1. The allin1 paths of `docs/INSTALL.md` §2a are now verified by `m4.yml`.
+- **Ready for you: `docs/LOCAL-FINAL-CHECK.md`** (≈2–3 h on the stand: SF10 hadoopfs vs `bench/reference/sf10`
+  and the JDBC catalog with `ci/m4/m4.py`, Trino timings, 3-node kill tests, auth/TLS/profile/log grep). Build
+  under test: draft release `v4.1.4-flight.0-dryrun` (series `4a9848e-fl598360`). It assumes `bench/reference/sf10`
+  has the layout of `tests/m4/reference/sf1` (`qNN.tsv` + `qNN.cols`); if not, the JDBC comparison still covers
+  correctness — tell me the layout and I adapt the harness. The allin1 paths of `docs/INSTALL.md` §2a are verified
+  by `m4.yml`.
 - Release naming: the workflow takes any tag `v…`; proposed `v4.1.4-flight.N`. Publishing (draft → public, which
   creates the git tag) is left to you after M4.
 - 2026-10-21 (maintainer): M4 moves to CI as far as possible (docs/M4-CI.md); only a short final check runs on
