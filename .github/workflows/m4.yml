@@ -1,0 +1,142 @@
+# M4 in CI (docs/M4-CI.md): StarRocks 4.1.4 overlaid with the FE/BE outputs of the current patch series against
+# our Arrow Flight SQL server (release m4-assets) on MinIO, checks by ci/m4/m4.py. Builds nothing: run fe / be
+# first (same output lookup as release.yml). Manual dispatch only: `m4 checks=1,2,3` in ci/dispatch.txt.
+# Results: artifact m4-<run> (results + all logs) and branch `m4-results` (runs/<run>.md, latest.md).
+name: m4
+on:
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: "comma-separated check numbers of docs/M4-CI.md §4 (implemented: 1-5)"
+        default: "1,2,3,4,5"
+
+concurrency:
+  group: m4
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  m4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" &
+          df -h / ; wait; df -h /
+      - name: Prepare source
+        run: scripts/prepare-source.sh "$RUNNER_TEMP/src"
+      - name: Input hashes
+        id: hash
+        run: |
+          . ci/env.sh
+          echo "fe=$(scripts/input-hash.sh "$RUNNER_TEMP/src" fe)" >> "$GITHUB_OUTPUT"
+          echo "be=$(scripts/input-hash.sh "$RUNNER_TEMP/src" be)" >> "$GITHUB_OUTPUT"
+          echo "commit_hash=$STARROCKS_BASE_HASH-fl$(cat patches/*.patch | sha256sum | cut -c1-6)" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+          rm -rf "$RUNNER_TEMP/src"
+      - name: Restore FE output
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-fe-out
+          key: fe-out-${{ steps.hash.outputs.fe }}
+      - name: Restore BE output
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-out
+          key: be-out-${{ steps.hash.outputs.be }}
+      - name: Fall back to workflow artifacts
+        env:
+          CH: ${{ steps.hash.outputs.commit_hash }}
+        run: |
+          fetch() { # build-info file, artifact name, target dir
+            if [ -s "$3/$1" ] && grep -qx "commit_hash=$CH" "$3/$1"; then echo "$2: cached output is current"; return; fi
+            id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$2&per_page=100" \
+                   --jq '[.artifacts[] | select(.expired | not)] | sort_by(.created_at) | last | .id // empty')
+            [ -n "$id" ] || { echo "::error::no current output and no artifact $2: run the build first"; exit 1; }
+            echo "$2: using artifact $id"
+            rm -rf "$3" && mkdir -p "$3"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/a.zip"
+            unzip -o -q "$RUNNER_TEMP/a.zip" -d "$3"
+          }
+          fetch fe-build-info.txt "fe-jars-${{ steps.hash.outputs.fe }}" /home/runner/sr-fe-out
+          fetch be-build-info.txt "starrocks_be-${{ steps.hash.outputs.be }}" /home/runner/sr-out
+          for f in /home/runner/sr-fe-out/fe-build-info.txt /home/runner/sr-out/be-build-info.txt; do
+            grep -qx "commit_hash=$CH" "$f" || { echo "::error::$f is not from series $CH (run fe/be force=true)"; exit 1; }
+          done
+      - name: Restore m4 assets
+        id: assets
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/m4-assets
+          key: m4-assets-int1-v1
+      - name: Download m4 assets
+        run: ci/m4/stack.sh assets /home/runner/m4-assets
+      - name: Save m4 assets
+        if: steps.assets.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/m4-assets
+          key: m4-assets-int1-v1
+      - name: Python
+        run: pip install --quiet duckdb==1.4.1 pymysql pytz
+      - name: MinIO + data
+        run: ci/m4/stack.sh minio /home/runner/m4-assets
+      - name: Flight server
+        run: ci/m4/stack.sh flight /home/runner/m4-assets flight1
+      - name: StarRocks
+        run: ci/m4/stack.sh starrocks /home/runner/sr-fe-out /home/runner/sr-out
+      - name: Checks
+        env:
+          CHECKS: ${{ inputs.checks }}
+          SERIES: 4.1.4-${{ steps.hash.outputs.commit_hash }}
+        run: |
+          # Catalog token: a random dummy value (the server runs open for checks 1-5); it must never show up in
+          # SHOW CREATE CATALOG or a log.
+          M4_TOKEN=m4tok$(openssl rand -hex 12); export M4_TOKEN
+          echo "M4_TOKEN=$M4_TOKEN" >> "$GITHUB_ENV"
+          python3 ci/m4/m4.py --checks "$CHECKS" --out "$RUNNER_TEMP/m4" \
+            --tpch /home/runner/m4-assets/x/sf1/tpch --types tests/m4/data/types --series "$SERIES" 2>&1 | tee "$RUNNER_TEMP/m4-console.log"
+          exit "${PIPESTATUS[0]}"
+      - name: Logs and token grep
+        if: always()
+        run: |
+          ci/m4/stack.sh logs "$RUNNER_TEMP/m4/logs" || true
+          mkdir -p "$RUNNER_TEMP/m4"; touch "$RUNNER_TEMP/m4/results.md"
+          if [ -n "${M4_TOKEN:-}" ]; then
+            hits=$(grep -rl -- "$M4_TOKEN" "$RUNNER_TEMP/m4/logs" 2>/dev/null || true)
+            { echo; echo "## Log masking"; echo
+              if [ -n "$hits" ]; then echo "- **FAIL** catalog token found in: $(echo $hits | sed "s#$RUNNER_TEMP/m4/logs/##g")"
+              else echo "- PASS catalog token in no log (fe.log, be.INFO/WARNING, container logs)"; fi
+            } >> "$RUNNER_TEMP/m4/results.md"
+          fi
+          cat "$RUNNER_TEMP/m4/results.md" >> "$GITHUB_STEP_SUMMARY"
+          free -m; df -h /
+      - name: Upload results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m4-${{ github.run_id }}
+          path: ${{ runner.temp }}/m4
+          retention-days: 7
+      - name: Publish results to branch m4-results
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/m4/results.md" ] || exit 0
+          url="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          d=$RUNNER_TEMP/m4r
+          if git ls-remote --exit-code "$url" m4-results >/dev/null; then git clone -q --depth 20 -b m4-results "$url" "$d"
+          else git init -q -b m4-results "$d"; fi
+          mkdir -p "$d/runs"
+          cp "$RUNNER_TEMP/m4/results.md" "$d/runs/$GITHUB_RUN_ID.md"
+          cp "$RUNNER_TEMP/m4/results.md" "$d/latest.md"
+          tail -60 "$RUNNER_TEMP/m4-console.log" > "$d/runs/$GITHUB_RUN_ID.console-tail.log" 2>/dev/null || true
+          cd "$d"; git add -A
+          git -c user.name=m4 -c user.email=m4@localhost commit -q -m "M4 run $GITHUB_RUN_ID (${{ inputs.checks }})"
+          git push -q "$url" m4-results

@@ -39,6 +39,7 @@ gh cache list -R "$R" -L 30 --json key,sizeInBytes,createdAt,ref --jq '.[] | "- 
 echo
 echo "## Actions minutes"
 echo
-gh api "repos/$R/actions/workflows" --jq '.workflows[].id' | while read -r w; do
-  gh api "repos/$R/actions/workflows/$w/timing" --jq "\"- workflow $w: \(.billable.UBUNTU.total_ms // 0 / 60000 | floor) billable min this cycle\"" 2>/dev/null
+# Per-workflow billable minutes of the current billing cycle (private repo; ~2000 min/month, see CLAUDE.md).
+gh api "repos/$R/actions/workflows" --jq '.workflows[] | "\(.id) \(.name)"' | while read -r w name; do
+  gh api "repos/$R/actions/workflows/$w/timing" --jq "\"- $name ($w): \((.billable.UBUNTU.total_ms // 0) / 60000 | floor) billable min this cycle\"" 2>/dev/null
 done

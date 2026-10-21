@@ -1,4 +1,4 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
-release tag=v4.1.4-flight.0-dryrun draft=true prerelease=true
-# session 2026-10-21 01:2x: refresh the draft for the current series (FE run 39526375694, BE run 39514450436)
+m4 checks=1,2,3,4,5
+# session 2026-10-21 18:4x: first M4 CI run (new m4.yml; series 4a9848e-fl80f999, FE 39526375694, BE 39514450436)
