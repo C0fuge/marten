@@ -7,13 +7,13 @@ FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggrega
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
  .../flight/FlightPropertiesTest.java          | 104 +++++++++++
- .../flight/FlightSqlMetadataClientTest.java   | 107 ++++++++++++
+ .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++++++
  .../flight/FlightSqlRendererTest.java         | 123 +++++++++++++
- .../flight/FlightTypeMapperTest.java          | 116 +++++++++++++
+ .../flight/FlightTypeMapperTest.java          | 116 ++++++++++++
  .../flight/MockedFlightSqlMetadataClient.java |  99 +++++++++++
- .../FlightAggregationPushdownRuleTest.java    |  67 ++++++++
- .../sql/plan/FlightScanPlanTest.java          | 161 ++++++++++++++++++
- 7 files changed, 777 insertions(+)
+ .../FlightAggregationPushdownRuleTest.java    |  72 ++++++++
+ .../sql/plan/FlightScanPlanTest.java          | 168 ++++++++++++++++++
+ 7 files changed, 789 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -603,10 +603,10 @@ index 00000000..f3bbd654
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
 new file mode 100644
-index 00000000..118c9c55
+index 00000000..01477163
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,72 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -642,16 +642,16 @@ index 00000000..118c9c55
 +    private final FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(ImmutableMap.of(id, "id", name, "name"));
 +
 +    private String render(String fn, ColumnRefOperator arg, Type type) {
-+        return FlightAggregationPushdownRule.renderAggregate(fn, arg, type, cols);
++        return FlightAggregationPushdownRule.renderAggregate(fn, arg, type, cols, false);
 +    }
 +
 +    @Test
 +    public void testCount() {
 +        Assertions.assertEquals("count(*)", render(FunctionSet.COUNT, null, IntegerType.BIGINT));
 +        Assertions.assertEquals("count(*)", FlightAggregationPushdownRule.renderAggregate(FunctionSet.COUNT,
-+                ConstantOperator.createInt(1), IntegerType.BIGINT, cols));
++                ConstantOperator.createInt(1), IntegerType.BIGINT, cols, false));
 +        Assertions.assertNull(FlightAggregationPushdownRule.renderAggregate(FunctionSet.COUNT,
-+                ConstantOperator.createNull(IntegerType.INT), IntegerType.BIGINT, cols));
++                ConstantOperator.createNull(IntegerType.INT), IntegerType.BIGINT, cols, false));
 +        Assertions.assertEquals("count(\"name\")", render(FunctionSet.COUNT, name, IntegerType.BIGINT));
 +        // no exact remote column
 +        Assertions.assertNull(render(FunctionSet.COUNT, price, IntegerType.BIGINT));
@@ -659,9 +659,14 @@ index 00000000..118c9c55
 +
 +    @Test
 +    public void testSumIsCastToTheStarRocksType() {
-+        Assertions.assertEquals("CAST(sum(\"id\") AS BIGINT)", render(FunctionSet.SUM, id, IntegerType.BIGINT));
-+        Assertions.assertEquals("CAST(sum(\"id\") AS DECIMAL(38,2))",
++        // the cast goes inside the sum: result mode partial accepts only bare fn(expr) items
++        Assertions.assertEquals("sum(CAST(\"id\" AS DECIMAL(38,2)))",
 +                render(FunctionSet.SUM, id, TypeFactory.createDecimalV3NarrowestType(38, 2)));
++        Assertions.assertEquals("sum(CAST(\"id\" AS DOUBLE))", render(FunctionSet.SUM, id, FloatType.DOUBLE));
++        // an integer sum is HUGEINT on the server: cast around it, so only in result mode complete
++        Assertions.assertNull(render(FunctionSet.SUM, id, IntegerType.BIGINT));
++        Assertions.assertEquals("CAST(sum(\"id\") AS BIGINT)", FlightAggregationPushdownRule.renderAggregate(
++                FunctionSet.SUM, id, IntegerType.BIGINT, cols, true));
 +        // no SQL type for LARGEINT
 +        Assertions.assertNull(render(FunctionSet.SUM, id, IntegerType.LARGEINT));
 +        Assertions.assertNull(render(FunctionSet.SUM, null, IntegerType.BIGINT));
@@ -676,10 +681,10 @@ index 00000000..118c9c55
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..7ebbb0a1
+index 00000000..cc26beca
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,168 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -796,14 +801,21 @@ index 00000000..7ebbb0a1
 +
 +    @Test
 +    public void testGroupByWithWhereAndHaving() throws Exception {
-+        String plan = getFragmentPlan("select k, count(*), sum(id), max(id) from " + T1
++        String plan = getFragmentPlan("select k, count(*), min(id), max(id) from " + T1
 +                + " where id > 0 group by k having count(*) > 1");
 +        String sql = remoteSql(plan);
-+        assertContains(sql, "count(*) AS \"__flight_agg_", "CAST(sum(\"id\") AS BIGINT) AS \"__flight_agg_",
++        assertContains(sql, "count(*) AS \"__flight_agg_", "min(\"id\") AS \"__flight_agg_",
 +                "max(\"id\") AS \"__flight_agg_", " WHERE (\"id\" > 0) GROUP BY \"k\"");
 +        // the WHERE is part of the remote aggregation; the scan keeps no predicate
 +        assertNotContains(plan, "PREDICATES: ", "coalesce(");
 +        assertContains(plan, "having: ");
++    }
++
++    @Test
++    public void testIntegerSumNotPushedInPartialMode() throws Exception {
++        // the server would return HUGEINT and rejects CAST(sum(..)) in result mode partial (the default)
++        String plan = getFragmentPlan("select k, sum(id) from " + T1 + " group by k");
++        assertNotContains(plan, "__flight_agg_");
 +    }
 +
 +    @Test

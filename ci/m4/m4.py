@@ -8,7 +8,7 @@ Every check compares StarRocks with DuckDB on the same parquet files (or with te
 Writes DIR/results.md (summary + details) and DIR/results.json; exit code 0 even on failed checks (the
 workflow decides), 2 on harness errors.
 """
-import argparse, datetime, decimal, json, os, re, sys, time, traceback, uuid
+import argparse, datetime, decimal, json, os, re, struct, sys, time, traceback, uuid
 from decimal import Decimal
 
 decimal.getcontext().prec = 80
@@ -68,7 +68,11 @@ def norm(v, kind=None):
     if isinstance(v, int):
         return str(v)
     if isinstance(v, float):
-        return format(v, ".6g" if kind == "float" else ".9g")
+        if kind == "float":     # compare as float32: StarRocks prints FLOAT with float32 precision (1e-45)
+            return format(struct.unpack("f", struct.pack("f", v))[0], ".6g")
+        if kind == "exact" or v != v or v in (float("inf"), float("-inf")):
+            return format(v, ".9g")
+        v = Decimal(format(v, ".12g"))      # DOUBLE vs DECIMAL (avg): both rounded like sr_cases.py
     if isinstance(v, Decimal):
         d = (v if kind == "exact" else round(v, 4)).normalize()
         return "0" if d == 0 else format(d, "f")
@@ -81,9 +85,9 @@ def norm(v, kind=None):
     if isinstance(v, (bytes, bytearray, memoryview)):
         return bytes(v).hex()
     if isinstance(v, uuid.UUID):
-        return v.hex
+        return str(v)
     if isinstance(v, (list, tuple, dict)):
-        return re.sub(r"\s", "", json.dumps(v, default=str, sort_keys=True))
+        return re.sub(r"\s", "", json.dumps(v, default=str, sort_keys=True, ensure_ascii=False))
     return str(v)
 
 
@@ -211,8 +215,30 @@ def type_ok(duck_type, sr_type):
 
 # ---------------------------------------------------------------- check 2: every column of the types tables
 
+def adbc_probe(sql):
+    """Ask the Flight server directly (ADBC Flight SQL), bypassing StarRocks: (schema, rows) as text."""
+    import adbc_driver_flightsql.dbapi as fs
+    with fs.connect(FLIGHT_URI) as c, c.cursor() as cur:
+        cur.execute(sql)
+        t = cur.fetch_arrow_table()
+        return str(t.schema).replace("\n", "; "), t.to_pylist()
+
+
 def check2(conn, args, res):
     d = args.duck
+    for sql in ("SELECT id, c_ubigint, c_ts, c_uuid FROM types.alltypes_full WHERE id IN (2, 3) ORDER BY id",):
+        try:
+            sch, rows = adbc_probe(sql)
+            res.notes.append(f"server direct (ADBC): {sql} -> schema {sch}; rows {rows}")
+        except Exception as e:
+            res.notes.append(f"server direct (ADBC) failed: {type(e).__name__}: {e}"[:500])
+        try:
+            import adbc_driver_flightsql.dbapi as fs
+            with fs.connect(FLIGHT_URI) as c:
+                sch = c.adbc_get_table_schema("alltypes_full", db_schema_filter="types")
+                res.notes.append("server GetTables schema of types.alltypes_full: " + str(sch).replace("\n", "; "))
+        except Exception as e:
+            res.notes.append(f"server GetTables schema failed: {type(e).__name__}: {e}"[:500])
     for t in sorted(os.listdir(args.types)):
         sr_cols_ = [r[0] for r in sr(conn, f"DESC flight.types.{t}")]
         dk = {r[0]: r[1] for r in d.execute(f"DESCRIBE types.{t}").fetchall()}
@@ -347,6 +373,9 @@ def check4(conn, args, res):
                 q = f"q{i:02d}"
                 def one(q=q, topn=topn):
                     sql = open(os.path.join(M4, "queries", f"{q}.sql")).read().strip().rstrip(";")
+                    # StarRocks has no SQL-standard substring(x FROM a FOR b) (q22)
+                    sql = re.sub(r"substring\(\s*([\w.]+)\s+FROM\s+(\d+)\s+FOR\s+(\d+)\s*\)",
+                                 r"substring(\1, \2, \3)", sql, flags=re.I)
                     cols, ref = load_ref(q)
                     t0 = time.time()
                     got = sr(conn, sql)

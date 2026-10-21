@@ -1,4 +1,6 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
-m4 checks=1,2,3,4,5
-# session 2026-10-21 18:4x: first M4 CI run (new m4.yml; series 4a9848e-fl80f999, FE 39526375694, BE 39514450436)
+fe force=false tests=FlightAggregationPushdownRuleTest,FlightScanPlanTest,FlightSqlRendererTest,FlightTypeMapperTest,FlightPropertiesTest,FlightSqlMetadataClientTest,PushDownTopNToPreAggRuleTest
+be
+be-ut
+# session 2026-10-21 19:3x: dispatched directly (MCP) with a [skip ci] push; fixes from M4 run 39658484728

@@ -10,14 +10,15 @@ location while nothing has been delivered and the error means unreachable; cance
 reads through a process-wide watcher thread; Arrow -> Chunk via ParquetScanner converters; conjuncts
 and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescriptor.
 ---
- be/src/connector/CMakeLists.txt       |   1 +
- be/src/connector/connector.cpp        |   3 +
- be/src/connector/connector.h          |   2 +
- be/src/connector/flight_connector.cpp | 488 ++++++++++++++++++++++++++
- be/src/connector/flight_connector.h   | 146 ++++++++
- be/src/exec/exec_node.cpp             |   7 +
- be/src/runtime/descriptors.cpp        |   5 +
- 7 files changed, 652 insertions(+)
+ be/src/connector/CMakeLists.txt              |   1 +
+ be/src/connector/connector.cpp               |   3 +
+ be/src/connector/connector.h                 |   2 +
+ be/src/connector/flight_connector.cpp        | 488 +++++++++++++++++++
+ be/src/connector/flight_connector.h          | 146 ++++++
+ be/src/exec/arrow_to_starrocks_converter.cpp |  23 +-
+ be/src/exec/exec_node.cpp                    |   7 +
+ be/src/runtime/descriptors.cpp               |   5 +
+ 8 files changed, 672 insertions(+), 3 deletions(-)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -727,6 +728,61 @@ index 00000000..f3d2db03
 +};
 +
 +} // namespace starrocks::connector
+diff --git a/be/src/exec/arrow_to_starrocks_converter.cpp b/be/src/exec/arrow_to_starrocks_converter.cpp
+index 03fca8db..841b08d4 100644
+--- a/be/src/exec/arrow_to_starrocks_converter.cpp
++++ b/be/src/exec/arrow_to_starrocks_converter.cpp
+@@ -526,6 +526,17 @@ struct ArrowConverter<AT, LT, is_nullable, is_strict, DateOrDateTimeATGuard<AT>,
+         }
+     }
+ 
++    // Splits a timestamp in `unit`s per second into whole seconds and the non-negative remainder (floor division),
++    // so values before 1970 with a fractional part do not end up with a negative fraction.
++    static void split_timestamp(int64_t value, int64_t unit, int64_t* second, int64_t* rem) {
++        *second = value / unit;
++        *rem = value % unit;
++        if (*rem < 0) {
++            *rem += unit;
++            *second -= 1;
++        }
++    }
++
+     static bool convert_one_datetime(CppType& datum, int64_t second, int64_t microsecond, const cctz::time_zone& ctz) {
+         static_assert(at_is_datetime<AT>, "Invalid arrow type");
+ 
+@@ -587,7 +598,9 @@ struct ArrowConverter<AT, LT, is_nullable, is_strict, DateOrDateTimeATGuard<AT>,
+                 }
+             }
+ 
+-            if (convert_one_datetime(data[i], arrow_data[i] / 1000, arrow_data[i] % 1000 * 1000, ctz)) {
++            int64_t second, rem;
++            split_timestamp(arrow_data[i], 1000, &second, &rem);
++            if (convert_one_datetime(data[i], second, rem * 1000, ctz)) {
+                 return Status::InternalError(strings::Substitute("Illegal timestamp value($0)", arrow_data[i]));
+             }
+         }
+@@ -604,7 +617,9 @@ struct ArrowConverter<AT, LT, is_nullable, is_strict, DateOrDateTimeATGuard<AT>,
+                 }
+             }
+ 
+-            if (convert_one_datetime(data[i], arrow_data[i] / 1000000, arrow_data[i] % 1000000, ctz)) {
++            int64_t second, rem;
++            split_timestamp(arrow_data[i], 1000000, &second, &rem);
++            if (convert_one_datetime(data[i], second, rem, ctz)) {
+                 return Status::InternalError(strings::Substitute("Illegal timestamp value($0)", arrow_data[i]));
+             }
+         }
+@@ -621,7 +636,9 @@ struct ArrowConverter<AT, LT, is_nullable, is_strict, DateOrDateTimeATGuard<AT>,
+                 }
+             }
+ 
+-            if (convert_one_datetime(data[i], arrow_data[i] / 1000000000, arrow_data[i] % 1000000000 / 1000, ctz)) {
++            int64_t second, rem;
++            split_timestamp(arrow_data[i], 1000000000, &second, &rem);
++            if (convert_one_datetime(data[i], second, rem / 1000, ctz)) {
+                 return Status::InternalError(strings::Substitute("Illegal timestamp value($0)", arrow_data[i]));
+             }
+         }
 diff --git a/be/src/exec/exec_node.cpp b/be/src/exec/exec_node.cpp
 index d927b831..eae5909c 100644
 --- a/be/src/exec/exec_node.cpp

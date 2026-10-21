@@ -22,14 +22,14 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
  .../sql/optimizer/rule/RuleType.java          |   2 +
  .../FlightScanImplementationRule.java         |  38 +++
- .../FlightAggregationPushdownRule.java        | 256 +++++++++++++++
+ .../FlightAggregationPushdownRule.java        | 270 ++++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  37 +++
  .../transformer/RelationTransformer.java      |   4 +
  .../sql/plan/PlanFragmentBuilder.java         |  39 +++
- 21 files changed, 904 insertions(+), 1 deletion(-)
+ 21 files changed, 918 insertions(+), 1 deletion(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -806,10 +806,10 @@ index 00000000..5a9aeab3
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
 new file mode 100644
-index 00000000..d8b34f3b
+index 00000000..c0e73efc
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,270 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -868,8 +868,13 @@ index 00000000..d8b34f3b
 + *   Agg(g, count(*), sum(x)) -> FlightScan(g, x, predicate)
 + * =>
 + *   Agg(g, sum(c0), sum(c1)) -> FlightScan(g, c0, c1) with remote
-+ *   SELECT "g", count(*) AS "__flight_agg_0", CAST(sum("x") AS T) AS "__flight_agg_1" FROM t WHERE ... GROUP BY "g"
++ *   SELECT "g", count(*) AS "__flight_agg_0", sum(CAST("x" AS T)) AS "__flight_agg_1" FROM t WHERE ... GROUP BY "g"
 + * </pre>
++ * Every remote select item is a bare {@code fn(expr) AS alias}: in result mode {@code partial} the server rewrites
++ * the aggregates per endpoint and rejects anything wrapped around them (M4 run 39658484728: "Referenced column
++ * cast(sum(...)) not found"). Casts therefore go inside the aggregate, which keeps the server's result type equal
++ * to the StarRocks partial type for decimal and floating-point sums and for min/max; an integer sum (the server
++ * widens it to HUGEINT) needs a cast around it and is only pushed in result mode {@code complete}.
 + * Every endpoint returns partial groups; the StarRocks aggregation merges them (count -> sum, sum -> sum,
 + * min -> min, max -> max). The rule only fires when every conjunct of the scan predicate, every grouping key and
 + * every aggregate argument can be rendered exactly; otherwise the plan is left unchanged.
@@ -979,7 +984,8 @@ index 00000000..d8b34f3b
 +            if (arg != null && resolver != null) {
 +                arg = resolver.rewrite(arg);
 +            }
-+            String remote = renderAggregate(fn, arg, call.getType(), cols);
++            String remote = renderAggregate(fn, arg, call.getType(), cols,
++                    props != null && "complete".equals(props.getResultMode()));
 +            if (remote == null) {
 +                return Collections.emptyList();
 +            }
@@ -1036,7 +1042,7 @@ index 00000000..d8b34f3b
 +    /** Remote partial aggregate whose result has the StarRocks type of the partial column, or null. */
 +    @VisibleForTesting
 +    static String renderAggregate(String fn, ScalarOperator arg, Type resultType,
-+                                          FlightSqlRenderer.Columns cols) {
++                                  FlightSqlRenderer.Columns cols, boolean completeMode) {
 +        if (FunctionSet.COUNT.equals(fn)) {
 +            if (arg != null && arg.isConstantNull()) {
 +                // count(NULL) is 0; rare, left to StarRocks
@@ -1057,13 +1063,21 @@ index 00000000..d8b34f3b
 +        }
 +        String sqlType = FlightSqlRenderer.numericSqlType(resultType);
 +        if (FunctionSet.SUM.equals(fn)) {
-+            // the server's sum type differs (e.g. HUGEINT for integers): cast to the StarRocks result type
-+            return sqlType == null ? null : "CAST(sum(" + in + ") AS " + sqlType + ")";
++            if (sqlType == null) {
++                return null;
++            }
++            if (resultType.isDecimalOfAnyVersion() || resultType.isFloatingPointType()) {
++                // sum(DECIMAL(38,s)) is DECIMAL(38,s) and sum(DOUBLE) is DOUBLE on the server
++                return "sum(CAST(" + in + " AS " + sqlType + "))";
++            }
++            // the server sums integers as HUGEINT: only a cast around the sum gives the StarRocks type
++            return completeMode ? "CAST(sum(" + in + ") AS " + sqlType + ")" : null;
 +        }
 +        if (arg instanceof ColumnRefOperator) {
 +            return fn + "(" + in + ")";
 +        }
-+        return sqlType == null ? null : "CAST(" + fn + "(" + in + ") AS " + sqlType + ")";
++        // min/max keep their argument's type
++        return sqlType == null ? null : fn + "(CAST(" + in + " AS " + sqlType + "))";
 +    }
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/MergeLimitDirectRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/MergeLimitDirectRule.java

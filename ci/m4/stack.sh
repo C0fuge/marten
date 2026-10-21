@@ -105,7 +105,8 @@ flight)
     . "$M4_STATE/minio.env"
     extra_env=()
     [ -z "${M4_CERTS:-}" ] || extra_env+=(-v "$M4_CERTS:/certs:ro")
-    [ "$NAME" != flight1 ] || extra_env+=(--network-alias flight1-alias)
+    # flight1 is also published on the runner (ADBC probes in m4.py; /etc/hosts maps flight1 to 127.0.0.1)
+    [ "$NAME" != flight1 ] || extra_env+=(--network-alias flight1-alias -p 127.0.0.1:32010:32010)
     # a stopped container of the same name (logs kept for the artifact) must make room
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     for v in $(compgen -e | grep '^FLIGHT_' || true); do extra_env+=(-e "$v"); done

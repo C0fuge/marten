@@ -2,3 +2,4 @@
 /out/
 *.zst
 *.jar
+__pycache__/
