@@ -110,7 +110,7 @@ flight)
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     for v in $(compgen -e | grep '^FLIGHT_' || true); do extra_env+=(-e "$v"); done
     [ -n "${FLIGHT_AUTH_PROVIDER:-}${FLIGHT_TLS_CERT:-}" ] || extra_env+=(-e FLIGHT_ALLOW_INSECURE=true)
-    docker run -d --name "$NAME" --hostname "$NAME" --network m4 --memory 4g -v "$A/x:/srv:ro" -w /srv \
+    docker run -d --name "$NAME" --hostname "$NAME" --network m4 --memory 4g -v "$A/x:/srv:ro" -w /tmp \
         -e LANG=C.UTF-8 -e MALLOC_ARENA_MAX=4 \
         -e FLIGHT_S3_ACCESS_KEY="$MINIO_ROOT_USER" -e FLIGHT_S3_SECRET_KEY="$MINIO_ROOT_PASSWORD" "${extra_env[@]}" \
         "$JDK_IMAGE" java --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED \

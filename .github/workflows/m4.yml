@@ -113,7 +113,9 @@ jobs:
         if: always()
         run: |
           ci/m4/stack.sh logs "$RUNNER_TEMP/m4/logs" || true
-          mkdir -p "$RUNNER_TEMP/m4"; touch "$RUNNER_TEMP/m4/results.md"
+          mkdir -p "$RUNNER_TEMP/m4"
+          [ -s "$RUNNER_TEMP/m4/results.md" ] || printf '# M4 run %s\n\nSetup failed before the checks finished (checks %s); see the job log.\n' \
+            "$GITHUB_RUN_ID" "${{ inputs.checks }}" > "$RUNNER_TEMP/m4/results.md"
           if [ -n "${M4_TOKEN:-}" ]; then
             hits=$(grep -rl -- "$M4_TOKEN" "$RUNNER_TEMP/m4/logs" 2>/dev/null || true)
             { echo; echo "## Log masking"; echo
