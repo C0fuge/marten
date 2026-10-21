@@ -12,7 +12,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
 | M4 | Bench tests on the maintainer's local stand | not in the cloud; test SQL prepared in `docs/M4-TESTS.md` |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` (run 39500542342); publish after M4 |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for the current series `4a9848e-fl80f999` (run 39527877395); publish after M4 |
 
 ## Patch series (on tag 4.1.4)
 
@@ -123,20 +123,24 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   against pyarrow 19.0.1's libarrow_flight. CI: be-ut run 39514450368 18/18 green on the first run; BE run
   39514450436 green (Build BE 81 s, ccache-only). No connector code changed.
 
+- 2026-10-21 01:15–01:40 UTC (cloud session): no M4 results yet (step 1 waits). Old step 2 done: forced FE rebuild
+  for the series hash after the 0007 change (FE run 39526375694, 5 min, no tests), then the draft
+  `v4.1.4-flight.0-dryrun` re-created for series `4a9848e-fl80f999` (release run 39527877395 green; FE 39526375694,
+  BE 39514450436). No patch changed.
+
 ## Next steps
 
 1. React to M4 results from the maintainer (failures go here as new steps).
-2. Before the next release (draft or final): the 0007 change of 2026-10-20 23:21 UTC altered the series hash; BE
-   is already rebuilt for it (run 39514450436), FE needs `fe force=true` (version string only) before
-   `release` passes its consistency check.
-3. After M4 passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false prerelease=false` (or
-   publish a draft by hand); delete the `v4.1.4-flight.0-dryrun` draft.
+2. After M4 passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false prerelease=false` (or
+   publish a draft by hand); delete the `v4.1.4-flight.0-dryrun` draft. FE and BE outputs of the current series
+   are cached (FE run 39526375694, BE run 39514450436); after any later patch change rebuild the other side with
+   `force=true` before `release` (see CI above).
 
 ## Open questions for the maintainer
 
 - Not a decision, a heads-up: a first M4 smoke is possible now with the assets of the **draft** release
-  `v4.1.4-flight.0-dryrun` (Releases page, visible to you only; FE run 39484391882 + BE run 39499533941, current
-  series `4a9848e-fl14c16b`), installed per `docs/INSTALL.md` (the allin1 image paths there are unverified),
+  `v4.1.4-flight.0-dryrun` (Releases page, visible to you only; refreshed 2026-10-21 01:32 UTC: FE run
+  39526375694 + BE run 39514450436, series `4a9848e-fl80f999`, starrocks_be sha256 fa59da66…), installed per `docs/INSTALL.md` (the allin1 image paths there are unverified),
   queries in `docs/M4-TESTS.md`. Nothing in the cloud work depends on it.
 - Release naming: the workflow takes any tag `v…`; proposed `v4.1.4-flight.N`. Publishing (draft → public, which
   creates the git tag) is left to you after M4.
