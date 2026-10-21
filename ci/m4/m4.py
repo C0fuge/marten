@@ -190,6 +190,83 @@ def check1(conn, args, res):
         gotd = {c: ty.upper() for c, ty in got}
         bad = [f"{c}: {exp[c]} -> {gotd.get(c)}" for c in exp if not type_ok(exp[c], gotd.get(c))]
         res.add(f"DESC flight.types.{t}", not bad, "; ".join(bad))
+    for t in want:
+        check_desc_exact(conn, res, "tpch", t)
+    for t in types:
+        check_desc_exact(conn, res, "types", t)
+
+
+# PLAN §2.2 type mapping (as FlightTypeMapper, flight.nested_types=native), applied to the Arrow schema the server
+# reports in GetTables(include_schema): the expected DESC type, or None for a hidden column.
+def plan_type(t):
+    import pyarrow as pa
+    T = pa.types
+    if isinstance(t, pa.ExtensionType):
+        return None
+    if T.is_dictionary(t):
+        return plan_type(t.value_type)
+    if T.is_boolean(t):
+        return "BOOLEAN"
+    if T.is_integer(t):
+        signed = {8: "TINYINT", 16: "SMALLINT", 32: "INT", 64: "BIGINT"}
+        unsigned = {8: "SMALLINT", 16: "INT", 32: "BIGINT", 64: "LARGEINT"}
+        return (signed if T.is_signed_integer(t) else unsigned)[t.bit_width]
+    if T.is_float16(t) or T.is_float32(t):
+        return "FLOAT"
+    if T.is_float64(t):
+        return "DOUBLE"
+    if T.is_decimal128(t):
+        return f"DECIMAL({t.precision},{t.scale})" if 1 <= t.precision <= 38 and 0 <= t.scale <= t.precision else None
+    if T.is_string(t) or T.is_large_string(t):
+        return "VARCHAR(1073741824)"
+    if T.is_binary(t) or T.is_large_binary(t) or T.is_fixed_size_binary(t):
+        return "VARBINARY"
+    if T.is_date(t):
+        return "DATE"
+    if T.is_timestamp(t):
+        return "DATETIME"
+    if T.is_list(t) or T.is_large_list(t) or T.is_fixed_size_list(t):
+        it = plan_type(t.value_type)
+        return it and f"ARRAY<{it}>"
+    if T.is_map(t):
+        k, v = plan_type(t.key_type), plan_type(t.item_type)
+        return f"MAP<{k},{v}>" if k and v and not re.match(r"(ARRAY|MAP|STRUCT)<", k) else None
+    if T.is_struct(t):
+        fs = [(t.field(i).name, plan_type(t.field(i).type)) for i in range(t.num_fields)]
+        if not fs or any(not n or not ty for n, ty in fs):
+            return None
+        return "STRUCT<" + ",".join(f"{n.upper()} {ty}" for n, ty in fs) + ">"
+    return None     # time, duration, interval, null, union, decimal256, views, extension types: hidden
+
+
+def norm_desc(ty):
+    """StarRocks DESC type text in the form plan_type() produces."""
+    s = ty.replace("`", "").upper()
+    s = re.sub(r"\s*,\s*", ",", s)
+    s = re.sub(r"\b(TINYINT|SMALLINT|INT|BIGINT|LARGEINT)\(\d+\)", r"\1", s)
+    s = re.sub(r"\bDECIMAL(32|64|128)\(", "DECIMAL(", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def server_schema(schema, table):
+    import adbc_driver_flightsql.dbapi as fs
+    with fs.connect(FLIGHT_URI) as c:
+        return c.adbc_get_table_schema(table, db_schema_filter=schema)
+
+
+def check_desc_exact(conn, res, schema, table):
+    def one():
+        sch = server_schema(schema, table)
+        exp = [(f.name, plan_type(f.type)) for f in sch]
+        hidden = [f"{n} ({sch.field(n).type})" for n, ty in exp if ty is None]
+        exp = [(n, ty) for n, ty in exp if ty is not None]
+        got = [(r[0], norm_desc(r[1])) for r in sr(conn, f"DESC flight.{schema}.{table}")]
+        bad = [f"{e} != {g}" for e, g in zip(exp, got) if e != g]
+        if len(exp) != len(got):
+            bad.append(f"{len(got)} columns, expected {len(exp)}")
+        res.add(f"DESC flight.{schema}.{table} = PLAN §2.2 mapping of the server schema", not bad,
+                "; ".join(bad[:6]) + (f" hidden: {', '.join(hidden)}" if hidden else ""))
+    guarded(res, f"DESC flight.{schema}.{table} exact", one)
 
 
 # DuckDB type -> accepted StarRocks DESC types (None = hidden). Nested types: hidden or native are both accepted
@@ -540,10 +617,39 @@ def be_alive(conn):
 SCAN_Q = "SELECT count(*), sum(l_quantity), sum(length(l_comment)) FROM {c}.tpch.lineitem"
 
 
+def query_profile(conn, qid, out_dir=None, label="", wait=30):
+    """Profile text of query `qid` (needs enable_profile=true when it ran); reported asynchronously."""
+    txt, err = "", ""
+    for _ in range(wait):
+        try:
+            r = sr(conn, f"SELECT get_query_profile('{qid}')")
+            txt = str(r[0][0] or "") if r else ""
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+        if txt:
+            break
+        time.sleep(1)
+    if out_dir and txt:
+        with open(os.path.join(out_dir, f"profile-{label or qid}.txt"), "w") as f:
+            f.write(txt)
+    return txt, err
+
+
+def counter_sum(profile, name):
+    return sum(int(x) for x in re.findall(rf"\b{name}: (\d+)\b", profile))
+
+
 # ---------------------------------------------------------------- check 6: failover (two servers)
+
+# check 6 "during": three full lineitem reads, so the kill lands well inside the read
+SCAN6_Q = ("SELECT count(*), sum(l_quantity), sum(length(l_comment)) FROM (" +
+           " UNION ALL ".join(["SELECT l_quantity, l_comment FROM {c}.tpch.lineitem"] * 3) + ") t")
+KILL_AT = 0.35      # fraction of the measured read time
+
 
 def check6(conn, args, res):
     exp = [tuple(norm(v) for v in r) for r in args.duck.execute(SCAN_Q.format(c="x").replace("x.tpch.", "tpch.")).fetchall()]
+    exp6 = [tuple(norm(v) for v in r) for r in args.duck.execute(SCAN6_Q.format(c="x").replace("x.tpch.", "tpch.")).fetchall()]
     try:
         flight_restart(args, ("flight1", "flight2"))
         catalog(conn, "flight_fo", "grpc://flight1:32010,grpc://flight2:32010")
@@ -552,6 +658,11 @@ def check6(conn, args, res):
         ok, r, secs = try_sql(conn, q)
         got = [tuple(norm(v) for v in x) for x in r] if ok else r
         res.add("both servers up: full scan correct", ok and got == exp, f"{secs:.1f}s got={got} exp={exp}")
+        q6 = SCAN6_Q.format(c="flight_fo")
+        try_sql(conn, q6)                                  # warm-up (server caches, metadata)
+        ok, r, t_read = try_sql(conn, q6)
+        got = [tuple(norm(v) for v in x) for x in r] if ok else r
+        res.add("both servers up: 3x lineitem read correct", ok and got == exp6, f"{t_read:.1f}s got={got}")
         n_ep = remote_sql(conn, q)[1].count("flight")  # informational
         res.notes.append(f"plan of the failover scan mentions 'flight' {n_ep}x")
 
@@ -567,20 +678,39 @@ def check6(conn, args, res):
         def run():
             c2 = sr_connect()
             sr(c2, "SET flight_aggregate_pushdown = false")
-            out["r"] = try_sql(c2, q)
-            c2.close()
+            sr(c2, "SET enable_profile = true")
+            out["t0"] = time.time()
+            out["r"] = try_sql(c2, q6)
+            out["t1"] = time.time()
+            try:
+                out["qid"] = sr(c2, "SELECT last_query_id()")[0][0]
+            finally:
+                c2.close()
         th = threading.Thread(target=run)
         th.start()
-        time.sleep(1.5)
+        time.sleep(max(1.0, KILL_AT * t_read))
         stack("kill", "flight2")
+        t_kill = time.time()
         th.join(600)
         ok, r, secs = out.get("r", (False, "no result (hung)", 0))
+        kill_at = t_kill - out.get("t0", t_kill)
+        after = out.get("t1", t_kill) - t_kill
+        res.notes.append(f"during: read time with both servers {t_read:.1f}s; flight2 killed {kill_at:.1f}s into "
+                         f"the query; query ended {after:.1f}s after the kill")
         if ok:
             got = [tuple(norm(v) for v in x) for x in r]
-            res.add("flight2 killed during the read: no wrong/duplicate rows", got == exp,
-                    f"query succeeded in {secs:.1f}s got={got} exp={exp}")
+            res.add("flight2 killed during the read: no wrong/duplicate rows", got == exp6,
+                    f"query succeeded in {secs:.1f}s got={got} exp={exp6}")
         else:
             res.add("flight2 killed during the read: clean error", "hung" not in r, f"{secs:.1f}s {r}")
+        failovers = None
+        if out.get("qid"):
+            p, _ = query_profile(conn, out["qid"], args.out, "check6-during")
+            failovers = counter_sum(p, "FailoverCount") if p else None
+        # proof that the kill hit a running read: the query failed, or an endpoint failed over to its backup
+        res.add("the kill overlapped the read (query ended after it; error or FailoverCount > 0)",
+                after > 0.2 and (not ok or bool(failovers)),
+                f"ended {after:.1f}s after the kill, {'error' if not ok else 'success'}, FailoverCount={failovers}")
         res.add("BE alive after failover tests", be_alive(conn))
     finally:
         sr(conn, "SET flight_aggregate_pushdown = true")
@@ -645,6 +775,20 @@ def check8(conn, args, res):
         expect("f_basic", True, "token server, basic auth user:<token>")
         txt = " ".join(str(c) for r in sr(conn, "SHOW CREATE CATALOG f_basic") for c in r)
         res.add("SHOW CREATE CATALOG masks the password", tok not in txt, txt[:300])
+        for cat in ("f_tok", "f_basic"):
+            def prof(cat=cat):
+                sr(conn, "SET enable_profile = true")
+                try:
+                    sr(conn, f"SELECT n_name FROM {cat}.tpch.nation")
+                    qid = sr(conn, "SELECT last_query_id()")[0][0]
+                finally:
+                    sr(conn, "SET enable_profile = false")
+                p, err = query_profile(conn, qid, args.out, f"check8-{cat}")
+                res.add(f"query profile of a {cat} scan has the Flight scan", "RowsRead" in p,
+                        f"{len(p)} chars" if p else f"no profile for {qid}: {err}")
+                res.add(f"query profile of a {cat} scan: token not in it", bool(p) and tok not in p,
+                        "token found in the profile" if tok in p else "")
+            guarded(res, f"profile {cat}", prof)
 
         certs = os.path.join(os.environ.get("M4_STATE", os.path.expanduser("~/.m4-state")), "certs")
         stack("certs", certs, "flight1")
