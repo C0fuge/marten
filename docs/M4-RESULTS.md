@@ -32,3 +32,26 @@ classes, BE 39660201177, be-ut 39660205090 19/19).
 | 8 | token / basic / TLS | **PASS 10/10** (right/wrong/missing token, basic user:token, password masked, TLS trusted / wrong host / untrusted / verify=false / plain vs TLS) |
 | 9 | memory limit | **PASS 3/3**: clean memory-limit error, BE alive, next query works |
 | log masking | dummy catalog token and server token in no log | **PASS** |
+
+## 2026-10-21, run 39663221891 — series `4a9848e-fla2cd40`, checks 1, 2, 6
+
+1 **PASS 15/15**; 6 **PASS 4/4** (servers now started together); 2: 47/49, UInt64 still wrapped. Diagnosis (ADBC
+straight to the server): GetTables and result mode `complete` give `decimal128(20,0)` with correct values, result
+mode `partial` streams `uint64` → the BE converter wrapped values ≥ 2^63. Fix in 0003: UInt64 arrays are widened
+to decimal128(20,0) for DECIMAL slots (+ be-ut case). New series `4a9848e-fl598360` (FE 39664615702 forced,
+BE 39664594320, be-ut 39664598409 20/20).
+
+## 2026-10-21, run 39665941130 — series `4a9848e-fl598360`, checks 1–9: **all PASS**
+
+| # | Check | Result |
+|---|---|---|
+| 1 | catalog, SHOW, DESC, masking | PASS 15/15 |
+| 2 | types tables, every column (49 columns, 5000 rows each) | PASS 49/49 (hidden as designed: TIME, INTERVAL) |
+| 3 | M4-TESTS §1–2, result modes partial + complete, session and catalog switches | PASS 21/21 |
+| 4 | TPC-H SF1 q01–q22, `cbo_push_down_topn_limit` default and 0 | PASS 44/44 (45 s in total) |
+| 5 | sr-cases (26) | PASS 26/26 |
+| 6 | failover, 2-server cluster: before / during a read | PASS 4/4 (stop before: 11.5 s via backups; kill 1.5 s into a 2.7 s read: correct result) |
+| 7 | KILL QUERY | PASS (ends < 2 s, server stream cancelled) |
+| 8 | token / basic / TLS | PASS 10/10 |
+| 9 | memory limit | PASS 3/3 |
+| log masking | tokens in fe.log / be.INFO / be.WARNING / container logs | PASS |

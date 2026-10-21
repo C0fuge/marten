@@ -106,7 +106,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   both must report the current series hash), downloads `m4-assets` (draft release: looked up through the release
   list, cached as `m4-assets-int1-v1`; bump the key when the assets change), then `ci/m4/stack.sh`: docker network
   `m4` with `minio` (throwaway credentials, `s3://lake/parquet/{tpch,types}`), `flight1` (eclipse-temurin:21-jre,
-  open mode), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).
+  open mode; flight1 also on 127.0.0.1:32010 for ADBC probes), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).
 - `ci/m4/m4.py` runs the checks with pymysql against 127.0.0.1:9030 and DuckDB 1.4.1 on the same parquet files
   (types tables, M4-TESTS §1–2, sr-cases) or `tests/m4/reference/sf1` (TPC-H). Implemented: checks 1–5 (+ the
   log grep of check 8 for the dummy catalog token, + TPC-H timings of check 10). Normalisation: decimals
@@ -115,7 +115,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   columns.
 - Output: artifact `m4-<run>` (results.md/json, all container logs, fe/be logs) and branch `m4-results`
   (`latest.md`, `runs/<run>.md`): `git fetch origin m4-results && git show origin/m4-results:latest.md`.
-- Checks 6–9 (written, not yet run) restart the Flight server through `stack.sh`: 6 = cluster flight1+flight2,
+- Checks 6–9 (all green since run 39665941130) restart the Flight server through `stack.sh`: 6 = cluster flight1+flight2,
   full lineitem scan with `flight_aggregate_pushdown=false`, flight2 stopped before / SIGKILLed 1.5 s into the read;
   7 = 8-way UNION ALL scan, `KILL QUERY` after 4 s, must end < 2 s; 8 = token server (right / wrong / missing
   token, basic user:<token>, password masked), TLS server with a job-generated cert (CA file copied into `sr`,

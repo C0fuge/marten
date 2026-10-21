@@ -11,8 +11,8 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **in progress**: workflow `m4.yml` + `ci/m4/` (checks 1–9 + log grep + timings; M4-CI §7); run 39661743301: checks 3, 4 (TPC-H 22/22 ×2), 5, 7, 8, 9 pass; run 39663221891: 1 and 6 pass; check 2 open (UInt64 fix pending). Summary `docs/M4-RESULTS.md`, details branch `m4-results` |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for the current series `4a9848e-fl80f999` (run 39527877395); publish after M4 |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6) |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test; current series `4a9848e-fl598360`, FE 39664615702, BE 39664594320); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` is for the old series `4a9848e-fl80f999` (run 39527877395) — refresh; publish after M4 |
 
 ## Patch series (on tag 4.1.4)
 
@@ -20,11 +20,11 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 |---|---|---|
 | 0001 thrift | TFlightScanNode, TFlightScanRange, TTableType FLIGHT_TABLE (free ids per RESEARCH.md) | done |
 | 0002 fe connector | `connector/flight/`: FlightConnector, FlightMetadata, FlightProperties, FlightTypeMapper, FlightSqlMetadataClient (connect probe: ListActions bounded by `flight.connect_timeout_ms`), FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`, Table, ConnectorType; Authorizer, StmtExecutor (catalog type); masking (PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs) | compiles (with the series) |
-| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, connect timeout via `grpc.min_reconnect_backoff_ms`, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source; registered with the cancel watcher before the first connect), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it); UInt64 columns widened to decimal128(20,0) for DECIMAL slots (our server streams UInt64 in result mode partial where its metadata says decimal128(20,0)); `exec/arrow_to_starrocks_converter.cpp`: Arrow timestamp → DATETIME by floor division (upstream bug: pre-1970 values with a fraction became garbage; M4 fix 2026-10-21) | compiles + links (BE run 39660201177) |
+| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, connect timeout via `grpc.min_reconnect_backoff_ms`, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source; registered with the cancel watcher before the first connect), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it); UInt64 columns widened to decimal128(20,0) for DECIMAL slots (our server streams UInt64 in result mode partial where its metadata says decimal128(20,0)); `exec/arrow_to_starrocks_converter.cpp`: Arrow timestamp → DATETIME by floor division (upstream bug: pre-1970 values with a fraction became garbage; M4 fix 2026-10-21) | compiles + links (BE run 39664594320) |
 | 0004 fe optimizer/planner | `planner/FlightScanNode`; Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, **FlightAggregationPushdownRule** (rewriteOnce in QueryOptimizer after RewriteSimpleAggToHDFSScanRule; remote items are bare `fn(expr)`, casts inside: `sum(CAST(x AS T))`; integer sums only in result mode complete — M4 fix 2026-10-21), edits in OperatorType, visitors, RuleSet/RuleType, MultiOpPattern, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, PlanFragmentBuilder, Explain, LogicalPlanPrinter; SessionVariable `flight_filter_pushdown`, `flight_aggregate_pushdown` | compiles |
 | 0005 fe | PushDownTopNToPreAggRule: ORDER BY must cover all GROUP BY keys; PushDownTopNToPreAggRuleTest | test passes (run 39453420117) |
 | 0006 fe tests | FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest, FlightScanPlanTest (+ MockedFlightSqlMetadataClient: Flight SQL metadata without a server), FlightSqlMetadataClientTest (in-process Java Flight server: failover from a silent / refused URI, no failover on server errors) | all pass (FE run 39484391882) |
-| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts; basic auth (handshake → bearer, wrong password not leaked), TLS with a self-signed cert generated at test time (root certs + override hostname, TLS + basic auth, hostname mismatch, untrusted cert, `tls_verify=false`, plain client vs TLS server); pre-1970 timestamps with a fraction (ms/us/ns); UInt64 stream into a DECIMAL(20,0) slot | 19/19 pass (be-ut run 39660205090); 20th case pending |
+| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts; basic auth (handshake → bearer, wrong password not leaked), TLS with a self-signed cert generated at test time (root certs + override hostname, TLS + basic auth, hostname mismatch, untrusted cert, `tls_verify=false`, plain client vs TLS server); pre-1970 timestamps with a fraction (ms/us/ns); UInt64 stream into a DECIMAL(20,0) slot | 20/20 pass (be-ut run 39664598409) |
 
 The split (2026-10-20) left the patched source tree byte-identical; 0001 and 0003 files are unchanged. Patches 0002
 and 0004 are only built as part of the whole series (0002 alone has no reference to 0004's classes).
@@ -132,19 +132,33 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   BE 39514450436). No patch changed.
 - 2026-10-21 16:27 UTC (cloud session): no M4 results yet; noted the 7-day artifact/cache retention under Next
   step 2. No patch changed, no CI run.
+- 2026-10-21 18:41–20:08 UTC (cloud session): M4 moved into CI. New `m4.yml` + `ci/m4/stack.sh` (MinIO —
+  docker.io/minio is gone, quay.io/bitnamilegacy/chainguard fallbacks, boto3 single-PUT upload —, our Flight
+  server from release `m4-assets` on JDK 21, allin1 4.1.4 overlay) + `ci/m4/m4.py` (checks 1–9 vs DuckDB 1.4.1 /
+  SF1 reference); results on branch `m4-results`, summary `docs/M4-RESULTS.md`. Plumbing runs 39655898917
+  (cancelled), 39656305326, 39656873818, 39657625118 failed (MinIO image, multipart upload, read-only server cwd).
+  First real run 39658484728 found: (1) result mode partial rejects `CAST(sum(..))` → 0004 renders
+  `sum(CAST(x AS T))`, integer sums only in complete mode; (2) Arrow timestamps before 1970 with a fraction were
+  garbage (upstream converter, truncating division) → 0003 floors; (3) UInt64 wrapped: the server streams
+  `uint64` in partial mode where its metadata says decimal128(20,0) → 0003 widens. Tests in 0006/0007. Builds:
+  FE 39660196425 (7 Flight test classes green), BE 39660201177, be-ut 39660205090; then FE 39664615702, BE
+  39664594320, be-ut 39664598409 (20/20). M4 runs 39661743301, 39663221891, and **39665941130: all 9 checks pass**
+  on series `4a9848e-fl598360`. ci-report now follows m4 and prints billable minutes correctly (was ms).
 
 ## Next steps
 
-1. **M4 in CI, close out** (`docs/M4-CI.md` §7, results `docs/M4-RESULTS.md`): confirm check 2 after the UInt64
-   widening (BE/be-ut/FE builds of series after commit 8734f83, then `m4 checks=1,2`), then one full run
-   `m4 checks=1,2,3,4,5,6,7,8,9` for the current series and record it in M4-RESULTS.md. Known gaps worth adding:
-   check 8 does not yet grep the query profile for the token; check 6's "during" case should assert the read
-   really overlapped the kill (log the elapsed time / rows).
-2. Fix any remaining M4 failure in the patches (new series → FE/BE builds → rerun only the affected checks).
-3. `docs/LOCAL-FINAL-CHECK.md` for the maintainer (M4-CI §6), then refresh the draft release for the final series.
-4. After the maintainer's final check passes and they agree: `release tag=v4.1.4-flight.1 draft=false
+1. `docs/LOCAL-FINAL-CHECK.md` for the maintainer (M4-CI §6: HDFS/hadoopfs SF10 with `bench/reference/sf10`,
+   3-node kill tests, speed vs JDBC bridge and Trino plugin, production-like server build), then refresh the
+   draft release for series `4a9848e-fl598360` (`release tag=v4.1.4-flight.0-dryrun draft=true prerelease=true`;
+   FE 39664615702 and BE 39664594320 are current).
+2. M4 CI hardening (small, rerun only the touched check): check 8 should also grep a query profile for the
+   token; check 6 "during" should prove the kill overlapped the read (in run 39665941130 the read finished
+   correctly 1.2 s after the kill, so a failover/abort may not have been exercised); check 1 could compare DESC of
+   the types tables with PLAN §2.2 exactly. Any new failure: fix in the patches, rebuild, rerun only that check.
+3. After the maintainer's final check passes and they agree: `release tag=v4.1.4-flight.1 draft=false
    prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
-   after 7 days without access — after a long pause expect a full BE rebuild (~90 min).
+   after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
+   FE **and** BE outputs of the new series before `m4` or `release` (the other side: `fe/be force=true`).
 
 ## Open questions for the maintainer
 
@@ -154,10 +168,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   DuckDB UBIGINT column is streamed as `uint64` while GetTables/complete mode say `decimal128(20,0)`. Worth fixing
   in the server; tell me if the connector should instead push integer sums as `sum(CAST(x AS DECIMAL(38,0)))`.
 
-- Not a decision, a heads-up: a first M4 smoke is possible now with the assets of the **draft** release
-  `v4.1.4-flight.0-dryrun` (Releases page; refreshed 2026-10-21 01:32 UTC: FE run
-  39526375694 + BE run 39514450436, series `4a9848e-fl80f999`, starrocks_be sha256 fa59da66…), installed per `docs/INSTALL.md` (the allin1 image paths there are unverified),
-  queries in `docs/M4-TESTS.md`. Nothing in the cloud work depends on it.
+- Heads-up: the draft release `v4.1.4-flight.0-dryrun` still holds the old series `4a9848e-fl80f999` (before the M4
+  fixes); it is refreshed in Next step 1. The allin1 paths of `docs/INSTALL.md` §2a are now verified by `m4.yml`.
 - Release naming: the workflow takes any tag `v…`; proposed `v4.1.4-flight.N`. Publishing (draft → public, which
   creates the git tag) is left to you after M4.
 - 2026-10-21 (maintainer): M4 moves to CI as far as possible (docs/M4-CI.md); only a short final check runs on
