@@ -64,8 +64,10 @@ assets)
     [ -d "$A/x/sf1" ] || tar -C "$A/x" --zstd -xf "$A/tpch-sf1-parquet.tar.zst"
     cp "$A/$JAR" "$A/x/server.jar"
     echo "Flight server: $JAR (DuckDB $duckdb${plugins:+, plugins $plugins})"
-    ext=httpfs-v$duckdb.duckdb_extension
+    # DuckDB derives the extension's entry point from the file name: keep it httpfs.duckdb_extension
+    ext=duckdb-v$duckdb/httpfs.duckdb_extension
     if [ ! -s "$A/x/$ext" ]; then
+        mkdir -p "$A/x/duckdb-v$duckdb"
         curl -sSfL "http://extensions.duckdb.org/v$duckdb/linux_amd64/httpfs.duckdb_extension.gz" | gunzip > "$A/x/$ext"
     fi
     pdir=
