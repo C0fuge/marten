@@ -209,6 +209,33 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 3. Optional (only if A-1 plans are still poor at SF10): use the connector's column NDV estimates in
    `computeFlightScanNode` (today column stats come from `estimateScanColumns`, UNKNOWN, as for JDBC).
 
+
+### Parallel work while the local re-check is pending (maintainer, 2026-10-22 evening)
+
+Item 1 waits for the maintainer's stand; do these in the meantime, one per session, in this order. Each must keep
+`m4` green; batch BE changes (one BE build per session at most).
+
+P1. **Types now hidden** (`docs/M4-RESULTS.md`: TIME, INTERVAL hidden; PLAN §1.5: DECIMAL256, TIME32/64, DURATION,
+    INTERVAL, *View types and UNION not covered). Map what StarRocks can represent: TIME32/64 → TIME (or VARCHAR
+    'HH:MM:SS[.ffffff]' if TIME is not usable for external tables), DURATION → BIGINT (unit in the column comment),
+    INTERVAL → VARCHAR (ISO-8601), DECIMAL256 → DECIMAL256/LARGEINT where precision allows else VARCHAR,
+    Utf8View/BinaryView/ListView → their non-view equivalents (cast in the BE converter). Catalog option to keep
+    hiding them. FE type mapping + BE converters + be-ut + m4 check 2 (the alltypes tables already carry TIME and
+    INTERVAL; extend the expected list).
+P2. **Column statistics for the CBO** (Next steps 3 made concrete): our servers answer `SELECT count(*), min(c),
+    max(c)` from Parquet footers cheaply (the Trino plugin uses that); use per-column min/max/null counts (and an
+    NDV estimate when available) in `computeFlightScanNode`, cached like row counts, bounded wait, off by catalog
+    option. Plan tests: join order for TPC-H q05/q08/q09 at SF1 in m4 equals the JDBC catalog's or better.
+P3. **lakeFS through the connector in CI**: `int4-plugins.tar.zst` has `plugins/lakefs`; add an m4 variant with a
+    lakeFS container (docker.io/treeverse/lakefs:1.38.0, local KV, MinIO blockstore) in front of MinIO, server
+    `-DdataDir=lakefs://<repo>/main/...` (START-NOTES.txt in the plugins tarball), and run checks 1, 3, 4 there plus
+    a "commit to main between two queries" check (a query sees one commit).
+P4. **Upgrade readiness**: try the patch series on the newest 4.1.x tag (`git am` only, no build unless it applies
+    with small fixes); write `docs/REBASE.md` with conflicts and effort. Do not change the release target (4.1.4).
+
+A new server build with cluster fixes (B5, ticket secret) will appear in `m4-assets` (name `…-int4b…` or
+newer) — when it does, make it the m4 default and rerun checks 6 and 8.
+
 ## Open questions for the maintainer
 
 - Server findings (a) partial mode rejecting `CAST(sum(x))`, (b) UBIGINT streamed as `uint64` in partial mode:
