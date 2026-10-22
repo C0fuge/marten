@@ -127,5 +127,5 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   over lineitem under `query_mem_limit`=100 MB must fail with a memory error, BE alive. Each restores the open
   single-server setup at the end.
 - Check 1 also compares each `DESC` exactly (order, names, types) with the PLAN §2.2 mapping (`plan_type` in
-  m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`) of the Arrow schema the server returns in
+  m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`, `flight.converted_types=convert`) of the Arrow schema the server returns in
   GetTables(include_schema).

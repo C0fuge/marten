@@ -214,6 +214,7 @@ Lessons from the Trino plugin v10 (`~/Projects/trino-arrow-flight-connector` 6ee
 | `flight.connect_timeout_ms` / `flight.keepalive_ms` / `flight.rpc_timeout_ms` | 5000 / 10000 / 0 | gRPC channel args and per-call deadline (0 = none for streams) |
 | `flight.catalog` | — | Flight SQL catalog to expose (default: all; db = `db_schema_name`) |
 | `flight.nested_types` | `hide` | `hide` / `native` (ARRAY/MAP/STRUCT) / `json` |
+| `flight.converted_types` | `convert` | `convert`: TIME, DURATION, INTERVAL, DECIMAL256, *View columns exposed converted (table below, added 2026-10-22, STATUS P1); `hide`: hidden as before |
 | `flight.pushdown.filter` / `.limit` / `.count` | true | per-feature kill switches (also session variables, see 2.6) |
 | `flight.metadata_cache_ttl_s` / `flight.stats_cache_ttl_s` | 60 / 600 | table-list and schema cache; row-count cache |
 
@@ -247,13 +248,20 @@ Lessons from the Trino plugin v10 (`~/Projects/trino-arrow-flight-connector` 6ee
   | Float16 / 32 | FLOAT |
   | Float64 | DOUBLE |
   | Decimal128(p,s) | `createUnifiedDecimalType(p,s)` |
-  | Decimal256 | DECIMAL(p≤38) if p fits, otherwise hidden (the BE has no Decimal256 converter; DuckDB maxes out at 38) |
+  | Decimal256 | converted: DECIMAL(p,s) if p ≤ 38 (BE narrows to Decimal128), otherwise VARCHAR (plain decimal text) |
   | Utf8 / LargeUtf8 | VARCHAR (default catalog length) |
   | Binary / LargeBinary / FixedSizeBinary | VARBINARY |
   | Date32 / 64 | DATE |
   | Timestamp(unit, no tz) | DATETIME (wall clock preserved, ns truncated to µs) |
   | Timestamp(unit, tz) | DATETIME in the session time zone (the BE converter re-zones it) |
-  | Time / Duration / Interval / Union / Null / *View | hidden (logged once per table) |
+  | Time32/64 | converted: VARCHAR `HH:MM:SS[.f]`, 3/6/9 fraction digits for ms/us/ns |
+  | Duration | converted: BIGINT, count in the Arrow unit (column comment names it) |
+  | Interval (all units) | converted: VARCHAR ISO-8601, a sign per component (`P1Y2M3DT4H5M6.5S`, `PT-0.5S`, `PT0S`) |
+  | Utf8View / BinaryView / ListView / LargeListView | VARCHAR / VARBINARY / ARRAY (BE rewrites to the non-view arrays) |
+  | Union / Null / RunEndEncoded / extension | hidden (logged once per table) |
+
+  "Converted" columns exist only at the top level (inside nested types only exact mappings), with
+  `flight.converted_types=convert`, and never take part in pushed filters or aggregations (*View columns do).
   | List / Map / Struct | hidden, or ARRAY / MAP / STRUCT / JSON per `flight.nested_types` |
   | Dictionary | its value type |
 
