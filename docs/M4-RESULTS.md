@@ -316,3 +316,10 @@ single-node native values come from the BE 6G run, q05/q08/q09 from the spill re
 | **total 21 q (w/o q18)** | **124.0** (157.5) | **442.5** (477.9) | **68.5** (150.9) |
 
 topn 0 totals (21 q without q18): native 116.2 s, JDBC 434.9 s; 3-node 22 q with q18: 77.2 s default / 81.2 s topn 0.
+
+## 2026-10-22, CI: A-4 exchange cap — series `4a9848e-fld145f6`, m4 run 39873438298
+
+Checks 1–9 all PASS against int4 (25/25, 52/52, 21/21, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6). New check 9 items: q18 SF1
+returns the same 57 rows with `flight.exchange_buffer_mb` 16 (default) and 0; `LocalExchangePeakMemoryUsage` 2.5 MB vs
+2.7 MB, `QueryPeakMemoryUsagePerNode` 191.7 MB vs 188.6 MB (2 vCPUs). At SF1 the cap does not bind; the SF10 q18 effect
+at BE 4G is for the stand (STATUS Next steps 1, draft `v4.1.4-flight.0-a4`).
