@@ -251,3 +251,68 @@ columns left in the types tables.
   supplier 10000, customer 150000, lineitem 6001215, orders 227651; q08 orders 455301, part 200000; q09 part 50000,
   partsupp 800000, orders 1500000, lineitem 6001215. The plan outlines of q05/q08/q09 are in the run's notes
   (`git show origin/m4-results:runs/39845020831.md`); CI has no JDBC catalog to compare join orders with.
+
+## 2026-10-22, local re-check (maintainer's stand) — series `4a9848e-fl6b6a1d`, server int4 (fixed): **A-1 and A-3 fixed; q18 at BE 4G still fails on memory (A-4)**
+
+Build: draft `v4.1.4-flight.0-dryrun` (refreshed for this series) downloaded, `sha256sum -c SHA256SUMS` OK, `fe-build-info.txt`
+and `be-build-info.txt` both `commit_hash=4a9848e-fl6b6a1d` (FE run 39733048078, BE run 39733050937); allin1 overlay as before;
+`current_version()` and BE `--version` = `4.1.4-4a9848e-fl6b6a1d`. Server: release candidate **int4, rebuilt with the cluster
+fix** (member loss / ticket secret; jar md5 `ff3d6a72…`, the build expected as `int4b` in `m4-assets`), DuckDB 1.4.5 with
+the v1.4.5 hadoopfs extension. Single HDFS server on the stand node `dn` (open mode, as the stand runs it) for A; 3-node HDFS
+cluster `c3-dn1..3` with token auth for the cluster items. BE `mem_limit = 4G` (stand `be.conf`) throughout. Host load
+4–7 during A, 18–50 during the load runs. Agent notes: `bench/tools/agent-sr-final/NOTES.md` ("re-check" section) on the stand.
+
+| Item | Result | Notes |
+|---|---|---|
+| A-1: `EXPLAIN COSTS <q05>` | **PASS** | every FlightScanNode `stats source: TABLE_METADATA`; lineitem `ENDPOINTS: 1, records=59986052`, `cardinality: 53987447` (row count × 0.9 for the pushed `l_orderkey IS NOT NULL`), orders 3750000, customer 1350000, supplier 81000, nation 23, region 5; identical in the first and the second EXPLAIN after the catalog was created. lineitem is the **probe** side (`5:HASH JOIN` PARTITIONED, build = orders), supplier/nation/region broadcast. m4 item `q05 EXPLAIN COSTS: row counts of all 6 Flight scans` PASS |
+| A: q05/q08/q09/q21 at BE 4G | **PASS** (both topn) | no spill; were memory failures in the first run |
+| A: q18 at BE 4G | **FAIL (A-4)** | both topn: `Memory of query_pool exceed limit. try consume:83886080 Backend: 127.0.0.1, Used: 3096408392, Limit: 3478923509`. JDBC q18 at 4G passes (18.5 s). Native passes with `enable_spill = true` (13.9 s) or `pipeline_dop = 4` (12.0 s) |
+| A: TPC-H SF10 22/22 vs reference + JDBC (single node, 4G) | 85/87 | `m4.py --checks 4,5 --existing-catalog --catalog flight --reference bench/reference/sf10 --ref-catalog jdbc …`: all 42 results produced equal the reference and JDBC; only the 2 q18 items fail. Check 5 sr-cases 26/26 |
+| A-2: server DuckDB fatal in a pushed q18 aggregation | not seen | int4 (DuckDB 1.4.5); the stand's int4 check ran 70 stress rounds of the pushed q18/q04 aggregation without a fault (s3p4 with DuckDB 1.4.1 reproduced it as a SIGSEGV in `TupleDataCollection::Combine`) |
+| A-3: q18 on the 3-node cluster under load (keepalive) | **PASS** | checks 4,5 on `fc3` (spill on, as in the first run): 45/45 + 26/26, q18 8.7 s both topn; q18 ×8 sequential at host load 36–47: 8/8 identical results, 11.6–15.4 s; q18 with one server frozen (`podman pause`) for 12 s mid-stream: 3/3 OK (23.9–37.2 s). Control: a 40 s freeze ends cleanly after ~36 s with `Flight endpoint 1 at grpc+tcp://c3-dn2:32010: IOError: … keepalive watchdog timeout` (10 s ping + 20 s timeout), next query OK. No `keepalive` line in `be.WARNING`/`be.INFO` in the load runs |
+| B2 / B5 against int4 | **PASS** (by reference) | run on the stand by the server check (not redone here): B2 — `SIGTERM` of one of 3 servers: the next plan already drops it (member left), each endpoint carries 2 locations, Trino and a location probe correct right after and +6 s (the unfixed int4 also passed via its backup locations). B5 — `kill -9` of 2 of 3: 18/18 plans on the survivor correct (1 endpoint, 59986052 rows) at +1/+15/+30 s over 6 fresh clusters, plus Trino correct before / right after / +15 s, complete mode OK, after restart all nodes accept each other's tickets (9/9). Root cause of the first run's silent half table was in the server (Hazelcast maps with one backup lost the inventories of 2 simultaneously lost members); fixed in the rebuilt int4 |
+| Token leak grep (srf fe/be logs, container log, outputs) | PASS | no hits |
+
+Side observation: 2 parallel q18 sessions + a q21/q09 loop on the 4G BE fail with `Memory of process exceed limit` (3.87 GB) even
+with spill — capacity, no keepalive error.
+
+**A-4 (connector/BE memory footprint, q18 SF10 at 4G):** the plans of `flight` and `jdbc` now have the same shape and real
+counts, but the native query peaks at 3.16 GB per node (pushdown on; 3.24 GB with `flight_aggregate_pushdown = false`) vs
+1.84 GB for JDBC. Profile (pushdown on, query 01a16506-1293-77c8-a2d5-7d34c2cf367c): merge-finalize aggregation of the pushed
+`l_orderkey` groups `HashTableMemoryUsage` 1.22 GB, `LOCAL_EXCHANGE_SINK` behind the lineitem scan (plan node 0)
+`LocalExchangePeakMemoryUsage` 979 MB and behind the orders scan (node 2) 396 MB, all at the same time. JDBC has the same two
+big consumers (aggregation 1.31 GB, lineitem local exchange 983 MB), orders is the local probe of its semi join (0.1 MB), and its
+slow scans never overlap the peaks. The Flight scan delivers 59 M lineitem rows in ~6 s (`FlightReadTime` 4.0 s) and they pile
+up in the local exchange while the join build sides are still being built. In the first run JDBC q18 also failed at 4G (under
+load 11–16), so the stand's 4G is borderline for q18 at SF10 for both paths.
+
+Timings, topn default, single node (1-node) and the 3-node token cluster (spill on), in s; first run in parentheses (its
+single-node native values come from the BE 6G run, q05/q08/q09 from the spill rerun):
+
+| q | native 1-node now (first run) | JDBC now (first run) | native 3-node now (first run) |
+|---|---|---|---|
+| q01 | 12.64 (14.30) | 105.38 (117.29) | 8.86 (7.66) |
+| q02 | 2.09 (2.45) | 4.49 (3.86) | 1.67 (1.55) |
+| q03 | 7.64 (10.79) | 37.91 (38.96) | 4.64 (5.82) |
+| q04 | 4.48 (6.99) | 36.51 (42.67) | 2.23 (3.78) |
+| q05 | 7.83 (14.25) | 33.11 (34.81) | 3.47 (7.98) |
+| q06 | 3.12 (4.56) | 1.65 (2.98) | 1.02 (2.22) |
+| q07 | 7.92 (8.97) | 19.72 (20.87) | 3.39 (5.80) |
+| q08 | 10.85 (13.12) | 34.30 (35.27) | 4.69 (25.49) |
+| q09 | 14.84 (20.64) | 53.72 (55.61) | 5.80 (32.23) |
+| q10 | 8.35 (8.23) | 9.33 (9.77) | 4.06 (6.74) |
+| q11 | 1.26 (1.43) | 3.51 (3.60) | 1.13 (1.27) |
+| q12 | 3.13 (4.67) | 4.06 (4.81) | 2.63 (5.50) |
+| q13 | 6.90 (8.43) | 6.81 (7.19) | 3.37 (4.04) |
+| q14 | 4.68 (3.50) | 3.49 (3.76) | 3.39 (1.68) |
+| q15 | 2.74 (3.73) | 2.82 (3.83) | 2.87 (1.74) |
+| q16 | 1.00 (1.29) | 1.53 (1.51) | 1.45 (1.02) |
+| q17 | 6.58 (8.04) | 27.65 (27.02) | 2.70 (7.19) |
+| q18 | fail 4G (13.87 spill) (8.40) | 18.52 (19.61) | 8.74 (fail A-3) |
+| q19 | 5.42 (6.47) | 4.46 (5.22) | 1.57 (3.59) |
+| q20 | 5.20 (6.71) | 8.24 (9.22) | 2.39 (3.17) |
+| q21 | 6.13 (7.46) | 42.47 (48.11) | 6.08 (19.81) |
+| q22 | 1.16 (1.47) | 1.30 (1.50) | 1.06 (2.60) |
+| **total 21 q (w/o q18)** | **124.0** (157.5) | **442.5** (477.9) | **68.5** (150.9) |
+
+topn 0 totals (21 q without q18): native 116.2 s, JDBC 434.9 s; 3-node 22 q with q18: 77.2 s default / 81.2 s topn 0.

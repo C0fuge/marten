@@ -11,7 +11,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items) — connector items fixed, local re-check pending (Next steps 1). Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Newest series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Summary `docs/M4-RESULTS.md` |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items); **local re-check 2026-10-22 (series `fl6b6a1d`, fixed int4): A-1, keepalive, B2/B5 PASS, SF10 85/87 + 26/26 single node, 45/45 + 26/26 3-node; q18 at BE 4G fails on memory (A-4, Next steps 1)**. Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Newest series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Summary `docs/M4-RESULTS.md` |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check. Newer series `4a9848e-fl9ec2c3` (P1): FE 39825739612 (Flight tests), BE 39825723550, be-ut 39825723598. Newest `4a9848e-fl67776b` (P1 + P2): FE 39842646955 (Flight tests), BE 39842650526 (ccache-only rebuild; BE sources unchanged since be-ut 39825723598) — the draft was deliberately NOT refreshed (it is the build under the maintainer's re-check) |
 
 ## Patch series (on tag 4.1.4)
@@ -213,17 +213,30 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   M4-RESULTS), fixed in 0002. Final: FE 39842646955, BE 39842650526, m4 39845020831 (series `fl67776b`) 1–9 all
   PASS.
 
+- 2026-10-22 18:44–19:35 UTC (local agent on the maintainer's stand): **local re-check** of series `4a9848e-fl6b6a1d`
+  (draft `v4.1.4-flight.0-dryrun`, both build-info files checked) against the rebuilt server int4 (cluster fix), BE
+  4G: A-1 fixed (EXPLAIN COSTS q05 real counts, lineitem probe; m4 q05 item PASS), q05/q08/q09/q21 pass at 4G,
+  SF10 single node 85/87 vs reference + JDBC (only q18 ×2: memory, A-4) + sr-cases 26/26, 3-node token cluster
+  45/45 + 26/26, keepalive item PASS (q18 ×8 at load 36–47, 12 s server freeze ×3 OK; 40 s freeze → clean
+  watchdog error), B2/B5 PASS by the stand's int4 server check. Native SF10 total 124.0 s (first run 157.5 s) vs
+  JDBC 442.5 s; 3-node 68.5 s (150.9 s). Details `docs/M4-RESULTS.md`; A-4 → Next steps 1.
+
 ## Next steps
 
-1. **Local re-check of the 2026-10-22 failures** (maintainer's stand, short; `docs/LOCAL-FINAL-CHECK.md`), build
-   under test: draft `v4.1.4-flight.0-dryrun` for series `4a9848e-fl6b6a1d` (A-1 + keepalive fixes):
-   - A: q05/q08/q09/q18/q21 at SF10 with BE `mem_limit = 4G`; `EXPLAIN COSTS <q05>` must show real
-     `cardinality` (lineitem 59986052) for every FlightScanNode and lineitem on the probe side.
-   - q18 on the 3-node cluster under load (keepalive): no `keepalive watchdog timeout`.
-   - B2/B5 against the release-candidate server **int4** (backup locations; partial result after losing 2 of 3
-     members is a server bug, see Open questions).
-   When reported: record in `docs/M4-RESULTS.md`; fix failures in the patches.
-2. After the re-check passes and the maintainer agrees: refresh the draft for the newest series (now `fl67776b`,
+1. **A-4 from the local re-check 2026-10-22 (q18 SF10 at BE `mem_limit = 4G`, memory)** — the re-check of series
+   `fl6b6a1d` against the fixed int4 passed A-1 (real cardinalities, lineitem probe), q05/q08/q09/q21 at 4G, the
+   keepalive item on the 3-node cluster under load and B2/B5 (server fix); only q18 fails at 4G on the native
+   catalog (`Memory of query_pool exceed limit … Used: 3096408392, Limit: 3478923509`, both topn, also with
+   `flight_aggregate_pushdown = false`) while JDBC q18 passes (18.5 s); native passes with `enable_spill` (13.9 s).
+   Peak 3.16 GB/node vs 1.84 GB for JDBC; consumers at the same time: merge-finalize aggregation of the pushed
+   `l_orderkey` groups 1.22 GB, local exchange behind the lineitem scan 979 MB and behind the orders scan 396 MB
+   (`docs/M4-RESULTS.md`, "local re-check"). Look at (a) the semi-join distribution (native: BUCKET_SHUFFLE with
+   orders shuffled → 396 MB exchange; JDBC: PARTITIONED with orders as the local probe), (b) whether the fast Flight
+   scan can be kept from piling rows into the local exchange while the join build sides are not ready, (c) otherwise
+   document the memory need (INSTALL: TPC-H SF10 q18 needs a BE above 4 GB or `enable_spill`). After a fix: re-check
+   only q18 at 4G on the stand (single node + 3-node). The P2 join-order comparison with the JDBC bridge
+   (q05/q08/q09) was not part of this re-check (build under test had no P2).
+2. After item 1 is settled (fix or documented) and the maintainer agrees: refresh the draft for the newest series (now `fl67776b`,
    adds P1 + P2; or release `fl6b6a1d` if the maintainer prefers the re-checked build — see Open questions), then
    `release tag=v4.1.4-flight.1 draft=false prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
    after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
@@ -287,7 +300,7 @@ newer) — when it does, make it the m4 default and rerun checks 6 and 8.
   re-upload SHA256SUMS with them, nothing needs to change here.
 - **Server (s3p4 / check int4) items from the local final check, not fixable in the connector:** B5 silent
   partial result after losing 2 of 3 members (Hazelcast "Promotion commit failed"), B2 no backup locations, A-2
-  DuckDB fatal error in a pushed q18 aggregation. Please re-run B2/B5 against int4 on the stand (step 1).
+  DuckDB fatal error in a pushed q18 aggregation. **Re-check 2026-10-22:** B2/B5 pass against the rebuilt int4 (jar md5 `ff3d6a72…`, cluster fix for member loss / ticket secret = the expected `int4b`); A-2 not seen with DuckDB 1.4.5 (70 stress rounds on the stand; s3p4/DuckDB 1.4.1 reproduced it).
 
 - **Done 2026-10-22 (FAILED, see Next steps 1a):** **`docs/LOCAL-FINAL-CHECK.md`** (≈2–3 h on the stand: SF10 hadoopfs vs `bench/reference/sf10`
   and the JDBC catalog with `ci/m4/m4.py`, Trino timings, 3-node kill tests, auth/TLS/profile/log grep). Build
