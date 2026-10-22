@@ -228,3 +228,10 @@ must stay `httpfs.duckdb_extension`: DuckDB derives the entry point from it — 
   not call `computeStatistics` for the FlightScanNode (0004). Plan tests in 0006; m4 check 4 now asserts real row
   counts for the 6 Flight scans of q05 after a query.
 - **Keepalive:** `grpc.keepalive_timeout_ms` = max(20 s, `flight.keepalive_ms`) instead of 5 s (0003).
+
+## 2026-10-22, run 39828677269 — series `4a9848e-fl9ec2c3` (P1 converted types), server int4, checks 1–9
+
+All PASS: 1 25/25, 2 52/52, 3 21/21, 4 45/45, 5 26/26, 6 6/6, 7 2/2, 8 14/14, 9 3/3. `c_time` (time64[us]) and
+`c_interval` (month_day_nano) are now exposed as VARCHAR (`flight.converted_types=convert`, default); check 2
+compares them with the server's own Arrow values (ADBC) formatted as the BE does: 0/5000 differ each. No hidden
+columns left in the types tables.

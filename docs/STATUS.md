@@ -11,20 +11,20 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items) — connector items fixed this session, local re-check pending (Next steps 1). Summary `docs/M4-RESULTS.md` |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items) — connector items fixed, local re-check pending (Next steps 1). Newest series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Summary `docs/M4-RESULTS.md` |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check. Newer series `4a9848e-fl9ec2c3` (P1): FE 39825739612 (Flight tests), BE 39825723550, be-ut 39825723598 — the draft was deliberately NOT refreshed (it is the build under the maintainer's re-check) |
 
 ## Patch series (on tag 4.1.4)
 
 | Patch | Content | State |
 |---|---|---|
 | 0001 thrift | TFlightScanNode, TFlightScanRange, TTableType FLIGHT_TABLE (free ids per RESEARCH.md) | done |
-| 0002 fe connector | `connector/flight/`: FlightConnector, FlightMetadata (row counts: `clear()` keeps the caches — MetadataMgr calls it after every query —, load started on `getTable`, first caller waits ≤ 250 ms; M4 fix 2026-10-22), FlightProperties, FlightTypeMapper, FlightSqlMetadataClient (connect probe: ListActions bounded by `flight.connect_timeout_ms`), FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`, Table, ConnectorType; Authorizer, StmtExecutor (catalog type); masking (PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs) | compiles (with the series) |
-| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, connect timeout via `grpc.min_reconnect_backoff_ms`, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source; registered with the cancel watcher before the first connect; keepalive timeout max(20 s, `flight.keepalive_ms`), was 5 s — M4 fix 2026-10-22), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it); UInt64 columns widened to decimal128(20,0) for DECIMAL slots (our server streams UInt64 in result mode partial where its metadata says decimal128(20,0)); `exec/arrow_to_starrocks_converter.cpp`: Arrow timestamp → DATETIME by floor division (upstream bug: pre-1970 values with a fraction became garbage; M4 fix 2026-10-21) | compiles + links (BE run 39664594320) |
+| 0002 fe connector | `connector/flight/`: FlightConnector, FlightMetadata (row counts: `clear()` keeps the caches — MetadataMgr calls it after every query —, load started on `getTable`, first caller waits ≤ 250 ms; M4 fix 2026-10-22), FlightProperties (`flight.converted_types`, 2026-10-22), FlightTypeMapper (converted top-level types: Time/Interval → VARCHAR, Duration → BIGINT, Decimal256 → DECIMAL(p≤38)/VARCHAR, *View → VARCHAR/VARBINARY/ARRAY; value-converted columns never pushed; P1 2026-10-22), FlightSqlMetadataClient (connect probe: ListActions bounded by `flight.connect_timeout_ms`), FlightSqlRenderer, FlightAggregationPushdown, FlightRemoteFileDesc, FlightGetRemoteFilesParams; `catalog/FlightTable`, Table, ConnectorType; Authorizer, StmtExecutor (catalog type); masking (PrintableMap, CredentialUtil, SqlCredentialRedactor, CatalogMgr logs) | compiles (with the series) |
+| 0003 be | `be/src/connector/flight_connector.{h,cpp}` (FlightConnector/DataSourceProvider/DataSource, cancel watcher, failover, connect timeout via `grpc.min_reconnect_backoff_ms`, Arrow→Chunk via ParquetScanner converters, conjuncts + LIMIT in the source; registered with the cancel watcher before the first connect; keepalive timeout max(20 s, `flight.keepalive_ms`), was 5 s — M4 fix 2026-10-22; `normalize_batch` rewrites Time/Duration/Interval/Decimal256/*View arrays before the converter — P1 2026-10-22), ConnectorType FLIGHT + registration, CMakeLists, exec_node FLIGHT_SCAN_NODE (+ collect_scan_nodes), descriptors FLIGHT_TABLE → plain TableDescriptor (no descriptors.h change: ~840 TUs include it); UInt64 columns widened to decimal128(20,0) for DECIMAL slots (our server streams UInt64 in result mode partial where its metadata says decimal128(20,0)); `exec/arrow_to_starrocks_converter.cpp`: Arrow timestamp → DATETIME by floor division (upstream bug: pre-1970 values with a fraction became garbage; M4 fix 2026-10-21) | compiles + links (BE run 39664594320) |
 | 0004 fe optimizer/planner | `planner/FlightScanNode` (plan statistics via `computeStatistics`, 2026-10-22); Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, **FlightAggregationPushdownRule** (rewriteOnce in QueryOptimizer after RewriteSimpleAggToHDFSScanRule; remote items are bare `fn(expr)`, casts inside: `sum(CAST(x AS T))`; integer sums only in result mode complete — M4 fix 2026-10-21), edits in OperatorType, visitors, RuleSet/RuleType, MultiOpPattern, PushDownPredicateScanRule, PruneScanColumnRule, MergeLimitDirectRule, StatisticsCalculator, RelationTransformer, PlanFragmentBuilder, Explain, LogicalPlanPrinter; SessionVariable `flight_filter_pushdown`, `flight_aggregate_pushdown` | compiles |
 | 0005 fe | PushDownTopNToPreAggRule: ORDER BY must cover all GROUP BY keys; PushDownTopNToPreAggRuleTest | test passes (run 39453420117) |
-| 0006 fe tests | FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest, FlightScanPlanTest (+ MockedFlightSqlMetadataClient: Flight SQL metadata without a server), FlightSqlMetadataClientTest (in-process Java Flight server: failover from a silent / refused URI, no failover on server errors); FlightScanPlanTest: scan cardinality, small table as broadcast build side in both join orders, caches survive `clear()` | all pass (FE run 39484391882) |
-| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts; basic auth (handshake → bearer, wrong password not leaked), TLS with a self-signed cert generated at test time (root certs + override hostname, TLS + basic auth, hostname mismatch, untrusted cert, `tls_verify=false`, plain client vs TLS server); pre-1970 timestamps with a fraction (ms/us/ns); UInt64 stream into a DECIMAL(20,0) slot | 20/20 pass (be-ut run 39664598409) |
+| 0006 fe tests | FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest, FlightScanPlanTest (+ MockedFlightSqlMetadataClient: Flight SQL metadata without a server), FlightSqlMetadataClientTest (in-process Java Flight server: failover from a silent / refused URI, no failover on server errors); FlightScanPlanTest: scan cardinality, small table as broadcast build side in both join orders, caches survive `clear()`; FlightTypeMapperTest/FlightPropertiesTest: converted types, `flight.converted_types` | all pass (FE run 39825739612) |
+| 0007 be test | `be/test/connector/flight_connector_test.cpp` (standalone, own main; registered with ADD_BE_TEST): in-process `arrow::flight::FlightServerBase`; type conversion (incl. UInt64→LARGEINT, naive / zoned timestamps), chunk slicing, failover from a refused location, no failover when disabled / on server errors, wrong token, connect timeout against a silent listener, cancel of a blocked read, read limit, conjuncts; basic auth (handshake → bearer, wrong password not leaked), TLS with a self-signed cert generated at test time (root certs + override hostname, TLS + basic auth, hostname mismatch, untrusted cert, `tls_verify=false`, plain client vs TLS server); pre-1970 timestamps with a fraction (ms/us/ns); UInt64 stream into a DECIMAL(20,0) slot; converted types (time32/64, duration, intervals, decimal256 narrow/wide, string/binary/list views) | all pass (be-ut run 39825723598) |
 
 The split (2026-10-20) left the patched source tree byte-identical; 0001 and 0003 files are unchanged. Patches 0002
 and 0004 are only built as part of the whole series (0002 alone has no reference to 0004's classes).
@@ -192,6 +192,17 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - 2026-10-22 07:40 UTC (cloud session): no local re-check results yet (step 1 waits on the maintainer); Next step 1
   named the old series `flf35d9a`, corrected to `fl6b6a1d` (the dry-run draft's series). No patch changed, no CI run.
 
+- 2026-10-22 17:39–18:25 UTC (cloud session): **P1 (types now hidden) done.** `flight.converted_types=convert`
+  (default; `hide` = old behaviour) exposes top-level TIME32/64 → VARCHAR `HH:MM:SS[.f]`, DURATION → BIGINT (unit
+  in the column comment), INTERVAL → VARCHAR ISO-8601, DECIMAL256 → DECIMAL(p≤38) or VARCHAR, Utf8View/BinaryView/
+  ListView/LargeListView → VARCHAR/VARBINARY/ARRAY (0002); BE `normalize_batch` rewrites those arrays (0003, also
+  absorbs the UInt64 widening); tests in 0006/0007 (BE conversion code pre-checked locally against pyarrow 19.0.1's
+  libarrow). StarRocks TIME was not used: it is not a storable column type. Value-converted columns are never
+  pushed (filters, aggregates). m4 check 1 `plan_type` and check 2 follow (TIME/INTERVAL compared with the server's
+  raw Arrow values via ADBC). Builds: FE 39825739612 (tests green), BE 39825723550, be-ut 39825723598; m4
+  39828677269 (int4, series `fl9ec2c3`): 1–9 all PASS (check 2 52/52). Release draft not refreshed (still the
+  re-check build `fl6b6a1d`).
+
 ## Next steps
 
 1. **Local re-check of the 2026-10-22 failures** (maintainer's stand, short; `docs/LOCAL-FINAL-CHECK.md`), build
@@ -202,8 +213,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
    - B2/B5 against the release-candidate server **int4** (backup locations; partial result after losing 2 of 3
      members is a server bug, see Open questions).
    When reported: record in `docs/M4-RESULTS.md`; fix failures in the patches.
-2. After the re-check passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false
-   prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
+2. After the re-check passes and the maintainer agrees: refresh the draft for the newest series (now `fl9ec2c3`,
+   adds P1; or release `fl6b6a1d` if the maintainer prefers the re-checked build — see Open questions), then
+   `release tag=v4.1.4-flight.1 draft=false prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
    after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
    FE **and** BE outputs of the new series before `m4` or `release` (the other side: `fe/be force=true`).
 3. Optional (only if A-1 plans are still poor at SF10): use the connector's column NDV estimates in
@@ -215,13 +227,14 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 Item 1 waits for the maintainer's stand; do these in the meantime, one per session, in this order. Each must keep
 `m4` green; batch BE changes (one BE build per session at most).
 
-P1. **Types now hidden** (`docs/M4-RESULTS.md`: TIME, INTERVAL hidden; PLAN §1.5: DECIMAL256, TIME32/64, DURATION,
+P1. **Done 2026-10-22 (series `fl9ec2c3`, see Log).** ~~**Types now hidden** (`docs/M4-RESULTS.md`: TIME, INTERVAL hidden; PLAN §1.5: DECIMAL256, TIME32/64, DURATION,
     INTERVAL, *View types and UNION not covered). Map what StarRocks can represent: TIME32/64 → TIME (or VARCHAR
     'HH:MM:SS[.ffffff]' if TIME is not usable for external tables), DURATION → BIGINT (unit in the column comment),
     INTERVAL → VARCHAR (ISO-8601), DECIMAL256 → DECIMAL256/LARGEINT where precision allows else VARCHAR,
     Utf8View/BinaryView/ListView → their non-view equivalents (cast in the BE converter). Catalog option to keep
     hiding them. FE type mapping + BE converters + be-ut + m4 check 2 (the alltypes tables already carry TIME and
-    INTERVAL; extend the expected list).
+    INTERVAL; extend the expected list).~~ Not covered by the CI data: DURATION, DECIMAL256 and *View columns
+    (DuckDB/our server never produce them); covered by be-ut/FE unit tests only.
 P2. **Column statistics for the CBO** (Next steps 3 made concrete): our servers answer `SELECT count(*), min(c),
     max(c)` from Parquet footers cheaply (the Trino plugin uses that); use per-column min/max/null counts (and an
     NDV estimate when available) in `computeFlightScanNode`, cached like row counts, bounded wait, off by catalog
@@ -237,6 +250,11 @@ A new server build with cluster fixes (B5, ticket secret) will appear in `m4-ass
 newer) — when it does, make it the m4 default and rerun checks 6 and 8.
 
 ## Open questions for the maintainer
+
+- P1 (2026-10-22) changed the visible schema: TIME and INTERVAL columns now appear as VARCHAR by default (option
+  `flight.converted_types=hide` restores the old schema). The local re-check runs on the draft of series
+  `fl6b6a1d` (without P1). Release the re-checked build, or the newest series (m4 1–9 green)? Default plan: the
+  newest series, since m4 covers the changed paths.
 
 - Server findings (a) partial mode rejecting `CAST(sum(x))`, (b) UBIGINT streamed as `uint64` in partial mode:
   fixed in server int2 (verified by m4 run 39695113106). The connector keeps its workarounds (no integer
