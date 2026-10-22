@@ -12,9 +12,9 @@ basic auth (handshake -> bearer, wrong password not leaked) and TLS with a self-
 generated at test time (root certs + override hostname, hostname mismatch, untrusted certificate,
 tls_verify=false, plain client against a TLS server).
 ---
- be/test/CMakeLists.txt                      |   3 +
- be/test/connector/flight_connector_test.cpp | 916 ++++++++++++++++++++
- 2 files changed, 919 insertions(+)
+ be/test/CMakeLists.txt                      |    3 +
+ be/test/connector/flight_connector_test.cpp | 1008 +++++++++++++++++++
+ 2 files changed, 1011 insertions(+)
  create mode 100644 be/test/connector/flight_connector_test.cpp
 
 diff --git a/be/test/CMakeLists.txt b/be/test/CMakeLists.txt
@@ -30,10 +30,10 @@ index 4e533869..67b2a33a 100644
 +ADD_BE_TEST(connector/flight_connector_test)
 diff --git a/be/test/connector/flight_connector_test.cpp b/be/test/connector/flight_connector_test.cpp
 new file mode 100644
-index 00000000..a1612ce8
+index 00000000..37c8b351
 --- /dev/null
 +++ b/be/test/connector/flight_connector_test.cpp
-@@ -0,0 +1,916 @@
+@@ -0,0 +1,1008 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -265,6 +265,11 @@ index 00000000..a1612ce8
 +            *stream = std::make_unique<fl::RecordBatchStream>(reader);
 +            return arrow::Status::OK();
 +        }
++        if (t == "converted") {
++            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({converted_batch()}));
++            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            return arrow::Status::OK();
++        }
 +        if (t == "pre_epoch") {
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({pre_epoch_batch()}));
 +            *stream = std::make_unique<fl::RecordBatchStream>(reader);
@@ -304,6 +309,51 @@ index 00000000..a1612ce8
 +            arrays.push_back(finish(&b));
 +        }
 +        return arrow::RecordBatch::Make(arrow::schema(fields), 1, arrays);
++    }
++
++    // Types without an exact StarRocks counterpart (FlightTypeMapper, flight.converted_types=convert): row 0 values,
++    // row 1 nulls.
++    static std::shared_ptr<arrow::RecordBatch> converted_batch() {
++        arrow::FieldVector fields;
++        std::vector<std::shared_ptr<arrow::Array>> arrays;
++        auto add = [&](const std::string& name, arrow::ArrayBuilder* b) {
++            EXPECT_TRUE(b->AppendNull().ok());
++            arrays.push_back(finish(b));
++            fields.push_back(arrow::field(name, arrays.back()->type()));
++        };
++        arrow::Time64Builder b_t64(arrow::time64(arrow::TimeUnit::MICRO), arrow::default_memory_pool());
++        EXPECT_TRUE(b_t64.Append(45296123456LL).ok());
++        add("c_time", &b_t64);
++        arrow::Time32Builder b_t32(arrow::time32(arrow::TimeUnit::MILLI), arrow::default_memory_pool());
++        EXPECT_TRUE(b_t32.Append(3661001).ok());
++        add("c_time_ms", &b_t32);
++        arrow::DurationBuilder b_dur(arrow::duration(arrow::TimeUnit::MICRO), arrow::default_memory_pool());
++        EXPECT_TRUE(b_dur.Append(-1500000).ok());
++        add("c_dur", &b_dur);
++        arrow::MonthDayNanoIntervalBuilder b_mdn;
++        EXPECT_TRUE(b_mdn.Append({14, 3, 14706500000000LL}).ok());   // 4h 5m 6.5s
++        add("c_interval", &b_mdn);
++        arrow::DayTimeIntervalBuilder b_dt;
++        EXPECT_TRUE(b_dt.Append({-1, -1500}).ok());
++        add("c_interval_dt", &b_dt);
++        arrow::Decimal256Builder b_d256(arrow::decimal256(20, 2));
++        EXPECT_TRUE(b_d256.Append(arrow::Decimal256::FromString("-123456789012345678.91").ValueOrDie()).ok());
++        add("c_dec256", &b_d256);
++        arrow::Decimal256Builder b_d256w(arrow::decimal256(60, 0));
++        EXPECT_TRUE(b_d256w.Append(arrow::Decimal256::FromString("1" + std::string(50, '0')).ValueOrDie()).ok());
++        add("c_dec256_wide", &b_d256w);
++        arrow::StringViewBuilder b_sv;
++        EXPECT_TRUE(b_sv.Append("a string longer than twelve bytes").ok());
++        add("c_sv", &b_sv);
++        arrow::BinaryViewBuilder b_bv;
++        EXPECT_TRUE(b_bv.Append(std::string("\x00\x01", 2)).ok());
++        add("c_bv", &b_bv);
++        auto lv_values = std::make_shared<arrow::Int32Builder>();
++        arrow::ListViewBuilder b_lv(arrow::default_memory_pool(), lv_values);
++        EXPECT_TRUE(b_lv.Append(true, 2).ok());
++        EXPECT_TRUE(lv_values->AppendValues({3, 4}).ok());
++        add("c_lv", &b_lv);
++        return arrow::RecordBatch::Make(arrow::schema(fields), 2, arrays);
 +    }
 +
 +    static std::shared_ptr<arrow::RecordBatch> types_batch() {
@@ -667,6 +717,48 @@ index 00000000..a1612ce8
 +    EXPECT_EQ("1969-12-31 23:59:59.999999", value(1));   // -1 us
 +    EXPECT_EQ("1969-12-31 23:59:59.999999", value(2));   // -1 ns, truncated to us
 +    EXPECT_EQ("1969-12-30 23:59:59.999999", value(3));   // -1 day -1 us
++}
++
++TEST_F(FlightConnectorTest, ConvertsTypesWithoutExactCounterpart) {
++    std::vector<SlotSpec> slots = {
++            {"c_time", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_time_ms", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_dur", TypeDescriptor(TYPE_BIGINT)},
++            {"c_interval", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_interval_dt", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_dec256", TypeDescriptor::create_decimalv3_type(TYPE_DECIMAL128, 20, 2)},
++            {"c_dec256_wide", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_sv", TypeDescriptor::create_varchar_type(1048576)},
++            {"c_bv", TypeDescriptor::create_varbinary_type(1048576)},
++            {"c_lv", TypeDescriptor::create_array_type(TypeDescriptor(TYPE_INT))},
++    };
++    create_state(slots);
++    auto source = create_source("converted");
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    ASSERT_EQ(1, chunks.size());
++    const ChunkPtr& chunk = chunks[0];
++    ASSERT_EQ(2, chunk->num_rows());
++    auto value = [&](int slot) { return chunk->get_column_by_slot_id(slot)->get(0); };
++    auto text = [&](int slot) { return value(slot).get_slice().to_string(); };
++
++    EXPECT_EQ("12:34:56.123456", text(0));
++    EXPECT_EQ("01:01:01.001", text(1));
++    EXPECT_EQ(-1500000, value(2).get_int64());
++    EXPECT_EQ("P1Y2M3DT4H5M6.5S", text(3));
++    EXPECT_EQ("P-1DT-1.5S", text(4));
++    const int128_t dec = static_cast<int128_t>(-1234567890123456789LL) * 10 - 1;   // -123456789012345678.91
++    EXPECT_TRUE(value(5).get_int128() == dec);
++    EXPECT_EQ("1" + std::string(50, '0'), text(6));
++    EXPECT_EQ("a string longer than twelve bytes", text(7));
++    EXPECT_EQ(std::string("\x00\x01", 2), text(8));
++    EXPECT_EQ("[3,4]", chunk->get_column_by_slot_id(9)->debug_item(0));
++
++    for (int slot = 0; slot < static_cast<int>(slots.size()); slot++) {
++        EXPECT_TRUE(chunk->get_column_by_slot_id(slot)->get(1).is_null()) << slots[slot].name;
++    }
 +}
 +
 +// The server's metadata says decimal128(20,0) but the stream carries UInt64 (result mode partial): no wrap.

@@ -17,17 +17,17 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../flight/FlightAggregationPushdown.java     |  83 ++++
  .../connector/flight/FlightConnector.java     |  57 +++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
- .../connector/flight/FlightMetadata.java      | 332 +++++++++++++
- .../connector/flight/FlightProperties.java    | 316 +++++++++++++
+ .../connector/flight/FlightMetadata.java      | 334 +++++++++++++
+ .../connector/flight/FlightProperties.java    | 330 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 444 +++++++++++++++++
  .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++++
- .../connector/flight/FlightTypeMapper.java    | 166 +++++++
+ .../connector/flight/FlightTypeMapper.java    | 257 ++++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2052 insertions(+), 3 deletions(-)
+ 18 files changed, 2159 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -402,10 +402,10 @@ index 00000000..7553542b
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
 new file mode 100644
-index 00000000..6264df87
+index 00000000..8c01740c
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,334 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -595,12 +595,13 @@ index 00000000..6264df87
 +        List<String> hidden = new ArrayList<>();
 +        for (Field field : remote.arrowSchema.getFields()) {
 +            String name = field.getName();
-+            Type type = FlightTypeMapper.toStarRocksType(field, props.getNestedTypes());
++            Type type = FlightTypeMapper.toStarRocksType(field, props.getNestedTypes(), props.isConvertTypes());
 +            if (type == null || name == null || name.isEmpty() || !seen.add(name.toLowerCase(Locale.ROOT))) {
 +                hidden.add(name + ":" + field.getType());
 +                continue;
 +            }
-+            columns.add(new Column(name, type, true));
++            String comment = FlightTypeMapper.conversionComment(field.getType());
++            columns.add(comment == null ? new Column(name, type, true) : new Column(name, type, true, comment));
 +            if (isFilterable(field, type)) {
 +                filterable.add(name);
 +            }
@@ -617,7 +618,8 @@ index 00000000..6264df87
 +
 +    /** Types whose comparisons and literals mean exactly the same on the server. */
 +    private static boolean isFilterable(Field field, Type type) {
-+        if (!FlightTypeMapper.isFilterable(type) || type.isFloat()) {
++        if (!FlightTypeMapper.isFilterable(type) || type.isFloat()
++                || FlightTypeMapper.isValueConverted(field.getType())) {
 +            return false;
 +        }
 +        if (field.getType() instanceof ArrowType.Timestamp) {
@@ -740,10 +742,10 @@ index 00000000..6264df87
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
 new file mode 100644
-index 00000000..fa7ccead
+index 00000000..debcce43
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,330 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -795,6 +797,8 @@ index 00000000..fa7ccead
 +    public static final String RPC_TIMEOUT_MS = "flight.rpc_timeout_ms";
 +    public static final String CATALOG = "flight.catalog";
 +    public static final String NESTED_TYPES = "flight.nested_types";
++    /** {@code convert} (default): TIME, DURATION, INTERVAL, wide DECIMAL256, *View columns are exposed converted. */
++    public static final String CONVERTED_TYPES = "flight.converted_types";
 +    public static final String PUSHDOWN_FILTER = "flight.pushdown.filter";
 +    public static final String PUSHDOWN_LIMIT = "flight.pushdown.limit";
 +    public static final String PUSHDOWN_AGGREGATE = "flight.pushdown.aggregate";
@@ -811,7 +815,7 @@ index 00000000..fa7ccead
 +
 +    private static final Set<String> KNOWN = ImmutableSet.of(URI, TOKEN, USER, PASSWORD, TLS_VERIFY, TLS_CA_FILE,
 +            TLS_OVERRIDE_HOSTNAME, RESULT_MODE, LOCATION_FAILOVER, CONNECT_TIMEOUT_MS, KEEPALIVE_MS, RPC_TIMEOUT_MS,
-+            CATALOG, NESTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE, METADATA_CACHE_TTL_S,
++            CATALOG, NESTED_TYPES, CONVERTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE, METADATA_CACHE_TTL_S,
 +            STATS_CACHE_TTL_S, "type");
 +
 +    private final List<URI> uris;
@@ -829,6 +833,7 @@ index 00000000..fa7ccead
 +    private final long rpcTimeoutMs;
 +    private final String flightCatalog;
 +    private final NestedTypes nestedTypes;
++    private final boolean convertTypes;
 +    private final boolean filterPushdown;
 +    private final boolean limitPushdown;
 +    private final boolean aggregatePushdown;
@@ -901,6 +906,12 @@ index 00000000..fa7ccead
 +            throw new StarRocksConnectorException("%s must be native, json or hide, got: %s", NESTED_TYPES,
 +                    props.get(NESTED_TYPES));
 +        }
++        String converted = props.getOrDefault(CONVERTED_TYPES, "convert").trim().toLowerCase(Locale.ROOT);
++        if (!converted.equals("convert") && !converted.equals("hide")) {
++            throw new StarRocksConnectorException("%s must be convert or hide, got: %s", CONVERTED_TYPES,
++                    props.get(CONVERTED_TYPES));
++        }
++        this.convertTypes = converted.equals("convert");
 +        this.filterPushdown = parseBool(props, PUSHDOWN_FILTER, true);
 +        this.limitPushdown = parseBool(props, PUSHDOWN_LIMIT, true);
 +        this.aggregatePushdown = parseBool(props, PUSHDOWN_AGGREGATE, true);
@@ -1034,6 +1045,11 @@ index 00000000..fa7ccead
 +
 +    public NestedTypes getNestedTypes() {
 +        return nestedTypes;
++    }
++
++    /** True if columns of types without an exact StarRocks counterpart are exposed converted (else hidden). */
++    public boolean isConvertTypes() {
++        return convertTypes;
 +    }
 +
 +    public boolean isFilterPushdown() {
@@ -2033,10 +2049,10 @@ index 00000000..0eb5249d
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightTypeMapper.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightTypeMapper.java
 new file mode 100644
-index 00000000..980ca8ef
+index 00000000..11001f0e
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightTypeMapper.java
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,257 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -2070,6 +2086,7 @@ index 00000000..980ca8ef
 +
 +import java.util.ArrayList;
 +import java.util.List;
++import java.util.Locale;
 +
 +/**
 + * Maps Arrow field types (as announced by the Flight SQL server) to StarRocks column types.
@@ -2077,12 +2094,31 @@ index 00000000..980ca8ef
 + * <p>Only types the BE converter ({@code arrow_to_starrocks_converter}) reads exactly are mapped; everything else
 + * returns {@code null} and the column is hidden from the table (not shown by DESC, never requested).
 + * Unsigned integers are widened because the BE copies same-width unsigned values bit by bit.
++ *
++ * <p>With {@code flight.converted_types=convert} (default) top-level columns of types without an exact StarRocks
++ * counterpart are exposed converted; the BE ({@code normalize_batch} in flight_connector.cpp) rewrites their Arrow
++ * arrays before the converter runs:
++ * <ul>
++ *   <li>Time32/64 → VARCHAR {@code HH:MM:SS[.f]} with 3 / 6 / 9 fraction digits for ms / us / ns;</li>
++ *   <li>Duration → BIGINT, the count in the Arrow unit (named in the column comment);</li>
++ *   <li>Interval → VARCHAR ISO-8601 ({@code P1Y2M3DT4H5M6.5S}, a sign per component, {@code PT0S} for zero);</li>
++ *   <li>Decimal256(p ≤ 38) → DECIMAL(p,s), wider → VARCHAR (plain decimal text);</li>
++ *   <li>Utf8View / BinaryView / ListView / LargeListView → VARCHAR / VARBINARY / ARRAY (exact).</li>
++ * </ul>
++ * Converted columns other than the *View types are never used in pushed filters or aggregations.
++ * Inside nested types only exact mappings are used.
 + */
 +public final class FlightTypeMapper {
 +    /** StarRocks DECIMAL limit for values the BE reads from Arrow Decimal128. */
 +    public static final int MAX_DECIMAL128_PRECISION = 38;
 +
 +    private FlightTypeMapper() {
++    }
++
++    /** Top-level column type: the exact mapping, else the converted one when {@code convert} is set, else null. */
++    public static Type toStarRocksType(Field field, FlightProperties.NestedTypes nested, boolean convert) {
++        Type exact = toStarRocksType(field, nested);
++        return exact != null || !convert ? exact : convertedType(field, nested);
 +    }
 +
 +    /** Returns the StarRocks type for {@code field}, or {@code null} when the column must be hidden. */
@@ -2138,6 +2174,77 @@ index 00000000..980ca8ef
 +                return nestedType(field, nested);
 +            default:
 +                // Time, Duration, Interval, Union, Null, *View types, RunEndEncoded, Decimal256 ...
++                return null;
++        }
++    }
++
++    /** The type of a converted top-level column (see the class comment), or null if there is none. */
++    private static Type convertedType(Field field, FlightProperties.NestedTypes nested) {
++        ArrowType t = field.getType();
++        switch (t.getTypeID()) {
++            case Time:
++            case Interval:
++            case Utf8View:
++                return TypeFactory.createDefaultCatalogString();
++            case Duration:
++                return IntegerType.BIGINT;
++            case BinaryView:
++                return VarbinaryType.VARBINARY;
++            case Decimal: {
++                ArrowType.Decimal d = (ArrowType.Decimal) t;
++                if (d.getBitWidth() != 256 || d.getPrecision() < 1 || d.getScale() < 0
++                        || d.getScale() > d.getPrecision()) {
++                    return null;
++                }
++                return d.getPrecision() <= MAX_DECIMAL128_PRECISION
++                        ? TypeFactory.createUnifiedDecimalType(d.getPrecision(), d.getScale())
++                        : TypeFactory.createDefaultCatalogString();
++            }
++            case ListView:
++            case LargeListView: {
++                if (nested == FlightProperties.NestedTypes.HIDE || field.getChildren().size() != 1) {
++                    return null;
++                }
++                if (nested == FlightProperties.NestedTypes.JSON) {
++                    return JsonType.JSON;
++                }
++                Type item = toStarRocksType(field.getChildren().get(0), FlightProperties.NestedTypes.NATIVE);
++                return item == null ? null : new ArrayType(item);
++            }
++            default:
++                return null;
++        }
++    }
++
++    /**
++     * True if a column of this Arrow type is exposed through a value conversion (TIME, DURATION, INTERVAL,
++     * DECIMAL256): its StarRocks values are not the server's, so it must not appear in pushed SQL.
++     */
++    public static boolean isValueConverted(ArrowType t) {
++        switch (t.getTypeID()) {
++            case Time:
++            case Duration:
++            case Interval:
++                return true;
++            case Decimal:
++                return ((ArrowType.Decimal) t).getBitWidth() != 128;
++            default:
++                return false;
++        }
++    }
++
++    /** Column comment describing a value conversion, or null. */
++    public static String conversionComment(ArrowType t) {
++        switch (t.getTypeID()) {
++            case Time:
++                return "Arrow " + t + " as text HH:MM:SS[.fraction]";
++            case Duration:
++                return "Arrow duration, unit " + ((ArrowType.Duration) t).getUnit().name().toLowerCase(Locale.ROOT);
++            case Interval:
++                return "Arrow " + t + " as ISO-8601 text";
++            case Decimal:
++                return ((ArrowType.Decimal) t).getBitWidth() != 128 ? "Arrow " + t : null;
++            default:
 +                return null;
 +        }
 +    }

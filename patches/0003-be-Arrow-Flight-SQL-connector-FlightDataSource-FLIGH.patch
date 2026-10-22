@@ -13,12 +13,12 @@ and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescrip
  be/src/connector/CMakeLists.txt              |   1 +
  be/src/connector/connector.cpp               |   3 +
  be/src/connector/connector.h                 |   2 +
- be/src/connector/flight_connector.cpp        | 523 +++++++++++++++++++
- be/src/connector/flight_connector.h          | 146 ++++++
+ be/src/connector/flight_connector.cpp        | 701 +++++++++++++++++++
+ be/src/connector/flight_connector.h          | 146 ++++
  be/src/exec/arrow_to_starrocks_converter.cpp |  23 +-
  be/src/exec/exec_node.cpp                    |   7 +
  be/src/runtime/descriptors.cpp               |   5 +
- 8 files changed, 707 insertions(+), 3 deletions(-)
+ 8 files changed, 885 insertions(+), 3 deletions(-)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -84,10 +84,10 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..289b5edf
+index 00000000..5f853e7b
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,523 @@
+@@ -0,0 +1,701 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -194,14 +194,100 @@ index 00000000..289b5edf
 +    bool _started = false;
 +};
 +
-+// Our server streams UInt64 in result mode partial for a column its metadata declares decimal128(20,0) (M4 run
-+// 39663221891); the UInt64 -> DECIMAL converter would wrap values >= 2^63, so such columns are widened first.
-+arrow::Result<std::shared_ptr<arrow::RecordBatch>> widen_uint64_for_decimal(std::shared_ptr<arrow::RecordBatch> batch,
-+                                                                            const std::vector<SlotDescriptor*>& slots) {
-+    for (size_t i = 0; i < slots.size(); i++) {
-+        const auto& array = batch->column(static_cast<int>(i));
-+        if (array->type_id() != arrow::Type::UINT64 || !slots[i]->type().is_decimal_type()) {
-+            continue;
++// ---- normalize_batch: Arrow types the converter (arrow_to_starrocks_converter) cannot read are rewritten first.
++// The FE exposes them as described in FlightTypeMapper (flight.converted_types=convert).
++
++// "HH:MM:SS" plus 3 / 6 / 9 fraction digits for ms / us / ns.
++std::string format_time(int64_t v, arrow::TimeUnit::type unit) {
++    static constexpr int64_t kPerSec[] = {1, 1000, 1000000, 1000000000};
++    static constexpr int kDigits[] = {0, 3, 6, 9};
++    const int64_t per_sec = kPerSec[unit];
++    std::string out = v < 0 ? "-" : "";
++    const uint64_t a = v < 0 ? 0 - static_cast<uint64_t>(v) : static_cast<uint64_t>(v);
++    const uint64_t secs = a / per_sec;
++    out += fmt::format("{:02}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60);
++    if (kDigits[unit] > 0) {
++        out += fmt::format(".{:0{}}", a % per_sec, kDigits[unit]);
++    }
++    return out;
++}
++
++// ISO-8601 duration with a sign per component, as java.time prints it: P1Y2M3DT4H5M6.5S, P-1M, PT-0.5S, PT0S.
++std::string format_interval(int32_t months, int32_t days, int64_t nanos) {
++    std::string out = "P";
++    auto component = [&out](bool negative, uint64_t value, char unit) {
++        if (value != 0) {
++            out += fmt::format("{}{}{}", negative ? "-" : "", value, unit);
++        }
++    };
++    const uint64_t am = months < 0 ? 0 - static_cast<uint64_t>(static_cast<int64_t>(months)) : months;
++    component(months < 0, am / 12, 'Y');
++    component(months < 0, am % 12, 'M');
++    const uint64_t ad = days < 0 ? 0 - static_cast<uint64_t>(static_cast<int64_t>(days)) : days;
++    component(days < 0, ad, 'D');
++    if (nanos != 0) {
++        const bool neg = nanos < 0;
++        const uint64_t an = neg ? 0 - static_cast<uint64_t>(nanos) : static_cast<uint64_t>(nanos);
++        constexpr uint64_t kSec = 1000000000;
++        out += "T";
++        component(neg, an / (3600 * kSec), 'H');
++        component(neg, an / (60 * kSec) % 60, 'M');
++        const uint64_t sec = an / kSec % 60;
++        const uint64_t frac = an % kSec;
++        if (frac != 0) {
++            std::string f = fmt::format("{:09}", frac);
++            f.erase(f.find_last_not_of('0') + 1);
++            out += fmt::format("{}{}.{}S", neg ? "-" : "", sec, f);
++        } else {
++            component(neg, sec, 'S');
++        }
++    }
++    return out == "P" ? "PT0S" : out;
++}
++
++template <typename ArrayType, typename Fn>
++arrow::Result<std::shared_ptr<arrow::Array>> to_strings(const arrow::Array& array, Fn&& fn) {
++    const auto& a = static_cast<const ArrayType&>(array);
++    arrow::StringBuilder b;
++    ARROW_RETURN_NOT_OK(b.Reserve(a.length()));
++    for (int64_t r = 0; r < a.length(); r++) {
++        if (a.IsNull(r)) {
++            ARROW_RETURN_NOT_OK(b.AppendNull());
++        } else {
++            ARROW_RETURN_NOT_OK(b.Append(fn(a, r)));
++        }
++    }
++    std::shared_ptr<arrow::Array> out;
++    ARROW_RETURN_NOT_OK(b.Finish(&out));
++    return out;
++}
++
++template <typename ArrayType, typename BuilderType>
++arrow::Result<std::shared_ptr<arrow::Array>> from_view(const arrow::Array& array) {
++    const auto& a = static_cast<const ArrayType&>(array);
++    BuilderType b;
++    ARROW_RETURN_NOT_OK(b.Reserve(a.length()));
++    for (int64_t r = 0; r < a.length(); r++) {
++        if (a.IsNull(r)) {
++            ARROW_RETURN_NOT_OK(b.AppendNull());
++        } else {
++            ARROW_RETURN_NOT_OK(b.Append(a.GetView(r)));
++        }
++    }
++    std::shared_ptr<arrow::Array> out;
++    ARROW_RETURN_NOT_OK(b.Finish(&out));
++    return out;
++}
++
++// Returns the array itself when it needs no rewrite. `to_decimal`: the slot is a DECIMAL.
++arrow::Result<std::shared_ptr<arrow::Array>> normalize_array(const std::shared_ptr<arrow::Array>& array,
++                                                             bool to_decimal) {
++    switch (array->type_id()) {
++    case arrow::Type::UINT64: {
++        // Our server streams UInt64 in result mode partial for a column its metadata declares decimal128(20,0)
++        // (M4 run 39663221891); the UInt64 -> DECIMAL converter would wrap values >= 2^63.
++        if (!to_decimal) {
++            return array;
 +        }
 +        const auto& u = static_cast<const arrow::UInt64Array&>(*array);
 +        arrow::Decimal128Builder b(arrow::decimal128(20, 0));
@@ -215,11 +301,103 @@ index 00000000..289b5edf
 +        }
 +        std::shared_ptr<arrow::Array> out;
 +        ARROW_RETURN_NOT_OK(b.Finish(&out));
++        return out;
++    }
++    case arrow::Type::TIME32: {
++        auto unit = static_cast<const arrow::TimeType&>(*array->type()).unit();
++        return to_strings<arrow::Time32Array>(
++                *array, [unit](const arrow::Time32Array& a, int64_t r) { return format_time(a.Value(r), unit); });
++    }
++    case arrow::Type::TIME64: {
++        auto unit = static_cast<const arrow::TimeType&>(*array->type()).unit();
++        return to_strings<arrow::Time64Array>(
++                *array, [unit](const arrow::Time64Array& a, int64_t r) { return format_time(a.Value(r), unit); });
++    }
++    case arrow::Type::DURATION: {
++        // same layout as int64: the count in the Arrow unit
++        auto data = array->data()->Copy();
++        data->type = arrow::int64();
++        return arrow::MakeArray(data);
++    }
++    case arrow::Type::INTERVAL_MONTHS:
++        return to_strings<arrow::MonthIntervalArray>(*array, [](const arrow::MonthIntervalArray& a, int64_t r) {
++            return format_interval(a.Value(r), 0, 0);
++        });
++    case arrow::Type::INTERVAL_DAY_TIME:
++        return to_strings<arrow::DayTimeIntervalArray>(*array, [](const arrow::DayTimeIntervalArray& a, int64_t r) {
++            auto v = a.GetValue(r);
++            return format_interval(0, v.days, static_cast<int64_t>(v.milliseconds) * 1000000);
++        });
++    case arrow::Type::INTERVAL_MONTH_DAY_NANO:
++        return to_strings<arrow::MonthDayNanoIntervalArray>(
++                *array, [](const arrow::MonthDayNanoIntervalArray& a, int64_t r) {
++                    auto v = a.GetValue(r);
++                    return format_interval(v.months, v.days, v.nanoseconds);
++                });
++    case arrow::Type::DECIMAL256: {
++        const auto& t = static_cast<const arrow::Decimal256Type&>(*array->type());
++        const auto& d = static_cast<const arrow::Decimal256Array&>(*array);
++        if (!to_decimal) {
++            const int32_t scale = t.scale();
++            return to_strings<arrow::Decimal256Array>(*array, [scale](const arrow::Decimal256Array& a, int64_t r) {
++                return arrow::Decimal256(a.GetValue(r)).ToString(scale);
++            });
++        }
++        arrow::Decimal128Builder b(arrow::decimal128(std::min(t.precision(), 38), t.scale()));
++        ARROW_RETURN_NOT_OK(b.Reserve(d.length()));
++        for (int64_t r = 0; r < d.length(); r++) {
++            if (d.IsNull(r)) {
++                ARROW_RETURN_NOT_OK(b.AppendNull());
++                continue;
++            }
++            const auto w = arrow::Decimal256(d.GetValue(r)).little_endian_array();
++            const uint64_t ext = static_cast<int64_t>(w[1]) < 0 ? ~uint64_t{0} : 0;
++            if (w[2] != ext || w[3] != ext) {
++                return arrow::Status::Invalid("Decimal256 value ", arrow::Decimal256(d.GetValue(r)).ToString(t.scale()),
++                                              " does not fit DECIMAL(38)");
++            }
++            ARROW_RETURN_NOT_OK(b.Append(arrow::Decimal128(static_cast<int64_t>(w[1]), w[0])));
++        }
++        std::shared_ptr<arrow::Array> out;
++        ARROW_RETURN_NOT_OK(b.Finish(&out));
++        return out;
++    }
++    case arrow::Type::STRING_VIEW:
++        return from_view<arrow::StringViewArray, arrow::StringBuilder>(*array);
++    case arrow::Type::BINARY_VIEW:
++        return from_view<arrow::BinaryViewArray, arrow::BinaryBuilder>(*array);
++    case arrow::Type::LIST_VIEW: {
++        ARROW_ASSIGN_OR_RAISE(auto list, arrow::ListArray::FromListView(
++                                                 static_cast<const arrow::ListViewArray&>(*array),
++                                                 arrow::default_memory_pool()));
++        return std::static_pointer_cast<arrow::Array>(list);
++    }
++    case arrow::Type::LARGE_LIST_VIEW: {
++        ARROW_ASSIGN_OR_RAISE(auto list, arrow::LargeListArray::FromListView(
++                                                 static_cast<const arrow::LargeListViewArray&>(*array),
++                                                 arrow::default_memory_pool()));
++        return std::static_pointer_cast<arrow::Array>(list);
++    }
++    default:
++        return array;
++    }
++}
++
++arrow::Result<std::shared_ptr<arrow::RecordBatch>> normalize_batch(std::shared_ptr<arrow::RecordBatch> batch,
++                                                                   const std::vector<SlotDescriptor*>& slots) {
++    const size_t n = std::min(slots.size(), static_cast<size_t>(batch->num_columns()));
++    for (size_t i = 0; i < n; i++) {
++        const auto& array = batch->column(static_cast<int>(i));
++        ARROW_ASSIGN_OR_RAISE(auto out, normalize_array(array, slots[i]->type().is_decimal_type()));
++        if (out == array) {
++            continue;
++        }
 +        auto field = arrow::field(batch->schema()->field(static_cast<int>(i))->name(), out->type());
 +        ARROW_ASSIGN_OR_RAISE(batch, batch->SetColumn(static_cast<int>(i), field, out));
 +    }
 +    return batch;
 +}
++// ---- end normalize_batch
 +
 +} // namespace
 +
@@ -495,11 +673,11 @@ index 00000000..289b5edf
 +        if (next->data->num_rows() == 0) {
 +            continue;
 +        }
-+        auto widened = widen_uint64_for_decimal(std::move(next->data), _slots);
-+        if (!widened.ok()) {
-+            return to_status(widened.status());
++        auto normalized = normalize_batch(std::move(next->data), _slots);
++        if (!normalized.ok()) {
++            return to_status(normalized.status());
 +        }
-+        _batch = std::move(widened).ValueOrDie();
++        _batch = std::move(normalized).ValueOrDie();
 +        _batch_offset = 0;
 +        _last_batch_bytes = arrow::util::TotalBufferSize(*_batch);
 +        _bytes_read += _last_batch_bytes;

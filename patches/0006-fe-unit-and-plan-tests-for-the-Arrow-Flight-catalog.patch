@@ -6,14 +6,14 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 104 +++++++++
+ .../flight/FlightPropertiesTest.java          | 108 +++++++++
  .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++++
  .../flight/FlightSqlRendererTest.java         | 123 ++++++++++
- .../flight/FlightTypeMapperTest.java          | 116 +++++++++
+ .../flight/FlightTypeMapperTest.java          | 164 +++++++++++++
  .../flight/MockedFlightSqlMetadataClient.java | 113 +++++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 ++++++
  .../sql/plan/FlightScanPlanTest.java          | 220 ++++++++++++++++++
- 7 files changed, 855 insertions(+)
+ 7 files changed, 907 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -24,10 +24,10 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
 
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
-index 00000000..872574ab
+index 00000000..858e5894
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,108 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +73,8 @@ index 00000000..872574ab
 +        Assertions.assertTrue(p.isTlsVerify());
 +        Assertions.assertFalse(p.isTls());
 +        Assertions.assertEquals(5000, p.getConnectTimeoutMs());
++        Assertions.assertTrue(p.isConvertTypes());
++        Assertions.assertFalse(props("flight.uri", "grpc://h1:8815", "flight.converted_types", "HIDE").isConvertTypes());
 +        Assertions.assertEquals(10000, p.getKeepaliveMs());
 +        Assertions.assertEquals(FlightProperties.NestedTypes.NATIVE, p.getNestedTypes());
 +        Assertions.assertTrue(p.isFilterPushdown());
@@ -100,6 +102,8 @@ index 00000000..872574ab
 +                () -> props("flight.uri", "grpc://h:1", "flight.token", "t", "flight.user", "u"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
 +                () -> props("flight.uri", "grpc://h:1", "flight.unknown", "x"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.converted_types", "json"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
 +                () -> props("flight.uri", "grpc://h:1", "flight.header.authorization", "x"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
@@ -376,10 +380,10 @@ index 00000000..3c2a91aa
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
 new file mode 100644
-index 00000000..4bc29fd3
+index 00000000..b6805cf4
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,164 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -403,6 +407,7 @@ index 00000000..4bc29fd3
 +import com.starrocks.type.Type;
 +import org.apache.arrow.vector.types.DateUnit;
 +import org.apache.arrow.vector.types.FloatingPointPrecision;
++import org.apache.arrow.vector.types.IntervalUnit;
 +import org.apache.arrow.vector.types.TimeUnit;
 +import org.apache.arrow.vector.types.pojo.ArrowType;
 +import org.apache.arrow.vector.types.pojo.Field;
@@ -494,6 +499,53 @@ index 00000000..4bc29fd3
 +        // a struct with an unsupported child is hidden as a whole
 +        Field badStruct = field("s", ArrowType.Struct.INSTANCE, field("t", new ArrowType.Time(TimeUnit.SECOND, 32)));
 +        Assertions.assertNull(FlightTypeMapper.toStarRocksType(badStruct, FlightProperties.NestedTypes.NATIVE));
++    }
++    private static Type convert(ArrowType type, Field... children) {
++        return FlightTypeMapper.toStarRocksType(field("c", type, children), FlightProperties.NestedTypes.NATIVE, true);
++    }
++
++    @Test
++    public void testConvertedTypes() {
++        Assertions.assertEquals(PrimitiveType.VARCHAR,
++                convert(new ArrowType.Time(TimeUnit.MICROSECOND, 64)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARCHAR,
++                convert(new ArrowType.Time(TimeUnit.MILLISECOND, 32)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.BIGINT, convert(new ArrowType.Duration(TimeUnit.SECOND)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARCHAR,
++                convert(new ArrowType.Interval(IntervalUnit.MONTH_DAY_NANO)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARCHAR,
++                convert(new ArrowType.Interval(IntervalUnit.YEAR_MONTH)).getPrimitiveType());
++        Type d = convert(new ArrowType.Decimal(20, 2, 256));
++        Assertions.assertTrue(d.isDecimalOfAnyVersion());
++        Assertions.assertEquals(20, ((ScalarType) d).getScalarPrecision());
++        Assertions.assertEquals(2, ((ScalarType) d).getScalarScale());
++        Assertions.assertEquals(PrimitiveType.VARCHAR, convert(new ArrowType.Decimal(60, 2, 256)).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARCHAR, convert(ArrowType.Utf8View.INSTANCE).getPrimitiveType());
++        Assertions.assertEquals(PrimitiveType.VARBINARY, convert(ArrowType.BinaryView.INSTANCE).getPrimitiveType());
++        Type lv = convert(ArrowType.ListView.INSTANCE, field("item", new ArrowType.Int(32, true)));
++        Assertions.assertTrue(lv.isArrayType());
++        Assertions.assertEquals(PrimitiveType.INT, ((ArrayType) lv).getItemType().getPrimitiveType());
++        // exact types are unchanged, the rest stays hidden
++        Assertions.assertEquals(PrimitiveType.INT, convert(new ArrowType.Int(32, true)).getPrimitiveType());
++        Assertions.assertNull(convert(ArrowType.Null.INSTANCE));
++        // only exact types inside nested ones
++        Assertions.assertNull(convert(ArrowType.List.INSTANCE, field("item", new ArrowType.Time(TimeUnit.SECOND, 32))));
++        // flight.converted_types=hide
++        Assertions.assertNull(FlightTypeMapper.toStarRocksType(field("c", new ArrowType.Duration(TimeUnit.SECOND)),
++                FlightProperties.NestedTypes.NATIVE, false));
++    }
++
++    @Test
++    public void testValueConvertedColumnsAreNotPushed() {
++        Assertions.assertTrue(FlightTypeMapper.isValueConverted(new ArrowType.Time(TimeUnit.MICROSECOND, 64)));
++        Assertions.assertTrue(FlightTypeMapper.isValueConverted(new ArrowType.Duration(TimeUnit.SECOND)));
++        Assertions.assertTrue(FlightTypeMapper.isValueConverted(new ArrowType.Interval(IntervalUnit.DAY_TIME)));
++        Assertions.assertTrue(FlightTypeMapper.isValueConverted(new ArrowType.Decimal(20, 2, 256)));
++        Assertions.assertFalse(FlightTypeMapper.isValueConverted(new ArrowType.Decimal(20, 2, 128)));
++        Assertions.assertFalse(FlightTypeMapper.isValueConverted(ArrowType.Utf8View.INSTANCE));
++        Assertions.assertEquals("Arrow duration, unit millisecond",
++                FlightTypeMapper.conversionComment(new ArrowType.Duration(TimeUnit.MILLISECOND)));
++        Assertions.assertNull(FlightTypeMapper.conversionComment(ArrowType.Utf8.INSTANCE));
 +    }
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java

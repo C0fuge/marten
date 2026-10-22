@@ -15,7 +15,7 @@ StarRocks connection from $M4_SR_HOST / $M4_SR_PORT / $M4_SR_USER / $M4_SR_PASSW
 Writes DIR/results.md (summary + details) and DIR/results.json; exit code 0 even on failed checks (the
 workflow decides), 2 on harness errors.
 """
-import argparse, datetime, decimal, json, os, re, struct, sys, time, traceback, uuid
+import argparse, datetime, decimal, functools, json, os, re, struct, sys, time, traceback, uuid
 from decimal import Decimal
 
 decimal.getcontext().prec = 80
@@ -196,13 +196,30 @@ def check1(conn, args, res):
         check_desc_exact(conn, res, "types", t)
 
 
-# PLAN §2.2 type mapping (as FlightTypeMapper, flight.nested_types=native), applied to the Arrow schema the server
-# reports in GetTables(include_schema): the expected DESC type, or None for a hidden column.
-def plan_type(t):
+# PLAN §2.2 type mapping (as FlightTypeMapper, flight.nested_types=native, flight.converted_types=convert), applied
+# to the Arrow schema the server reports in GetTables(include_schema): the expected DESC type, or None for a hidden
+# column. Converted types (TIME, DURATION, INTERVAL, DECIMAL256, *View) only at the top level.
+def plan_type(t, top=True):
     import pyarrow as pa
     T = pa.types
     if isinstance(t, pa.ExtensionType):
         return None
+    if top:
+        if T.is_time(t) or T.is_interval(t) or T.is_string_view(t):
+            return "VARCHAR(1073741824)"
+        if T.is_duration(t):
+            return "BIGINT"
+        if T.is_binary_view(t):
+            return "VARBINARY"
+        if T.is_decimal256(t):
+            if not (1 <= t.precision and 0 <= t.scale <= t.precision):
+                return None
+            return f"DECIMAL({t.precision},{t.scale})" if t.precision <= 38 else "VARCHAR(1073741824)"
+        if T.is_list_view(t) or T.is_large_list_view(t):
+            it = plan_type(t.value_type, False)
+            return it and f"ARRAY<{it}>"
+    if T.is_dictionary(t):
+        return plan_type(t.value_type, top)
     if T.is_dictionary(t):
         return plan_type(t.value_type)
     if T.is_boolean(t):
@@ -226,17 +243,17 @@ def plan_type(t):
     if T.is_timestamp(t):
         return "DATETIME"
     if T.is_list(t) or T.is_large_list(t) or T.is_fixed_size_list(t):
-        it = plan_type(t.value_type)
+        it = plan_type(t.value_type, False)
         return it and f"ARRAY<{it}>"
     if T.is_map(t):
-        k, v = plan_type(t.key_type), plan_type(t.item_type)
+        k, v = plan_type(t.key_type, False), plan_type(t.item_type, False)
         return f"MAP<{k},{v}>" if k and v and not re.match(r"(ARRAY|MAP|STRUCT)<", k) else None
     if T.is_struct(t):
-        fs = [(t.field(i).name, plan_type(t.field(i).type)) for i in range(t.num_fields)]
+        fs = [(t.field(i).name, plan_type(t.field(i).type, False)) for i in range(t.num_fields)]
         if not fs or any(not n or not ty for n, ty in fs):
             return None
         return "STRUCT<" + ",".join(f"{n.upper()} {ty}" for n, ty in fs) + ">"
-    return None     # time, duration, interval, null, union, decimal256, views, extension types: hidden
+    return None     # null, union, run-end encoded, extension types; converted types inside nested ones: hidden
 
 
 def norm_desc(ty):
@@ -248,6 +265,7 @@ def norm_desc(ty):
     return re.sub(r"\s+", " ", s).strip()
 
 
+@functools.lru_cache(maxsize=None)
 def server_schema(schema, table):
     import adbc_driver_flightsql.dbapi as fs
     with fs.connect(FLIGHT_URI) as c:
@@ -280,7 +298,7 @@ def type_ok(duck_type, sr_type):
         "UBIGINT": ["LARGEINT", "DECIMAL(20,0)", "DECIMAL128(20,0)"], "FLOAT": ["FLOAT"], "DOUBLE": ["DOUBLE"], "DATE": ["DATE"],
         "TIMESTAMP": ["DATETIME"], "TIMESTAMP_NS": ["DATETIME"], "TIMESTAMP WITH TIME ZONE": ["DATETIME"],
         "BLOB": ["VARBINARY"], "UUID": ["VARBINARY", "VARCHAR", None, ""],
-        "TIME": [None, ""], "INTERVAL": [None, ""],
+        "TIME": ["VARCHAR"], "INTERVAL": ["VARCHAR"],
     }
     if dt in simple:
         return any(st == a or (a and st.startswith(a + "(")) for a in simple[dt]) or (st == "" and None in simple[dt])
@@ -309,6 +327,61 @@ def adbc_probe(sql, headers=None):
         cur.execute(sql)
         t = cur.fetch_arrow_table()
         return str(t.schema).replace("\n", "; "), t.to_pylist()
+
+
+# Text forms of converted types, as the BE writes them (normalize_batch in flight_connector.cpp).
+def fmt_time(v, unit):
+    per, digits = {"s": (1, 0), "ms": (1000, 3), "us": (10**6, 6), "ns": (10**9, 9)}[unit]
+    a = abs(v)
+    secs = a // per
+    out = ("-" if v < 0 else "") + f"{secs // 3600:02}:{secs // 60 % 60:02}:{secs % 60:02}"
+    return out + (f".{a % per:0{digits}}" if digits else "")
+
+
+def fmt_interval(months, days, nanos):
+    out = "P"
+
+    def comp(neg, value, unit):
+        return f"{'-' if neg else ''}{value}{unit}" if value else ""
+    am = abs(months)
+    out += comp(months < 0, am // 12, "Y") + comp(months < 0, am % 12, "M") + comp(days < 0, abs(days), "D")
+    if nanos:
+        neg, an, sec = nanos < 0, abs(nanos), 10**9
+        out += "T" + comp(neg, an // (3600 * sec), "H") + comp(neg, an // (60 * sec) % 60, "M")
+        frac = an % sec
+        if frac:
+            out += f"{'-' if neg else ''}{an // sec % 60}.{format(frac, '09d').rstrip('0')}S"
+        else:
+            out += comp(neg, an // sec % 60, "S")
+    return "PT0S" if out == "P" else out
+
+
+def converted_expected(schema, table, col):
+    """{id: normalized value} of a converted column, from the server's own Arrow values (ADBC); None when the
+    column's Arrow type is mapped exactly."""
+    import adbc_driver_flightsql.dbapi as fs
+    import pyarrow as pa
+    T = pa.types
+    t = server_schema(schema, table).field(col).type
+    if not (T.is_time(t) or T.is_interval(t) or T.is_duration(t) or T.is_decimal256(t)
+            or T.is_string_view(t) or T.is_binary_view(t)):
+        return None
+    with fs.connect(FLIGHT_URI) as c, c.cursor() as cur:
+        cur.execute(f'SELECT id, "{col}" FROM {schema}.{table}')
+        tb = cur.fetch_arrow_table()
+    ids, arr = tb.column(0).to_pylist(), tb.column(1).combine_chunks()
+    if T.is_time(arr.type):
+        vals = [None if v is None else fmt_time(v, arr.type.unit)
+                for v in arr.cast(pa.int64() if T.is_time64(arr.type) else pa.int32()).to_pylist()]
+    elif T.is_duration(arr.type):
+        vals = arr.cast(pa.int64()).to_pylist()
+    elif T.is_interval(arr.type) and arr.type == pa.month_day_nano_interval():
+        vals = [None if v is None else fmt_interval(v.months, v.days, v.nanoseconds) for v in arr.to_pylist()]
+    elif T.is_string_view(arr.type) or T.is_binary_view(arr.type):
+        vals = arr.cast(pa.string() if T.is_string_view(arr.type) else pa.binary()).to_pylist()
+    else:   # decimal256
+        vals = arr.to_pylist()
+    return {i: norm(v, "exact") for i, v in zip(ids, vals)}
 
 
 def check2(conn, args, res):
@@ -348,7 +421,10 @@ def check2(conn, args, res):
             def one(c=c):
                 kind = "float" if dk.get(c) == "FLOAT" else "exact"
                 got = {r[0]: norm(r[1], kind) for r in sr(conn, f"SELECT id, `{c}` FROM flight.types.{t}")}
-                if dk.get(c) == "TIMESTAMP_NS":
+                conv = converted_expected("types", t, c)
+                if conv is not None:
+                    exp = conv
+                elif dk.get(c) == "TIMESTAMP_NS":
                     # DuckDB's Python conversion truncates ns toward zero; the BE floors to microseconds
                     q = f'SELECT id, epoch_ns("{c}") FROM types.{t}'
                     epoch = datetime.datetime(1970, 1, 1)
