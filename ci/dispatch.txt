@@ -1,4 +1,4 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
 fe tests=FlightScanPlanTest,FlightAggregationPushdownRuleTest,FlightSqlMetadataClientTest,FlightTypeMapperTest,FlightSqlRendererTest,FlightPropertiesTest,PushDownTopNToPreAggRuleTest
-be force=true
+# fe re-dispatched with the 0003 keepalive change so FE and BE report the same series; be/be-ut start from the push

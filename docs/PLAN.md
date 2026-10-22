@@ -415,7 +415,8 @@ the BE rebuild nearly in full. So **all Thrift changes land in one commit at the
     - Connect timeout comes from the gRPC arg `grpc.min_reconnect_backoff_ms` / the initial connect deadline. To
       be validated on 1.43; the fallback is a short unary `DoAction("ping")`/ListActions probe with a 5 s
       deadline before DoGet.
-    - Keepalive uses `grpc.keepalive_time_ms=10000` and `grpc.keepalive_timeout_ms=5000`, only when
+    - Keepalive uses `grpc.keepalive_time_ms=10000` and `grpc.keepalive_timeout_ms=max(20000, keepalive_ms)`
+      (was 5000: killed healthy streams on a loaded host, local final check 2026-10-22), only when
       `location_failover` is on, because our server accepts pings every 5 s.
   - **Cancellation:**
     - The source registers its `FlightStreamReader` with a BE-wide `FlightCancelWatcher`, one thread that wakes
