@@ -223,6 +223,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Use server int6 instead of int5** (2026-10-22, local coordinator): int5 overflows its stack on the first table refresh ~30 s after start when any catalog is configured AND the data dir has a table (then every call fails "Application error processing RPC"). int6 = int5 + fix + catalog plugin `hive` (Hive Metastore; SPI 1.1): assets `arrow-flight-server-1.0.0-int6.jar` sha256 78f06212…8d09, `int6-plugins.tar.zst` sha256 fa870ddb…adaf (plugins s3/lakefs/iceberg/hive + START-NOTES.txt). With the iceberg plugin present, `catalog=hive` needs the iceberg+avro extensions or `hive.icebergTables=skip`.
+
 1. **A-4 from the local re-check 2026-10-22 (q18 SF10 at BE `mem_limit = 4G`, memory)** — the re-check of series
    `fl6b6a1d` against the fixed int4 passed A-1 (real cardinalities, lineitem probe), q05/q08/q09/q21 at 4G, the
    keepalive item on the 3-node cluster under load and B2/B5 (server fix); only q18 fails at 4G on the native
