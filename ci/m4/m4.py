@@ -461,9 +461,38 @@ def load_ref(q, ref):
     return cols, rows
 
 
+def flight_scan_cardinalities(conn, sql):
+    """[(table, cardinality)] of the FlightScanNodes in EXPLAIN COSTS."""
+    out, cur = [], None
+    for line in (r[0] for r in sr(conn, "EXPLAIN COSTS " + sql)):
+        if re.search(r"\d+:FlightScanNode", line):
+            cur = ["?", None]
+        elif cur is not None:
+            m = re.search(r"TABLE:\s*(\S+)", line)
+            if m:
+                cur[0] = m.group(1)
+            m = re.search(r"cardinality[:=]\s*(-?\d+)", line)
+            if m:
+                out.append((cur[0], int(m.group(1))))
+                cur = None
+    return out
+
+
+def check4_stats(conn, res):
+    # local final check A-1: Flight scans reached the CBO without row counts (cardinality -1 / 1, lineitem as
+    # hash build side). After a query (the end of a query used to clear the row-count cache) every Flight scan
+    # of q05 must carry a real row count.
+    sql = open(os.path.join(M4, "queries", "q05.sql")).read().strip().rstrip(";")
+    sr(conn, "SELECT count(*) FROM region")
+    cards = flight_scan_cardinalities(conn, sql)
+    ok = len(cards) == 6 and all(c > 1 for _, c in cards)
+    res.add("q05 EXPLAIN COSTS: row counts of all 6 Flight scans", ok, ", ".join(f"{t}={c}" for t, c in cards))
+
+
 def check4(conn, args, res):
     sr(conn, f"SET CATALOG {args.catalog}")
     sr(conn, "USE tpch")
+    guarded(res, "q05 EXPLAIN COSTS: row counts of all 6 Flight scans", lambda: check4_stats(conn, res))
     timings = []
     ref_timings = []
     topn_default = sr(conn, "SHOW VARIABLES LIKE 'cbo_push_down_topn_limit'")[0][1]
