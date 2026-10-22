@@ -10,11 +10,11 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
  .../flight/FlightPropertiesTest.java          | 112 +++++++
  .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++
  .../flight/FlightSqlRendererTest.java         | 123 ++++++++
- .../flight/FlightTypeMapperTest.java          | 164 +++++++++++
- .../flight/MockedFlightSqlMetadataClient.java | 132 +++++++++
+ .../flight/FlightTypeMapperTest.java          | 164 ++++++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 132 ++++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 +++++
- .../sql/plan/FlightScanPlanTest.java          | 276 ++++++++++++++++++
- 8 files changed, 1064 insertions(+)
+ .../sql/plan/FlightScanPlanTest.java          | 297 ++++++++++++++++++
+ 8 files changed, 1085 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
@@ -856,10 +856,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..46b0fe2c
+index 00000000..794cc15b
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,297 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -882,11 +882,16 @@ index 00000000..46b0fe2c
 +import com.starrocks.connector.flight.FlightProperties;
 +import com.starrocks.connector.flight.MockedFlightSqlMetadataClient;
 +import com.starrocks.server.GlobalStateMgr;
++import com.starrocks.sql.optimizer.Utils;
 +import org.junit.jupiter.api.AfterAll;
 +import org.junit.jupiter.api.Assertions;
 +import org.junit.jupiter.api.BeforeAll;
 +import org.junit.jupiter.api.Test;
 +
++import java.math.BigDecimal;
++import java.math.BigInteger;
++import java.time.LocalDate;
++import java.time.LocalDateTime;
 +import java.util.HashMap;
 +import java.util.List;
 +import java.util.Map;
@@ -895,7 +900,8 @@ index 00000000..46b0fe2c
 +
 +/**
 + * Plans of Flight scans: the REMOTE SQL in EXPLAIN for projection, filters, LIMIT and aggregation pushdown; row-count
-+ * statistics in the plan (t1: 1000 rows, t2: 10M rows; column {@code id} 1..row count).
++ * statistics in the plan (t1: 1000 rows, t2: 10M rows; column {@code id} 1..row count); min/max values as optimizer
++ * doubles.
 + */
 +public class FlightScanPlanTest extends PlanTestBase {
 +    private static final String CATALOG = "flight0";
@@ -1066,6 +1072,21 @@ index 00000000..46b0fe2c
 +        metadata.clear();
 +        metadata.getColumnRanges(t2);
 +        Assertions.assertEquals(2, client.getStatsQueries().size());
++    }
++
++    @Test
++    public void testOptimizerValues() {
++        // dates and datetimes as epoch seconds the way the optimizer converts literals
++        Assertions.assertEquals((double) Utils.getLongFromDateTime(LocalDateTime.of(1994, 1, 1, 0, 0)),
++                FlightMetadata.epochDayValue((int) LocalDate.of(1994, 1, 1).toEpochDay()));
++        LocalDateTime t = LocalDateTime.of(1969, 12, 31, 23, 59, 58);
++        Assertions.assertEquals((double) Utils.getLongFromDateTime(t), FlightMetadata.optimizerValue(t));
++        Assertions.assertEquals(-42.0, FlightMetadata.optimizerValue(-42L));
++        Assertions.assertEquals(18446744073709551615.0,
++                FlightMetadata.optimizerValue(new BigInteger("18446744073709551615")));
++        Assertions.assertEquals(1234.56, FlightMetadata.optimizerValue(new BigDecimal("1234.56")));
++        Assertions.assertNull(FlightMetadata.optimizerValue("x"));
++        Assertions.assertNull(FlightMetadata.optimizerValue((Object) null));
 +    }
 +
 +    @Test

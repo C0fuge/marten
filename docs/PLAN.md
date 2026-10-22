@@ -216,7 +216,8 @@ Lessons from the Trino plugin v10 (`~/Projects/trino-arrow-flight-connector` 6ee
 | `flight.nested_types` | `hide` | `hide` / `native` (ARRAY/MAP/STRUCT) / `json` |
 | `flight.converted_types` | `convert` | `convert`: TIME, DURATION, INTERVAL, DECIMAL256, *View columns exposed converted (table below, added 2026-10-22, STATUS P1); `hide`: hidden as before |
 | `flight.pushdown.filter` / `.limit` / `.count` | true | per-feature kill switches (also session variables, see 2.6) |
-| `flight.metadata_cache_ttl_s` / `flight.stats_cache_ttl_s` | 60 / 600 | table-list and schema cache; row-count cache |
+| `flight.metadata_cache_ttl_s` / `flight.stats_cache_ttl_s` | 60 / 600 | table-list and schema cache; row-count and column min/max cache |
+| `flight.column_stats` | `true` | per-table `SELECT min(c), max(c), …` (numeric/date columns that are filterable, ≤ 100 per table; answered from Parquet footers by our servers) gives the CBO column min/max and a range NDV; loaded in the background like row counts (added 2026-10-22, STATUS P2) |
 
 ### 2.2 FE files (new package `FE/connector/flight/`)
 - `FlightConnector implements Connector`:

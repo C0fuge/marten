@@ -17,17 +17,17 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../flight/FlightAggregationPushdown.java     |  83 +++
  .../connector/flight/FlightConnector.java     |  57 +++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
- .../connector/flight/FlightMetadata.java      | 471 ++++++++++++++++++
+ .../connector/flight/FlightMetadata.java      | 475 ++++++++++++++++++
  .../connector/flight/FlightProperties.java    | 338 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 462 +++++++++++++++++
- .../connector/flight/FlightSqlRenderer.java   | 445 +++++++++++++++++
+ .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 257 ++++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2322 insertions(+), 3 deletions(-)
+ 18 files changed, 2326 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -402,10 +402,10 @@ index 00000000..7553542b
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
 new file mode 100644
-index 00000000..93ff480a
+index 00000000..c2f915c1
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,475 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -452,9 +452,7 @@ index 00000000..93ff480a
 +import org.apache.arrow.flight.FlightInfo;
 +import org.apache.arrow.flight.Location;
 +import org.apache.arrow.vector.DateDayVector;
-+import org.apache.arrow.vector.DateMilliVector;
 +import org.apache.arrow.vector.FieldVector;
-+import org.apache.arrow.vector.TimeStampVector;
 +import org.apache.arrow.vector.UInt8Vector;
 +import org.apache.arrow.vector.types.pojo.ArrowType;
 +import org.apache.arrow.vector.types.pojo.Field;
@@ -746,19 +744,25 @@ index 00000000..93ff480a
 +    }
 +
 +    /** A min/max result value as the optimizer stores it (dates and datetimes: epoch seconds), or null. */
-+    static Object optimizerValue(FieldVector v, int row) {
++    public static Object optimizerValue(FieldVector v, int row) {
 +        if (v instanceof DateDayVector) {
-+            LocalDate d = LocalDate.ofEpochDay(((DateDayVector) v).get(row));
-+            return (double) Utils.getLongFromDateTime(d.atStartOfDay());
++            return epochDayValue(((DateDayVector) v).get(row));
 +        }
 +        if (v instanceof UInt8Vector) {
 +            return ((UInt8Vector) v).getObjectNoOverflow(row).doubleValue();
 +        }
-+        if (v instanceof TimeStampVector || v instanceof DateMilliVector) {
-+            Object o = v.getObject(row);
-+            return o instanceof LocalDateTime ? (double) Utils.getLongFromDateTime((LocalDateTime) o) : null;
++        // timestamps without a time zone and date64 read as LocalDateTime, numbers as Number
++        return optimizerValue(v.getObject(row));
++    }
++
++    public static Double epochDayValue(int epochDay) {
++        return (double) Utils.getLongFromDateTime(LocalDate.ofEpochDay(epochDay).atStartOfDay());
++    }
++
++    public static Double optimizerValue(Object o) {
++        if (o instanceof LocalDateTime) {
++            return (double) Utils.getLongFromDateTime((LocalDateTime) o);
 +        }
-+        Object o = v.getObject(row);
 +        return o instanceof Number ? ((Number) o).doubleValue() : null;
 +    }
 +
