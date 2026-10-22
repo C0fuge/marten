@@ -6,6 +6,9 @@
 #                                                    jar asset to run (default $M4_SERVER_JAR), copied to x/server.jar;
 #                                                    writes x/server.env (DuckDB httpfs + plugin dir of that server)
 #   ci/m4/stack.sh minio   ASSET_DIR                 start MinIO, upload tpch (SF1) + types tables to s3://lake/parquet
+#   ci/m4/stack.sh lakefs  ASSET_DIR                 start lakeFS (local KV, MinIO blockstore), repository m4 with the same
+#                                                    tables + lfs.t on branch main (one commit); later `flight` calls serve
+#                                                    lakefs://m4/main/parquet (settings in $M4_STATE/store.env)
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
 #   ci/m4/stack.sh wait    NAME                      wait until the Flight server NAME is started (M4_NO_WAIT=1 skips it in `flight`)
@@ -27,6 +30,7 @@ JDK_IMAGE=docker.io/library/eclipse-temurin:21-jre
 M4_SERVER_JAR=${M4_SERVER_JAR:-arrow-flight-server-1.0.0-int4.jar}
 # docker.io/minio/minio no longer exists (2026-10-21: "pull access denied"); first image that pulls wins.
 # Format: image|args (args empty = the image's own entrypoint/cmd serves /data, as bitnami does).
+LAKEFS_IMAGE=docker.io/treeverse/lakefs:1.38.0
 MINIO_IMAGES=("quay.io/minio/minio:latest|server /data" "docker.io/bitnamilegacy/minio:latest|"
               "cgr.dev/chainguard/minio:latest|server /data")
 
@@ -130,10 +134,44 @@ for o in s3.list_objects_v2(Bucket="lake", Prefix="parquet/types/")["Contents"]:
     print(o["Key"], o["Size"])
 PY
     ;;
+lakefs)
+    A=$2; net
+    . "$M4_STATE/minio.env"
+    if [ ! -s "$M4_STATE/lakefs.env" ]; then
+        { printf 'LAKEFS_KEY=AKIAM4%s\n' "$(openssl rand -hex 7 | tr a-f A-F)"
+          printf 'LAKEFS_SECRET=%s\n' "$(openssl rand -hex 20)"
+          printf 'LAKEFS_ENCRYPT=%s\n' "$(openssl rand -hex 16)"; } > "$M4_STATE/lakefs.env"
+    fi
+    . "$M4_STATE/lakefs.env"
+    docker run -d --name lakefs --network m4 -p 127.0.0.1:8000:8000 \
+        -e LAKEFS_DATABASE_TYPE=local -e LAKEFS_AUTH_ENCRYPT_SECRET_KEY="$LAKEFS_ENCRYPT" \
+        -e LAKEFS_BLOCKSTORE_TYPE=s3 -e LAKEFS_BLOCKSTORE_S3_ENDPOINT=http://minio:9000 \
+        -e LAKEFS_BLOCKSTORE_S3_FORCE_PATH_STYLE=true -e LAKEFS_BLOCKSTORE_S3_REGION=us-east-1 \
+        -e LAKEFS_BLOCKSTORE_S3_DISCOVER_BUCKET_REGION=false \
+        -e LAKEFS_BLOCKSTORE_S3_CREDENTIALS_ACCESS_KEY_ID="$MINIO_ROOT_USER" \
+        -e LAKEFS_BLOCKSTORE_S3_CREDENTIALS_SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" \
+        -e LAKEFS_INSTALLATION_USER_NAME=m4 -e LAKEFS_INSTALLATION_ACCESS_KEY_ID="$LAKEFS_KEY" \
+        -e LAKEFS_INSTALLATION_SECRET_ACCESS_KEY="$LAKEFS_SECRET" -e LAKEFS_STATS_ENABLED=false \
+        -e LAKEFS_USAGE_REPORT_ENABLED=false "$LAKEFS_IMAGE" run >/dev/null
+    ok=
+    for i in $(seq 90); do curl -sf http://127.0.0.1:8000/_health >/dev/null && { ok=1; break; }; sleep 1; done
+    [ -n "$ok" ] || { docker logs lakefs 2>&1 | tail -60; echo "lakeFS did not start" >&2; exit 1; }
+    echo "lakeFS started after ${i}s"
+    MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD LAKEFS_KEY=$LAKEFS_KEY \
+    LAKEFS_SECRET=$LAKEFS_SECRET python3 "$REPO_ROOT/ci/m4/lakefs.py" setup "$A/x/sf1/tpch" "$REPO_ROOT/tests/m4/data/types"
+    { echo "M4_STORE=lakefs"
+      echo "M4_DATA_DIR=lakefs://m4/main/parquet"
+      echo "M4_STORE_OPTS='-Darrowflight.lakefs.endpoint=http://lakefs:8000 -Darrowflight.lakefs.apiEndpoint=http://lakefs:8000/api/v1'"
+      echo "FLIGHT_LAKEFS_ACCESS_KEY=$LAKEFS_KEY"
+      echo "FLIGHT_LAKEFS_SECRET_KEY=$LAKEFS_SECRET"; } > "$M4_STATE/store.env"
+    ;;
 flight)
     A=$2 NAME=$3 HOSTS=${4:-$3}; net
     . "$M4_STATE/minio.env"
     . "$A/x/server.env"
+    # store: s3://lake/parquet on MinIO, or what `lakefs` wrote (FLIGHT_LAKEFS_* are exported for the loop below)
+    M4_DATA_DIR=s3://lake/parquet M4_STORE_OPTS=
+    if [ -s "$M4_STATE/store.env" ]; then set -a; . "$M4_STATE/store.env"; set +a; fi
     extra_env=()
     [ -z "${M4_CERTS:-}" ] || extra_env+=(-v "$M4_CERTS:/certs:ro")
     # flight1 is also published on the runner (ADBC probes in m4.py; /etc/hosts maps flight1 to 127.0.0.1)
@@ -147,7 +185,7 @@ flight)
         -e FLIGHT_S3_ACCESS_KEY="$MINIO_ROOT_USER" -e FLIGHT_S3_SECRET_KEY="$MINIO_ROOT_PASSWORD" "${extra_env[@]}" \
         "$JDK_IMAGE" java --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED \
         --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.enable_unsafe_memory_access=true -DmetricsEnabled=false \
-        -DdataDir=s3://lake/parquet -Ds3Endpoint=http://minio:9000 -DduckDbHttpfsExtension=$M4_HTTPFS \
+        -DdataDir=$M4_DATA_DIR -Ds3Endpoint=http://minio:9000 $M4_STORE_OPTS -DduckDbHttpfsExtension=$M4_HTTPFS \
         ${M4_PLUGINS_DIR:+-Darrowflight.plugins.dir=$M4_PLUGINS_DIR} \
         -DioParallelism=4 -DduckDbMemoryLimit=1GB -DduckDbThreads=2 -DflightBackpressureThresholdBytes=16777216 \
         ${FLIGHT_JAVA_OPTS:-} -Xmx2g -XX:MaxDirectMemorySize=1g \

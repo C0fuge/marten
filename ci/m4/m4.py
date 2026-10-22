@@ -1002,12 +1002,77 @@ def check9_exchange(conn, args, res):
     res.add("q18 local exchange peak <= 16 MB x cpus (+16 MB)", ex16 is not None and ex16 <= bound, det)
 
 
+# ---------------------------------------------------------------- check 10: lakeFS commits (P3)
+
+def store_env():
+    """Settings `stack.sh lakefs` wrote ($M4_STATE/store.env); empty for the default S3 store."""
+    f = os.path.join(os.environ.get("M4_STATE", os.path.expanduser("~/.m4-state")), "store.env")
+    env = {}
+    if os.path.exists(f):
+        for line in open(f):
+            k, _, v = line.strip().partition("=")
+            if k:
+                env[k] = v.strip("'")
+    return env
+
+
+def check10(conn, args, res):
+    """lakeFS (m4 input store=lakefs): the server reads lakefs://m4/main/parquet; a commit between two queries is
+    seen by the second one, never half of it, and staged (uncommitted) files are reported as a note."""
+    env = store_env()
+    if env.get("M4_STORE") != "lakefs":
+        res.add("store is lakeFS", False, "run the m4 workflow with store=lakefs")
+        return
+    sys.path.insert(0, os.path.join(REPO, "ci", "m4"))
+    import lakefs
+    os.environ.setdefault("LAKEFS_KEY", env["FLIGHT_LAKEFS_ACCESS_KEY"])
+    os.environ.setdefault("LAKEFS_SECRET", env["FLIGHT_LAKEFS_SECRET_KEY"])
+    q = "SELECT count(*), sum(id) FROM flight.lfs.t"
+    val = lambda: tuple(int(x or 0) for x in sr(conn, q)[0])
+    first = val()
+    res.add("lfs.t at the setup commit", first == (1, 1), f"got {first}, head {lakefs.head()[:12]}")
+
+    # staged, not committed: a branch read in lakeFS includes it; the server pins the branch to its head commit
+    lakefs.put("lfs/t/part-1.parquet", lakefs.parquet_rows([2, 3]))
+    time.sleep(3)
+    staged = val()
+    res.notes.append(f"with part-1 staged (uncommitted) a query returns {staged} "
+                     f"({'not visible' if staged == first else 'VISIBLE: the branch is read with staging'})")
+
+    lakefs.put("lfs/t/part-2.parquet", lakefs.parquet_rows([4, 5, 6, 7]))
+    c2 = lakefs.commit("m4 check 10: part-1 + part-2")
+    t0, seen, last = time.time(), set(), None
+    while time.time() - t0 < 60:
+        last = val()
+        seen.add(last)
+        if last == (7, 28):
+            break
+        time.sleep(1)
+    res.add("a commit with 2 files is seen after the commit", last == (7, 28),
+            f"got {last} after {time.time() - t0:.1f} s, commit {c2[:12]}")
+    res.add("no query saw half of the commit", seen <= {first, staged, (7, 28)}, f"seen {sorted(seen)}")
+
+    lakefs.delete("lfs/t/part-0.parquet")
+    c3 = lakefs.commit("m4 check 10: drop part-0")
+    t0 = time.time()
+    while time.time() - t0 < 60:
+        last = val()
+        if last == (6, 27):
+            break
+        time.sleep(1)
+    res.add("a commit deleting a file is seen", last == (6, 27), f"got {last} after {time.time() - t0:.1f} s, "
+                                                                f"commit {c3[:12]}")
+    ok, r, _ = try_sql(conn, "SELECT count(*) FROM flight.tpch.lineitem")
+    res.add("tpch through lakeFS after the commits", ok and r[0][0] == 6001215, str(r)[:200])
+
+
 # ---------------------------------------------------------------- main
 
 TITLES = {1: "catalog, SHOW, DESC, masking", 2: "types tables, every column", 3: "M4-TESTS §1–2 (EXPLAIN + results)",
           4: "TPC-H SF1 q01–q22, topn default and 0", 5: "sr-cases on SF1", 6: "failover (2 servers)",
-          7: "KILL QUERY during a long scan", 8: "token and TLS", 9: "memory limit"}
-FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8, 9: check9}
+          7: "KILL QUERY during a long scan", 8: "token and TLS", 9: "memory limit",
+          10: "lakeFS: commits between queries"}
+FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8, 9: check9, 10: check10}
 
 
 def main():
@@ -1064,7 +1129,7 @@ def main():
     run = os.environ.get("GITHUB_RUN_ID", "local")
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "
