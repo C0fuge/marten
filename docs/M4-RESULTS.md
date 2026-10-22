@@ -235,3 +235,19 @@ All PASS: 1 25/25, 2 52/52, 3 21/21, 4 45/45, 5 26/26, 6 6/6, 7 2/2, 8 14/14, 9 
 `c_interval` (month_day_nano) are now exposed as VARCHAR (`flight.converted_types=convert`, default); check 2
 compares them with the server's own Arrow values (ADBC) formatted as the BE does: 0/5000 differ each. No hidden
 columns left in the types tables.
+
+## 2026-10-22, runs 39840237517 / 39841545485 / 39845020831 — P2 column min/max statistics, server int4
+
+- 39840237517 (series `4a9848e-fl664138`, checks 1–9): all PASS except check 6 item "flight2 stopped before the
+  query" (GetFlightInfo TIMED_OUT twice, 14.8 s); reproduced alone by 39841545485 (check 6, 15.2 s) → a P2
+  regression, not a flake. Cause: a metadata stream read from ANOTHER server's endpoint (the new background
+  `SELECT min(c), max(c) …` in partial mode streams from flight2 too) that failed was treated by `withFailover` as a
+  failure of the catalog's own connection, which was then moved to the stopped flight2. Fix (0002): such a failure
+  is a plain connector error (statistics stay unknown); the connection stays.
+- 39845020831 (series `4a9848e-fl67776b`, checks 1–9): **all PASS**: 1 25/25, 2 52/52, 3 21/21, 4 46/46, 5 26/26,
+  6 6/6 (flight2 stopped: 11.6 s, as before P2), 7 2/2, 8 14/14, 9 3/3. New item in check 4: q05's orders scan is
+  estimated at 227651 rows from the o_orderdate min/max (one year of 1992-01-01..1998-08-02; without column
+  statistics the default selectivities give 94K or 375K). Scan estimates (notes): q05 region 5, nation 25,
+  supplier 10000, customer 150000, lineitem 6001215, orders 227651; q08 orders 455301, part 200000; q09 part 50000,
+  partsupp 800000, orders 1500000, lineitem 6001215. The plan outlines of q05/q08/q09 are in the run's notes
+  (`git show origin/m4-results:runs/39845020831.md`); CI has no JDBC catalog to compare join orders with.
