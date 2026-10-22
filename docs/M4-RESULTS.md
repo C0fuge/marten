@@ -210,3 +210,21 @@ the Trino comparison above was therefore run with the cluster in open mode.
 | C4 | PASS | `enable_profile`: profiles of a token scan (25 k chars) and a basic-auth scan, `ANALYZE PROFILE`: no token |
 | C5 | PASS | `grep -rlF $TOKEN fe/log be/log` + container log + all outputs: only `fe.audit.log` line of `CREATE EXTERNAL CATALOG jdbc3` (stock JDBC catalog, token inside `jdbc_uri` written by the tester); every flight catalog statement in the audit log is masked (`"flight.token" = ***`, `"flight.password" = ***`) |
 | opt. | PASS | `query_mem_limit = 104857600` GROUP BY over lineitem: `Memory of Query… exceed limit … single query`, BE alive, next query OK |
+
+## 2026-10-22, run 39730011530 — server candidate int4 (DuckDB 1.4.5, S3 plugin), series `4a9848e-fl598360`, checks 1–9
+
+All PASS: 1 25/25, 2 49/49, 3 21/21, 4 44/44, 5 26/26, 6 6/6, 7 2/2, 8 14/14, 9 3/3. Setup: v1.4.5 httpfs (file name
+must stay `httpfs.duckdb_extension`: DuckDB derives the entry point from it — run 39729516833 failed with
+`did not contain the expected entrypoint function`), `-Darrowflight.plugins.dir=/srv/int4/plugins`.
+
+## 2026-10-22, connector fixes for the local final check
+
+- **A-1 root cause:** `MetadataMgr` calls `ConnectorMetadata.clear()` on the query-level metadata at the end of
+  every query (`removeQueryMetadata` / cache eviction); `FlightMetadata` is the catalog's only metadata object and
+  its `clear()` invalidated the row-count (and schema) caches, so every plan started cold and used
+  `default_statistics_output_row_count` = 1 for every Flight table. No warning, because nothing failed. Fixed in
+  0002 (`clear()` keeps the caches; the row count is started on `getTable` and a cold entry is waited for ≤ 1 s).
+  `cardinality: -1` / `stats source: NONE` in EXPLAIN COSTS was a separate display gap: `PlanFragmentBuilder` did
+  not call `computeStatistics` for the FlightScanNode (0004). Plan tests in 0006; m4 check 4 now asserts real row
+  counts for the 6 Flight scans of q05 after a query.
+- **Keepalive:** `grpc.keepalive_timeout_ms` = max(20 s, `flight.keepalive_ms`) instead of 5 s (0003).

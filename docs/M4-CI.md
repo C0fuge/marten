@@ -15,7 +15,7 @@ Release `m4-assets` (prerelease, not a product release; download in a workflow w
 | Asset | Content |
 |---|---|
 | `arrow-flight-server-1.0.0-int1.jar` | our Arrow Flight SQL server (DuckDB 1.4.1 inside), shaded, Linux only. Needs **JDK 21** (not 24+) |
-| `arrow-flight-server-1.0.0-int2.jar` | same, branch integration ac20b00: partial mode answers expressions over aggregates as one complete endpoint; UBIGINT → decimal128(20,0) in every mode. Not in the release's SHA256SUMS: pinned in `ci/m4/server-jars.sha256`. Default of `m4.yml` |
+| `arrow-flight-server-1.0.0-int2.jar` | same, branch integration ac20b00: partial mode answers expressions over aggregates as one complete endpoint; UBIGINT → decimal128(20,0) in every mode. Not in the release's SHA256SUMS: pinned in `ci/m4/server-jars.sha256` |
 | `arrow-flight-server-1.0.0-int4.jar` + `int4-plugins.tar.zst` | branch integration-2: int2 fixes + DuckDB **1.4.5** + plugin SPI; S3 and lakeFS are plugins (`plugins/s3`, `plugins/lakefs`, START-NOTES.txt), loaded with `-Darrowflight.plugins.dir=<dir>/plugins`, NOT on the classpath (`flight-server-libs` stays). Needs the **v1.4.5** httpfs (v1.4.1 extensions: refuses to start). Release candidate of the server. Both pinned in `ci/m4/server-jars.sha256`; `stack.sh assets` picks httpfs version and plugin dir from the jar name (int1/int2: 1.4.1, no plugins; later: 1.4.5 + `<tag>-plugins.tar.zst`) |
 | `flight-server-libs.tar.zst` | `libs/` — runtime jars that must be on the classpath next to the server jar (`-cp "server.jar:libs/*"`) |
 | `tpch-sf1-parquet.tar.zst` | `sf1/tpch/<table>/data_N.parquet` — TPC-H SF1, the exact files `tests/m4/reference/sf1` was computed from |
@@ -107,7 +107,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   input hashes, takes the FE/BE outputs of the current series like `release.yml` (cache, else newest artifact;
   both must report the current series hash), downloads `m4-assets` (draft release: looked up through the release
   list, cached as `m4-assets-v3` with all server jars; bump the key when the assets change; input `server` picks the
-  jar, default `arrow-flight-server-1.0.0-int2.jar`, e.g. `m4 checks=1,2 server=arrow-flight-server-1.0.0-int1.jar`;
+  jar, default `arrow-flight-server-1.0.0-int4.jar` (since 2026-10-22), e.g. `m4 checks=1,2 server=arrow-flight-server-1.0.0-int1.jar`;
   results.md names it), then `ci/m4/stack.sh`: docker network
   `m4` with `minio` (throwaway credentials, `s3://lake/parquet/{tpch,types}`), `flight1` (eclipse-temurin:21-jre,
   open mode; flight1 also on 127.0.0.1:32010 for ADBC probes), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).

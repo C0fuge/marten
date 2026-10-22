@@ -14,7 +14,7 @@ on:
         default: ""
       server:
         description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, release candidate)"
-        default: "arrow-flight-server-1.0.0-int2.jar"
+        default: "arrow-flight-server-1.0.0-int4.jar"
 
 concurrency:
   group: m4
