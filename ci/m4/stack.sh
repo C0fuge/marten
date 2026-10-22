@@ -3,7 +3,8 @@
 # server(s) and StarRocks 4.1.4 (allin1 image overlaid with the FE/BE outputs of the current series).
 #
 #   ci/m4/stack.sh assets  ASSET_DIR [JAR]           download + unpack release m4-assets (needs GH_TOKEN); JAR = server
-#                                                    jar asset to run (default $M4_SERVER_JAR), copied to x/server.jar
+#                                                    jar asset to run (default $M4_SERVER_JAR), copied to x/server.jar;
+#                                                    writes x/server.env (DuckDB httpfs + plugin dir of that server)
 #   ci/m4/stack.sh minio   ASSET_DIR                 start MinIO, upload tpch (SF1) + types tables to s3://lake/parquet
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
@@ -45,20 +46,37 @@ assets)
         done
     fi
     (cd "$A" && sha256sum -c SHA256SUMS)
-    # Server jars added to the release after its SHA256SUMS was written are pinned in the repo.
-    if ! grep -q " \*\?$JAR\$" "$A/SHA256SUMS"; then
-        grep " $JAR\$" "$REPO_ROOT/ci/m4/server-jars.sha256" > "$A/jar.sha256" ||
-            { echo "$JAR: no checksum in SHA256SUMS or ci/m4/server-jars.sha256" >&2; exit 1; }
-        (cd "$A" && sha256sum -c jar.sha256)
-    fi
+    # Server builds: int1/int2 embed DuckDB 1.4.1; from int4 on DuckDB 1.4.5 (it refuses to start with v1.4.1
+    # extensions) and S3/lakeFS are plugins (asset <tag>-plugins.tar.zst: plugins/, START-NOTES.txt), loaded from
+    # -Darrowflight.plugins.dir and kept off the classpath.
+    tag=${JAR#arrow-flight-server-*-}; tag=${tag%.jar}
+    case "$tag" in int1|int2) duckdb=1.4.1 plugins= ;; *) duckdb=1.4.5 plugins=$tag-plugins.tar.zst ;; esac
+    [ -z "$plugins" ] || [ -s "$A/$plugins" ] || { echo "$JAR needs the asset $plugins" >&2; exit 1; }
+    # Assets added to the release after its SHA256SUMS was written are pinned in the repo.
+    for f in "$JAR" $plugins; do
+        grep -q " \*\?$f\$" "$A/SHA256SUMS" && continue
+        grep " $f\$" "$REPO_ROOT/ci/m4/server-jars.sha256" > "$A/extra.sha256" ||
+            { echo "$f: no checksum in SHA256SUMS or ci/m4/server-jars.sha256" >&2; exit 1; }
+        (cd "$A" && sha256sum -c extra.sha256)
+    done
     mkdir -p "$A/x"
     [ -d "$A/x/libs" ] || tar -C "$A/x" --zstd -xf "$A/flight-server-libs.tar.zst"
     [ -d "$A/x/sf1" ] || tar -C "$A/x" --zstd -xf "$A/tpch-sf1-parquet.tar.zst"
     cp "$A/$JAR" "$A/x/server.jar"
-    echo "Flight server: $JAR"
-    if [ ! -s "$A/x/httpfs.duckdb_extension" ]; then
-        curl -sSfL http://extensions.duckdb.org/v1.4.1/linux_amd64/httpfs.duckdb_extension.gz | gunzip > "$A/x/httpfs.duckdb_extension"
+    echo "Flight server: $JAR (DuckDB $duckdb${plugins:+, plugins $plugins})"
+    ext=httpfs-v$duckdb.duckdb_extension
+    if [ ! -s "$A/x/$ext" ]; then
+        curl -sSfL "http://extensions.duckdb.org/v$duckdb/linux_amd64/httpfs.duckdb_extension.gz" | gunzip > "$A/x/$ext"
     fi
+    pdir=
+    if [ -n "$plugins" ]; then
+        rm -rf "$A/x/$tag" && mkdir -p "$A/x/$tag" && tar -C "$A/x/$tag" --zstd -xf "$A/$plugins"
+        [ -d "$A/x/$tag/plugins" ] || { echo "$plugins has no plugins/ directory" >&2; ls -R "$A/x/$tag" >&2; exit 1; }
+        pdir=/srv/$tag/plugins
+        echo "--- $plugins: START-NOTES.txt"; cat "$A/x/$tag/START-NOTES.txt" 2>/dev/null || echo "(missing)"; echo "---"
+        ls -lR "$A/x/$tag/plugins"
+    fi
+    printf 'M4_HTTPFS=/srv/%s\nM4_PLUGINS_DIR=%s\n' "$ext" "$pdir" > "$A/x/server.env"
     ls -la "$A/x" "$A/x/sf1/tpch"
     ;;
 minio)
@@ -113,6 +131,7 @@ PY
 flight)
     A=$2 NAME=$3 HOSTS=${4:-$3}; net
     . "$M4_STATE/minio.env"
+    . "$A/x/server.env"
     extra_env=()
     [ -z "${M4_CERTS:-}" ] || extra_env+=(-v "$M4_CERTS:/certs:ro")
     # flight1 is also published on the runner (ADBC probes in m4.py; /etc/hosts maps flight1 to 127.0.0.1)
@@ -126,7 +145,8 @@ flight)
         -e FLIGHT_S3_ACCESS_KEY="$MINIO_ROOT_USER" -e FLIGHT_S3_SECRET_KEY="$MINIO_ROOT_PASSWORD" "${extra_env[@]}" \
         "$JDK_IMAGE" java --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED \
         --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.enable_unsafe_memory_access=true -DmetricsEnabled=false \
-        -DdataDir=s3://lake/parquet -Ds3Endpoint=http://minio:9000 -DduckDbHttpfsExtension=/srv/httpfs.duckdb_extension \
+        -DdataDir=s3://lake/parquet -Ds3Endpoint=http://minio:9000 -DduckDbHttpfsExtension=$M4_HTTPFS \
+        ${M4_PLUGINS_DIR:+-Darrowflight.plugins.dir=$M4_PLUGINS_DIR} \
         -DioParallelism=4 -DduckDbMemoryLimit=1GB -DduckDbThreads=2 -DflightBackpressureThresholdBytes=16777216 \
         ${FLIGHT_JAVA_OPTS:-} -Xmx2g -XX:MaxDirectMemorySize=1g \
         -cp "/srv/server.jar:/srv/libs/*" pro.surpin.data.arrowflight.server.HadoopArrowFlightServer \
