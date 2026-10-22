@@ -565,10 +565,29 @@ def check4_stats(conn, res):
     res.add("q05 EXPLAIN COSTS: row counts of all 6 Flight scans", ok, ", ".join(f"{t}={c}" for t, c in cards))
 
 
+def check4_column_stats(conn, res):
+    # P2: column min/max from the server (flight.column_stats). q05 keeps one year of o_orderdate (1992-01-01 ..
+    # 1998-08-02 at SF1): about 15% of the 1.5M orders, ~228K. Without column statistics the optimizer's default
+    # selectivities give 94K or 375K, both outside the band.
+    sql = open(os.path.join(M4, "queries", "q05.sql")).read().strip().rstrip(";")
+    cards = flight_scan_cardinalities(conn, sql)
+    orders = [c for t, c in cards if t.split(".")[-1] == "orders"]
+    ok = len(orders) == 1 and 150_000 <= orders[0] <= 320_000
+    res.add("q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max", ok, f"orders={orders}")
+    for q in ("q05", "q08", "q09"):
+        sql = open(os.path.join(M4, "queries", f"{q}.sql")).read().strip().rstrip(";")
+        joins = [l.strip() for l in (r[0] for r in sr(conn, "EXPLAIN " + sql))
+                 if re.search(r"HASH JOIN|TABLE: |EXCHANGE|PLAN FRAGMENT", l)]
+        res.notes.append(f"{q} scans: " + ", ".join(f"{t}={c}" for t, c in flight_scan_cardinalities(conn, sql)))
+        res.notes.append(f"{q} plan outline: " + " / ".join(joins))
+
+
 def check4(conn, args, res):
     sr(conn, f"SET CATALOG {args.catalog}")
     sr(conn, "USE tpch")
     guarded(res, "q05 EXPLAIN COSTS: row counts of all 6 Flight scans", lambda: check4_stats(conn, res))
+    guarded(res, "q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max",
+            lambda: check4_column_stats(conn, res))
     timings = []
     ref_timings = []
     topn_default = sr(conn, "SHOW VARIABLES LIKE 'cbo_push_down_topn_limit'")[0][1]

@@ -6,14 +6,16 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 108 +++++++++
- .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++++
- .../flight/FlightSqlRendererTest.java         | 123 ++++++++++
- .../flight/FlightTypeMapperTest.java          | 164 +++++++++++++
- .../flight/MockedFlightSqlMetadataClient.java | 113 +++++++++
- .../FlightAggregationPushdownRuleTest.java    |  72 ++++++
- .../sql/plan/FlightScanPlanTest.java          | 220 ++++++++++++++++++
- 7 files changed, 907 insertions(+)
+ .../flight/FlightColumnStatsTest.java         |  78 +++++
+ .../flight/FlightPropertiesTest.java          | 112 +++++++
+ .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++
+ .../flight/FlightSqlRendererTest.java         | 123 ++++++++
+ .../flight/FlightTypeMapperTest.java          | 164 +++++++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 132 +++++++++
+ .../FlightAggregationPushdownRuleTest.java    |  72 +++++
+ .../sql/plan/FlightScanPlanTest.java          | 276 ++++++++++++++++++
+ 8 files changed, 1064 insertions(+)
+ create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -22,12 +24,96 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 
+diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
+new file mode 100644
+index 00000000..2d97a48c
+--- /dev/null
++++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
+@@ -0,0 +1,78 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package com.starrocks.connector.flight;
++
++import com.starrocks.sql.optimizer.Utils;
++import org.apache.arrow.memory.BufferAllocator;
++import org.apache.arrow.memory.RootAllocator;
++import org.apache.arrow.vector.BigIntVector;
++import org.apache.arrow.vector.DateDayVector;
++import org.apache.arrow.vector.DecimalVector;
++import org.apache.arrow.vector.TimeStampMicroVector;
++import org.apache.arrow.vector.UInt8Vector;
++import org.apache.arrow.vector.VarCharVector;
++import org.junit.jupiter.api.Assertions;
++import org.junit.jupiter.api.Test;
++
++import java.math.BigDecimal;
++import java.nio.charset.StandardCharsets;
++import java.time.LocalDate;
++import java.time.LocalDateTime;
++
++/** Min/max result values as optimizer doubles ({@code flight.column_stats}). */
++public class FlightColumnStatsTest {
++    @Test
++    public void testOptimizerValues() {
++        try (BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
++                DateDayVector date = new DateDayVector("d", allocator);
++                TimeStampMicroVector ts = new TimeStampMicroVector("ts", allocator);
++                BigIntVector bigint = new BigIntVector("b", allocator);
++                UInt8Vector ubigint = new UInt8Vector("u", allocator);
++                DecimalVector decimal = new DecimalVector("dec", allocator, 15, 2);
++                VarCharVector text = new VarCharVector("s", allocator)) {
++            date.allocateNew(1);
++            date.set(0, (int) LocalDate.of(1994, 1, 1).toEpochDay());
++            date.setValueCount(1);
++            Assertions.assertEquals((double) Utils.getLongFromDateTime(LocalDateTime.of(1994, 1, 1, 0, 0)),
++                    FlightMetadata.optimizerValue(date, 0));
++
++            ts.allocateNew(1);
++            LocalDateTime t = LocalDateTime.of(1969, 12, 31, 23, 59, 58);
++            ts.set(0, -2_000_000L);
++            ts.setValueCount(1);
++            Assertions.assertEquals((double) Utils.getLongFromDateTime(t), FlightMetadata.optimizerValue(ts, 0));
++
++            bigint.allocateNew(1);
++            bigint.set(0, -42L);
++            bigint.setValueCount(1);
++            Assertions.assertEquals(-42.0, FlightMetadata.optimizerValue(bigint, 0));
++
++            ubigint.allocateNew(1);
++            ubigint.set(0, -1L);
++            ubigint.setValueCount(1);
++            Assertions.assertEquals(18446744073709551615.0, FlightMetadata.optimizerValue(ubigint, 0));
++
++            decimal.allocateNew(1);
++            decimal.set(0, new BigDecimal("1234.56"));
++            decimal.setValueCount(1);
++            Assertions.assertEquals(1234.56, FlightMetadata.optimizerValue(decimal, 0));
++
++            text.allocateNew(1);
++            text.set(0, "x".getBytes(StandardCharsets.UTF_8));
++            text.setValueCount(1);
++            Assertions.assertNull(FlightMetadata.optimizerValue(text, 0));
++        }
++    }
++}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
-index 00000000..858e5894
+index 00000000..8e366765
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,112 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,6 +165,8 @@ index 00000000..858e5894
 +        Assertions.assertEquals(FlightProperties.NestedTypes.NATIVE, p.getNestedTypes());
 +        Assertions.assertTrue(p.isFilterPushdown());
 +        Assertions.assertTrue(p.isLimitPushdown());
++        Assertions.assertTrue(p.isColumnStats());
++        Assertions.assertFalse(props("flight.uri", "grpc://h1:8815", "flight.column_stats", "false").isColumnStats());
 +        Assertions.assertEquals(ImmutableMap.of("x-flight-result-mode", "partial", "x-flight-location-failover", "1"),
 +                p.getCallHeaders());
 +    }
@@ -104,6 +192,8 @@ index 00000000..858e5894
 +                () -> props("flight.uri", "grpc://h:1", "flight.unknown", "x"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
 +                () -> props("flight.uri", "grpc://h:1", "flight.converted_types", "json"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.column_stats", "maybe"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
 +                () -> props("flight.uri", "grpc://h:1", "flight.header.authorization", "x"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
@@ -550,10 +640,10 @@ index 00000000..b6805cf4
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..0e8ad998
+index 00000000..031d14eb
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,132 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -575,6 +665,7 @@ index 00000000..0e8ad998
 +import org.apache.arrow.flight.FlightInfo;
 +import org.apache.arrow.flight.Location;
 +import org.apache.arrow.flight.Ticket;
++import org.apache.arrow.vector.FieldVector;
 +import org.apache.arrow.vector.types.FloatingPointPrecision;
 +import org.apache.arrow.vector.types.pojo.ArrowType;
 +import org.apache.arrow.vector.types.pojo.Field;
@@ -586,11 +677,14 @@ index 00000000..0e8ad998
 +import java.util.Collections;
 +import java.util.List;
 +import java.util.concurrent.atomic.AtomicInteger;
++import java.util.function.BiFunction;
 +
 +/**
 + * Flight SQL metadata client without a server: one schema {@code s1} with tables {@code t1(id INT, k VARCHAR,
 + * price FLOAT)} ({@link #ROW_COUNT} rows) and {@code t2} (same columns, {@link #BIG_ROW_COUNT} rows); every planned
-+ * query gets two endpoints. The planned SQL and the number of count queries are recorded.
++ * query gets two endpoints. The planned SQL and the number of count queries are recorded. Min/max queries answer
++ * for {@code id} only (the one column with a range): t1 1..{@link #ROW_COUNT}, t2 1..{@link #BIG_ROW_COUNT}, split
++ * over two endpoint rows.
 + */
 +public class MockedFlightSqlMetadataClient extends FlightSqlMetadataClient {
 +    public static final String SCHEMA = "s1";
@@ -602,6 +696,7 @@ index 00000000..0e8ad998
 +
 +    private final List<String> executed = Collections.synchronizedList(new ArrayList<>());
 +    private final AtomicInteger countQueries = new AtomicInteger();
++    private final List<String> statsQueries = Collections.synchronizedList(new ArrayList<>());
 +
 +    public MockedFlightSqlMetadataClient(FlightProperties props) {
 +        super(props);
@@ -648,6 +743,20 @@ index 00000000..0e8ad998
 +    public long querySumOfLong(String sql) {
 +        countQueries.incrementAndGet();
 +        return rowCountOf(sql);
++    }
++
++    @Override
++    public List<Object[]> queryRows(String sql, BiFunction<FieldVector, Integer, Object> mapper) {
++        statsQueries.add(sql);
++        double max = rowCountOf(sql);
++        // one row per endpoint, as in result mode partial; the second endpoint has no rows for t1
++        return sql.contains("\"" + BIG_TABLE + "\"")
++                ? ImmutableList.of(new Object[] {1.0, max / 2}, new Object[] {max / 2 + 1, max})
++                : ImmutableList.of(new Object[] {1.0, max}, new Object[] {null, null});
++    }
++
++    public List<String> getStatsQueries() {
++        return ImmutableList.copyOf(statsQueries);
 +    }
 +
 +    private static long rowCountOf(String sql) {
@@ -747,10 +856,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..6cac83e7
+index 00000000..46b0fe2c
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,276 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -779,11 +888,14 @@ index 00000000..6cac83e7
 +import org.junit.jupiter.api.Test;
 +
 +import java.util.HashMap;
++import java.util.List;
 +import java.util.Map;
++import java.util.regex.Matcher;
++import java.util.regex.Pattern;
 +
 +/**
 + * Plans of Flight scans: the REMOTE SQL in EXPLAIN for projection, filters, LIMIT and aggregation pushdown; row-count
-+ * statistics in the plan (t1: 1000 rows, t2: 10M rows).
++ * statistics in the plan (t1: 1000 rows, t2: 10M rows; column {@code id} 1..row count).
 + */
 +public class FlightScanPlanTest extends PlanTestBase {
 +    private static final String CATALOG = "flight0";
@@ -913,6 +1025,59 @@ index 00000000..6cac83e7
 +        assertNotContains(plan, "cardinality: -1");
 +        plan = getCostExplain("select id, k from " + T1);
 +        assertContains(plan, "cardinality: " + MockedFlightSqlMetadataClient.ROW_COUNT);
++    }
++
++    private static long flightScanCardinality(String costPlan) {
++        Matcher m = Pattern.compile("FlightScanNode[\\s\\S]*?cardinality: (\\d+)").matcher(costPlan);
++        Assertions.assertTrue(m.find(), costPlan);
++        return Long.parseLong(m.group(1));
++    }
++
++    @Test
++    public void testColumnRangeSelectivity() throws Exception {
++        // id of t2 spans 1..10M (min/max from the server), so id <= 1M keeps about a tenth of the rows; without
++        // column statistics the optimizer's default selectivity applies
++        String plan = getCostExplain("select id, k from " + T2 + " where id <= 1000000");
++        long card = flightScanCardinality(plan);
++        Assertions.assertTrue(card > 500_000 && card < 2_000_000, plan);
++        // a range outside the column's values
++        plan = getCostExplain("select id, k from " + T2 + " where id > 20000000");
++        Assertions.assertTrue(flightScanCardinality(plan) <= 1000, plan);
++    }
++
++    @Test
++    public void testColumnRanges() {
++        FlightProperties props = new FlightProperties(Map.of("type", "flight",
++                FlightProperties.URI, MockedFlightSqlMetadataClient.LOCATION));
++        MockedFlightSqlMetadataClient client = new MockedFlightSqlMetadataClient(props);
++        FlightMetadata metadata = new FlightMetadata(CATALOG, props, client);
++        FlightTable t2 = (FlightTable) metadata.getTable(connectContext, "s1", "t2");
++        // min of the endpoints' minima, max of their maxima; k (VARCHAR) and price (FLOAT) get no range
++        Map<String, double[]> ranges = metadata.getColumnRanges(t2);
++        Assertions.assertEquals(List.of("id"), List.copyOf(ranges.keySet()));
++        Assertions.assertArrayEquals(new double[] {1, MockedFlightSqlMetadataClient.BIG_ROW_COUNT}, ranges.get("id"));
++        Assertions.assertEquals(List.of("SELECT min(\"id\"), max(\"id\") FROM \"s1\".\"t2\""),
++                client.getStatsQueries());
++        // t1: the second endpoint returns NULLs
++        FlightTable t1 = (FlightTable) metadata.getTable(connectContext, "s1", "t1");
++        Assertions.assertArrayEquals(new double[] {1, MockedFlightSqlMetadataClient.ROW_COUNT},
++                metadata.getColumnRanges(t1).get("id"));
++        // cached
++        metadata.clear();
++        metadata.getColumnRanges(t2);
++        Assertions.assertEquals(2, client.getStatsQueries().size());
++    }
++
++    @Test
++    public void testColumnStatsOff() {
++        FlightProperties props = new FlightProperties(Map.of("type", "flight",
++                FlightProperties.URI, MockedFlightSqlMetadataClient.LOCATION, FlightProperties.COLUMN_STATS, "false"));
++        MockedFlightSqlMetadataClient client = new MockedFlightSqlMetadataClient(props);
++        FlightMetadata metadata = new FlightMetadata(CATALOG, props, client);
++        FlightTable t2 = (FlightTable) metadata.getTable(connectContext, "s1", "t2");
++        Assertions.assertTrue(metadata.getColumnRanges(t2).isEmpty());
++        Assertions.assertEquals(MockedFlightSqlMetadataClient.BIG_ROW_COUNT, metadata.getRowCount(t2));
++        Assertions.assertTrue(client.getStatsQueries().isEmpty());
 +    }
 +
 +    @Test

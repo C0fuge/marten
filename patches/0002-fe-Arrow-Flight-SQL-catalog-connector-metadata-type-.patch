@@ -14,20 +14,20 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../starrocks/common/util/PrintableMap.java   |   2 +
  .../common/util/SqlCredentialRedactor.java    |   2 +
  .../starrocks/connector/ConnectorType.java    |   3 +
- .../flight/FlightAggregationPushdown.java     |  83 ++++
+ .../flight/FlightAggregationPushdown.java     |  83 +++
  .../connector/flight/FlightConnector.java     |  57 +++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
- .../connector/flight/FlightMetadata.java      | 334 +++++++++++++
- .../connector/flight/FlightProperties.java    | 330 +++++++++++++
+ .../connector/flight/FlightMetadata.java      | 471 ++++++++++++++++++
+ .../connector/flight/FlightProperties.java    | 338 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
- .../flight/FlightSqlMetadataClient.java       | 444 +++++++++++++++++
- .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++++
+ .../flight/FlightSqlMetadataClient.java       | 462 +++++++++++++++++
+ .../connector/flight/FlightSqlRenderer.java   | 445 +++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 257 ++++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2159 insertions(+), 3 deletions(-)
+ 18 files changed, 2322 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -402,10 +402,10 @@ index 00000000..7553542b
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
 new file mode 100644
-index 00000000..8c01740c
+index 00000000..93ff480a
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,471 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -442,6 +442,7 @@ index 00000000..8c01740c
 +import com.starrocks.connector.statistics.ConnectorNdvEstimator;
 +import com.starrocks.qe.ConnectContext;
 +import com.starrocks.sql.optimizer.OptimizerContext;
++import com.starrocks.sql.optimizer.Utils;
 +import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
 +import com.starrocks.sql.optimizer.statistics.ColumnStatistic;
@@ -450,13 +451,21 @@ index 00000000..8c01740c
 +import org.apache.arrow.flight.FlightEndpoint;
 +import org.apache.arrow.flight.FlightInfo;
 +import org.apache.arrow.flight.Location;
++import org.apache.arrow.vector.DateDayVector;
++import org.apache.arrow.vector.DateMilliVector;
++import org.apache.arrow.vector.FieldVector;
++import org.apache.arrow.vector.TimeStampVector;
++import org.apache.arrow.vector.UInt8Vector;
 +import org.apache.arrow.vector.types.pojo.ArrowType;
 +import org.apache.arrow.vector.types.pojo.Field;
 +import org.apache.logging.log4j.LogManager;
 +import org.apache.logging.log4j.Logger;
 +
++import java.time.LocalDate;
++import java.time.LocalDateTime;
 +import java.util.ArrayList;
 +import java.util.Collections;
++import java.util.HashMap;
 +import java.util.HashSet;
 +import java.util.List;
 +import java.util.Locale;
@@ -476,8 +485,9 @@ index 00000000..8c01740c
 +
 +/**
 + * Metadata of an Arrow Flight SQL catalog: databases are the server's db schemas, tables its tables.
-+ * Lookups are cached for {@code flight.metadata_cache_ttl_s}; row counts are loaded asynchronously
-+ * (planning never waits for them) and kept for {@code flight.stats_cache_ttl_s}.
++ * Lookups are cached for {@code flight.metadata_cache_ttl_s}; row counts and column min/max
++ * ({@code flight.column_stats}) are loaded asynchronously (planning waits for them only briefly, once per load) and
++ * kept for {@code flight.stats_cache_ttl_s}.
 + */
 +public class FlightMetadata implements ConnectorMetadata {
 +    private static final Logger LOG = LogManager.getLogger(FlightMetadata.class);
@@ -487,6 +497,8 @@ index 00000000..8c01740c
 +     * never be waited for again.
 +     */
 +    static final long ROW_COUNT_WAIT_MS = 250;
++    /** At most this many columns per table get min/max (one {@code SELECT min(c), max(c), ...} per table). */
++    static final int MAX_RANGE_COLUMNS = 100;
 +    private static final ExecutorService STATS_EXECUTOR = Executors.newFixedThreadPool(4,
 +            new ThreadFactoryBuilder().setDaemon(true).setNameFormat("flight-row-count-%d").build());
 +
@@ -498,8 +510,10 @@ index 00000000..8c01740c
 +    private final Cache<List<String>, Optional<FlightTable>> tables;
 +    private final Map<String, Database> databases = new java.util.concurrent.ConcurrentHashMap<>();
 +    private final AsyncLoadingCache<List<String>, Long> rowCounts;
-+    /** Row-count loads somebody already waited for (weak: a finished load is dropped with its cache entry). */
-+    private final Set<CompletableFuture<Long>> waitedLoads =
++    /** Column name to {min, max} as optimizer doubles (dates and datetimes: epoch seconds). */
++    private final AsyncLoadingCache<List<String>, Map<String, double[]>> columnRanges;
++    /** Statistics loads somebody already waited for (weak: a finished load is dropped with its cache entry). */
++    private final Set<CompletableFuture<?>> waitedLoads =
 +            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 +
 +    public FlightMetadata(String catalogName, FlightProperties props, FlightSqlMetadataClient client) {
@@ -517,6 +531,12 @@ index 00000000..8c01740c
 +                .expireAfterWrite(statsTtl * 6, TimeUnit.SECONDS)
 +                .executor(STATS_EXECUTOR)
 +                .buildAsync(this::loadRowCount);
++        this.columnRanges = Caffeine.newBuilder()
++                .maximumSize(100_000)
++                .refreshAfterWrite(statsTtl, TimeUnit.SECONDS)
++                .expireAfterWrite(statsTtl * 6, TimeUnit.SECONDS)
++                .executor(STATS_EXECUTOR)
++                .buildAsync(this::loadColumnRanges);
 +    }
 +
 +    public String getCatalogName() {
@@ -573,8 +593,11 @@ index 00000000..8c01740c
 +        }
 +        Table table = tables.get(key, k -> loadTable(dbName, tblName)).orElse(null);
 +        if (table != null) {
-+            // start the row count now, so it is usually known when the optimizer asks for statistics
++            // start the statistics now, so they are usually known when the optimizer asks for them
 +            rowCounts.get(key);
++            if (props.isColumnStats()) {
++                columnRanges.get(key);
++            }
 +        }
 +        return table;
 +    }
@@ -664,42 +687,155 @@ index 00000000..8c01740c
 +        }
 +    }
 +
++    /** Columns that get min/max: exact comparisons on the server (filterable) and a numeric or date range. */
++    static List<Column> rangeColumns(FlightTable table) {
++        List<Column> result = new ArrayList<>();
++        for (Column c : table.getFullSchema()) {
++            Type t = c.getType();
++            if (table.isFilterable(c.getName()) && (t.isNumericType() || t.isDateType())) {
++                result.add(c);
++                if (result.size() == MAX_RANGE_COLUMNS) {
++                    break;
++                }
++            }
++        }
++        return result;
++    }
++
++    private Map<String, double[]> loadColumnRanges(List<String> key) {
++        try {
++            Optional<FlightTable> table = props.getMetadataCacheTtlSec() == 0 ? loadTable(key.get(0), key.get(1))
++                    : tables.get(key, k -> loadTable(key.get(0), key.get(1)));
++            List<Column> columns = table.isPresent() ? rangeColumns(table.get()) : Collections.emptyList();
++            if (columns.isEmpty()) {
++                return Collections.emptyMap();
++            }
++            StringBuilder sql = new StringBuilder("SELECT ");
++            for (int i = 0; i < columns.size(); i++) {
++                String c = FlightSqlRenderer.quoteIdent(columns.get(i).getName());
++                sql.append(i == 0 ? "" : ", ").append("min(").append(c).append("), max(").append(c).append(')');
++            }
++            sql.append(" FROM ").append(FlightSqlRenderer.tableRef(key.get(0), key.get(1)));
++            // partial mode: one row per endpoint
++            List<Object[]> rows = client.queryRows(sql.toString(), FlightMetadata::optimizerValue);
++            Map<String, double[]> result = new HashMap<>();
++            for (int i = 0; i < columns.size(); i++) {
++                double min = Double.NaN;
++                double max = Double.NaN;
++                for (Object[] row : rows) {
++                    if (row.length != columns.size() * 2) {
++                        throw new StarRocksConnectorException("unexpected result width %d", row.length);
++                    }
++                    if (row[2 * i] instanceof Double) {
++                        min = Double.isNaN(min) ? (Double) row[2 * i] : Math.min(min, (Double) row[2 * i]);
++                    }
++                    if (row[2 * i + 1] instanceof Double) {
++                        max = Double.isNaN(max) ? (Double) row[2 * i + 1] : Math.max(max, (Double) row[2 * i + 1]);
++                    }
++                }
++                if (!Double.isNaN(min) && !Double.isNaN(max) && min <= max) {
++                    result.put(columns.get(i).getName(), new double[] {min, max});
++                }
++            }
++            return result;
++        } catch (Exception e) {
++            LOG.warn("Flight catalog {}: column min/max of {}.{} failed: {}", catalogName, key.get(0), key.get(1),
++                    e.getMessage());
++            return Collections.emptyMap();
++        }
++    }
++
++    /** A min/max result value as the optimizer stores it (dates and datetimes: epoch seconds), or null. */
++    static Object optimizerValue(FieldVector v, int row) {
++        if (v instanceof DateDayVector) {
++            LocalDate d = LocalDate.ofEpochDay(((DateDayVector) v).get(row));
++            return (double) Utils.getLongFromDateTime(d.atStartOfDay());
++        }
++        if (v instanceof UInt8Vector) {
++            return ((UInt8Vector) v).getObjectNoOverflow(row).doubleValue();
++        }
++        if (v instanceof TimeStampVector || v instanceof DateMilliVector) {
++            Object o = v.getObject(row);
++            return o instanceof LocalDateTime ? (double) Utils.getLongFromDateTime((LocalDateTime) o) : null;
++        }
++        Object o = v.getObject(row);
++        return o instanceof Number ? ((Number) o).doubleValue() : null;
++    }
++
 +    /**
-+     * Cached row count, or -1 if not known yet. The first caller of a load waits for it at most
-+     * {@link #ROW_COUNT_WAIT_MS} (the server answers count(*) from Parquet footers); later callers do not wait, and
-+     * the load goes on in the background.
++     * Value of a statistics load, or null if not known yet. The first caller of a load waits for it until
++     * {@code deadlineNanos} (the server answers count(*), min and max from Parquet footers); later callers do not
++     * wait, and the load goes on in the background.
 +     */
-+    public long getRowCount(FlightTable table) {
-+        CompletableFuture<Long> f = rowCounts.get(ImmutableList.of(table.getCatalogDBName(), table.getCatalogTableName()));
-+        Long v = f.getNow(null);
++    private <T> T getBounded(CompletableFuture<T> f, long deadlineNanos) {
++        T v = f.getNow(null);
 +        if (v == null && waitedLoads.add(f)) {
 +            try {
-+                v = f.get(ROW_COUNT_WAIT_MS, TimeUnit.MILLISECONDS);
++                v = f.get(Math.max(0, deadlineNanos - System.nanoTime()), TimeUnit.NANOSECONDS);
 +            } catch (InterruptedException e) {
 +                Thread.currentThread().interrupt();
 +            } catch (ExecutionException | TimeoutException e) {
 +                // not known yet
 +            }
 +        }
++        return v;
++    }
++
++    /** Cached row count, or -1 if not known yet (bounded wait, see {@link #getBounded}). */
++    public long getRowCount(FlightTable table) {
++        return getRowCount(table, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ROW_COUNT_WAIT_MS));
++    }
++
++    private long getRowCount(FlightTable table, long deadlineNanos) {
++        Long v = getBounded(rowCounts.get(key(table)), deadlineNanos);
 +        return v == null ? -1 : v;
++    }
++
++    /** Cached column min/max (column name to {min, max}); empty if not known (yet) or disabled. */
++    public Map<String, double[]> getColumnRanges(FlightTable table) {
++        return getColumnRanges(table, System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ROW_COUNT_WAIT_MS));
++    }
++
++    private Map<String, double[]> getColumnRanges(FlightTable table, long deadlineNanos) {
++        if (!props.isColumnStats()) {
++            return Collections.emptyMap();
++        }
++        Map<String, double[]> v = getBounded(columnRanges.get(key(table)), deadlineNanos);
++        return v == null ? Collections.emptyMap() : v;
++    }
++
++    private static List<String> key(FlightTable table) {
++        return ImmutableList.of(table.getCatalogDBName(), table.getCatalogTableName());
 +    }
 +
 +    @Override
 +    public Statistics getTableStatistics(OptimizerContext session, Table table, Map<ColumnRefOperator, Column> columns,
 +                                         List<PartitionKey> partitionKeys, ScalarOperator predicate, long limit,
 +                                         TvrVersionRange versionRange) {
-+        long known = getRowCount((FlightTable) table);
++        // row count and column min/max are loaded in parallel; together they wait at most ROW_COUNT_WAIT_MS
++        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ROW_COUNT_WAIT_MS);
++        long known = getRowCount((FlightTable) table, deadline);
++        Map<String, double[]> ranges = getColumnRanges((FlightTable) table, deadline);
 +        long rowCount = known >= 0 ? known : Config.default_statistics_output_row_count;
 +        Statistics.Builder builder = Statistics.builder();
 +        if (known >= 0) {
 +            builder.setStatsSource(Statistics.StatsSource.TABLE_METADATA);
 +        }
 +        builder.setOutputRowCount(Math.max(1, rowCount));
++        // only columns with a known min/max get statistics; the others stay UNKNOWN (as without this connector's
++        // statistics), the optimizer then uses its defaults for them
 +        for (Map.Entry<ColumnRefOperator, Column> entry : columns.entrySet()) {
++            double[] range = ranges.get(entry.getValue().getName());
++            if (range == null) {
++                builder.addColumnStatistic(entry.getKey(), ColumnStatistic.unknown());
++                continue;
++            }
 +            ConnectorNdvEstimator.TypeCategory cat = ConnectorNdvEstimator.fromStarRocksType(entry.getValue().getType());
-+            double ndv = Math.max(1.0, Math.min(ConnectorNdvEstimator.typeNdv(cat, rowCount), rowCount));
++            double ndv = ConnectorNdvEstimator.estimate(cat, range[0], range[1], -1L, 0L, rowCount);
 +            builder.addColumnStatistic(entry.getKey(), ColumnStatistic.builder()
-+                    .setDistinctValuesCount(ndv)
++                    .setMinValue(range[0])
++                    .setMaxValue(range[1])
++                    .setDistinctValuesCount(Math.max(1.0, Math.min(ndv, rowCount)))
 +                    .setAverageRowSize(entry.getValue().getType().getTypeSize())
 +                    .setNullsFraction(0)
 +                    .setType(ColumnStatistic.StatisticType.ESTIMATE)
@@ -714,6 +850,7 @@ index 00000000..8c01740c
 +        tableNames.invalidate(srDbName);
 +        dbNames.invalidateAll();
 +        rowCounts.synchronous().invalidate(ImmutableList.of(srDbName, table.getCatalogTableName()));
++        columnRanges.synchronous().invalidate(ImmutableList.of(srDbName, table.getCatalogTableName()));
 +    }
 +
 +    /**
@@ -742,10 +879,10 @@ index 00000000..8c01740c
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
 new file mode 100644
-index 00000000..debcce43
+index 00000000..68bf3d6b
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,338 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -804,6 +941,7 @@ index 00000000..debcce43
 +    public static final String PUSHDOWN_AGGREGATE = "flight.pushdown.aggregate";
 +    public static final String METADATA_CACHE_TTL_S = "flight.metadata_cache_ttl_s";
 +    public static final String STATS_CACHE_TTL_S = "flight.stats_cache_ttl_s";
++    public static final String COLUMN_STATS = "flight.column_stats";
 +
 +    /** Property keys whose values are secrets (masked in SHOW CREATE CATALOG, logs and the audit log). */
 +    public static final Set<String> SENSITIVE_KEYS = ImmutableSet.of(TOKEN, PASSWORD);
@@ -816,7 +954,7 @@ index 00000000..debcce43
 +    private static final Set<String> KNOWN = ImmutableSet.of(URI, TOKEN, USER, PASSWORD, TLS_VERIFY, TLS_CA_FILE,
 +            TLS_OVERRIDE_HOSTNAME, RESULT_MODE, LOCATION_FAILOVER, CONNECT_TIMEOUT_MS, KEEPALIVE_MS, RPC_TIMEOUT_MS,
 +            CATALOG, NESTED_TYPES, CONVERTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE, METADATA_CACHE_TTL_S,
-+            STATS_CACHE_TTL_S, "type");
++            STATS_CACHE_TTL_S, COLUMN_STATS, "type");
 +
 +    private final List<URI> uris;
 +    private final String token;
@@ -839,6 +977,7 @@ index 00000000..debcce43
 +    private final boolean aggregatePushdown;
 +    private final long metadataCacheTtlSec;
 +    private final long statsCacheTtlSec;
++    private final boolean columnStats;
 +
 +    public FlightProperties(Map<String, String> props) {
 +        String uriList = props.get(URI);
@@ -917,6 +1056,7 @@ index 00000000..debcce43
 +        this.aggregatePushdown = parseBool(props, PUSHDOWN_AGGREGATE, true);
 +        this.metadataCacheTtlSec = parseLong(props, METADATA_CACHE_TTL_S, 60, 0, 86_400 * 30L);
 +        this.statsCacheTtlSec = parseLong(props, STATS_CACHE_TTL_S, 600, 0, 86_400 * 30L);
++        this.columnStats = parseBool(props, COLUMN_STATS, true);
 +    }
 +
 +    private static String emptyToNull(String s) {
@@ -1072,6 +1212,11 @@ index 00000000..debcce43
 +        return statsCacheTtlSec;
 +    }
 +
++    /** True if per-column min/max ({@code SELECT min(c), max(c)}) are loaded for the CBO. */
++    public boolean isColumnStats() {
++        return columnStats;
++    }
++
 +    public boolean isTls() {
 +        return uris.get(0).getScheme().equalsIgnoreCase("grpc+tls");
 +    }
@@ -1148,10 +1293,10 @@ index 00000000..75bee134
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..15722fff
+index 00000000..f669a9db
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
-@@ -0,0 +1,444 @@
+@@ -0,0 +1,462 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1562,6 +1707,24 @@ index 00000000..15722fff
 +                sum += p;
 +            }
 +            return sum;
++        });
++    }
++
++    /**
++     * Runs a query and returns the rows of all endpoints (one row per endpoint for an aggregate in partial mode).
++     * Values are mapped by {@code mapper(vector, row)}.
++     */
++    public List<Object[]> queryRows(String sql, BiFunction<FieldVector, Integer, Object> mapper) {
++        return withFailover("statistics query", (c, opts) -> {
++            FlightInfo info = c.sql.execute(sql, opts);
++            return readRows(c, info, (root, row) -> {
++                List<FieldVector> vectors = root.getFieldVectors();
++                Object[] values = new Object[vectors.size()];
++                for (int i = 0; i < values.length; i++) {
++                    values[i] = vectors.get(i).isNull(row) ? null : mapper.apply(vectors.get(i), row);
++                }
++                return values;
++            });
 +        });
 +    }
 +

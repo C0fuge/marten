@@ -26,10 +26,10 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
- .../statistics/StatisticsCalculator.java      |  37 +++
+ .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |   4 +
  .../sql/plan/PlanFragmentBuilder.java         |  40 +++
- 21 files changed, 919 insertions(+), 1 deletion(-)
+ 21 files changed, 935 insertions(+), 1 deletion(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -1119,7 +1119,7 @@ index 6cdd08ad..ea576bba 100644
              OperatorType.LOGICAL_ES_SCAN,
              OperatorType.LOGICAL_META_SCAN,
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/statistics/StatisticsCalculator.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/statistics/StatisticsCalculator.java
-index cdc07dca..d4e1f22b 100644
+index cdc07dca..fd9abebe 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/statistics/StatisticsCalculator.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/statistics/StatisticsCalculator.java
 @@ -87,6 +87,7 @@ import com.starrocks.sql.optimizer.operator.logical.LogicalIcebergScanOperator;
@@ -1138,7 +1138,7 @@ index cdc07dca..d4e1f22b 100644
  import com.starrocks.sql.optimizer.operator.physical.PhysicalKuduScanOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalLimitOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalMergeJoinOperator;
-@@ -815,6 +817,41 @@ public class StatisticsCalculator extends OperatorVisitor<Void, ExpressionContex
+@@ -815,6 +817,57 @@ public class StatisticsCalculator extends OperatorVisitor<Void, ExpressionContex
          return computeNormalExternalTableScanNode(node, context, table, columnRefOperatorColumnMap, rowCount, source);
      }
  
@@ -1159,8 +1159,9 @@ index cdc07dca..d4e1f22b 100644
 +                                       com.starrocks.connector.flight.FlightAggregationPushdown aggregation) {
 +        long rowCount = Config.default_statistics_output_row_count;
 +        Statistics.StatsSource source = Statistics.StatsSource.NONE;
++        Statistics connectorStats = null;
 +        try {
-+            Statistics connectorStats = GlobalStateMgr.getCurrentState().getMetadataMgr().getTableStatistics(
++            connectorStats = GlobalStateMgr.getCurrentState().getMetadataMgr().getTableStatistics(
 +                    optimizerContext, table.getCatalogName(), table, columnRefOperatorColumnMap,
 +                    Collections.emptyList(), null);
 +            if (connectorStats != null && !Double.isNaN(connectorStats.getOutputRowCount())) {
@@ -1173,8 +1174,23 @@ index cdc07dca..d4e1f22b 100644
 +        if (aggregation != null) {
 +            // partial groups returned by the server (one set per endpoint)
 +            rowCount = aggregation.getGroupBy().isEmpty() ? 1 : Math.max(1, rowCount / 10);
++            return computeNormalExternalTableScanNode(node, context, table, columnRefOperatorColumnMap, rowCount,
++                    source);
 +        }
-+        return computeNormalExternalTableScanNode(node, context, table, columnRefOperatorColumnMap, rowCount, source);
++        Statistics.Builder builder =
++                StatisticsCalcUtils.estimateScanColumns(table, columnRefOperatorColumnMap, optimizerContext);
++        if (connectorStats != null) {
++            // column min/max from the server (flight.column_stats); the predicate is estimated on them below
++            for (Map.Entry<ColumnRefOperator, ColumnStatistic> e : connectorStats.getColumnStatistics().entrySet()) {
++                if (!e.getValue().isUnknown() && columnRefOperatorColumnMap.containsKey(e.getKey())) {
++                    builder.addColumnStatistic(e.getKey(), e.getValue());
++                }
++            }
++        }
++        builder.setOutputRowCount(rowCount);
++        builder.setStatsSource(source);
++        context.setStatistics(builder.build());
++        return visitOperator(node, context);
 +    }
 +
      public Void visitLogicalHudiScan(LogicalHudiScanOperator node, ExpressionContext context) {
