@@ -6,7 +6,6 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightColumnStatsTest.java         |  78 +++++
  .../flight/FlightPropertiesTest.java          | 112 +++++++
  .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++
  .../flight/FlightSqlRendererTest.java         | 123 ++++++++
@@ -14,8 +13,7 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
  .../flight/MockedFlightSqlMetadataClient.java | 132 ++++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 +++++
  .../sql/plan/FlightScanPlanTest.java          | 297 ++++++++++++++++++
- 8 files changed, 1085 insertions(+)
- create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
+ 7 files changed, 1007 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -24,90 +22,6 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRuleTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 
-diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
-new file mode 100644
-index 00000000..2d97a48c
---- /dev/null
-+++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightColumnStatsTest.java
-@@ -0,0 +1,78 @@
-+// Copyright 2021-present StarRocks, Inc. All rights reserved.
-+//
-+// Licensed under the Apache License, Version 2.0 (the "License");
-+// you may not use this file except in compliance with the License.
-+// You may obtain a copy of the License at
-+//
-+//     https://www.apache.org/licenses/LICENSE-2.0
-+//
-+// Unless required by applicable law or agreed to in writing, software
-+// distributed under the License is distributed on an "AS IS" BASIS,
-+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+// See the License for the specific language governing permissions and
-+// limitations under the License.
-+
-+package com.starrocks.connector.flight;
-+
-+import com.starrocks.sql.optimizer.Utils;
-+import org.apache.arrow.memory.BufferAllocator;
-+import org.apache.arrow.memory.RootAllocator;
-+import org.apache.arrow.vector.BigIntVector;
-+import org.apache.arrow.vector.DateDayVector;
-+import org.apache.arrow.vector.DecimalVector;
-+import org.apache.arrow.vector.TimeStampMicroVector;
-+import org.apache.arrow.vector.UInt8Vector;
-+import org.apache.arrow.vector.VarCharVector;
-+import org.junit.jupiter.api.Assertions;
-+import org.junit.jupiter.api.Test;
-+
-+import java.math.BigDecimal;
-+import java.nio.charset.StandardCharsets;
-+import java.time.LocalDate;
-+import java.time.LocalDateTime;
-+
-+/** Min/max result values as optimizer doubles ({@code flight.column_stats}). */
-+public class FlightColumnStatsTest {
-+    @Test
-+    public void testOptimizerValues() {
-+        try (BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
-+                DateDayVector date = new DateDayVector("d", allocator);
-+                TimeStampMicroVector ts = new TimeStampMicroVector("ts", allocator);
-+                BigIntVector bigint = new BigIntVector("b", allocator);
-+                UInt8Vector ubigint = new UInt8Vector("u", allocator);
-+                DecimalVector decimal = new DecimalVector("dec", allocator, 15, 2);
-+                VarCharVector text = new VarCharVector("s", allocator)) {
-+            date.allocateNew(1);
-+            date.set(0, (int) LocalDate.of(1994, 1, 1).toEpochDay());
-+            date.setValueCount(1);
-+            Assertions.assertEquals((double) Utils.getLongFromDateTime(LocalDateTime.of(1994, 1, 1, 0, 0)),
-+                    FlightMetadata.optimizerValue(date, 0));
-+
-+            ts.allocateNew(1);
-+            LocalDateTime t = LocalDateTime.of(1969, 12, 31, 23, 59, 58);
-+            ts.set(0, -2_000_000L);
-+            ts.setValueCount(1);
-+            Assertions.assertEquals((double) Utils.getLongFromDateTime(t), FlightMetadata.optimizerValue(ts, 0));
-+
-+            bigint.allocateNew(1);
-+            bigint.set(0, -42L);
-+            bigint.setValueCount(1);
-+            Assertions.assertEquals(-42.0, FlightMetadata.optimizerValue(bigint, 0));
-+
-+            ubigint.allocateNew(1);
-+            ubigint.set(0, -1L);
-+            ubigint.setValueCount(1);
-+            Assertions.assertEquals(18446744073709551615.0, FlightMetadata.optimizerValue(ubigint, 0));
-+
-+            decimal.allocateNew(1);
-+            decimal.set(0, new BigDecimal("1234.56"));
-+            decimal.setValueCount(1);
-+            Assertions.assertEquals(1234.56, FlightMetadata.optimizerValue(decimal, 0));
-+
-+            text.allocateNew(1);
-+            text.set(0, "x".getBytes(StandardCharsets.UTF_8));
-+            text.setValueCount(1);
-+            Assertions.assertNull(FlightMetadata.optimizerValue(text, 0));
-+        }
-+    }
-+}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
 index 00000000..8e366765
