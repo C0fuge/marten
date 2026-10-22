@@ -223,7 +223,7 @@ must stay `httpfs.duckdb_extension`: DuckDB derives the entry point from it — 
   every query (`removeQueryMetadata` / cache eviction); `FlightMetadata` is the catalog's only metadata object and
   its `clear()` invalidated the row-count (and schema) caches, so every plan started cold and used
   `default_statistics_output_row_count` = 1 for every Flight table. No warning, because nothing failed. Fixed in
-  0002 (`clear()` keeps the caches; the row count is started on `getTable` and a cold entry is waited for ≤ 1 s).
+  0002 (`clear()` keeps the caches; the row count is started on `getTable` and the first caller of a cold load waits ≤ 250 ms, later callers never wait — a 1 s wait on every call failed m4 run 39732232288 check 6 with `planner use long time 3005 ms in memo phase`).
   `cardinality: -1` / `stats source: NONE` in EXPLAIN COSTS was a separate display gap: `PlanFragmentBuilder` did
   not call `computeStatistics` for the FlightScanNode (0004). Plan tests in 0006; m4 check 4 now asserts real row
   counts for the 6 Flight scans of q05 after a query.

@@ -360,7 +360,8 @@ the BE rebuild nearly in full. So **all Thrift changes land in one commit at the
 ### 2.5 Statistics for the CBO
 - Row count comes from an async Caffeine cache (the JDBC pattern), filled with
   `SELECT count(*) FROM t`, which our server answers from footers. The load starts when the table is resolved
-  (`getTable`); a cold entry is waited for at most 1 s while planning (M4 fix 2026-10-22), otherwise the plan
+  (`getTable`); the first caller of a cold load waits for it at most 250 ms, later callers never wait (M4 fix 2026-10-22; a 1 s wait
+  repeated per statistics call broke the 3 s memo budget), otherwise the plan
   uses `Config.default_statistics_output_row_count`; a known value is tagged `TABLE_METADATA`.
   `FlightMetadata.clear()` is a no-op: MetadataMgr calls it at the end of every query (query-level metadata), and
   clearing there emptied the row-count cache before every plan (local final check A-1).

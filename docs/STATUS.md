@@ -179,49 +179,20 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
-0b. **Server candidate int4** in `m4-assets`: `arrow-flight-server-1.0.0-int4.jar` (sha256 aabaa550…144f; branch
-   integration-2: int2 fixes + DuckDB **1.4.5** + plugin SPI, S3 and lakeFS as plugins) and `int4-plugins.tar.zst`
-   (sha256 35df1178…d3ae; `plugins/s3`, `plugins/lakefs`, START-NOTES.txt — read it). Differences for m4.yml: the
-   S3 path needs `-Darrowflight.plugins.dir=<dir>/plugins` and the **v1.4.5** httpfs
-   (`http://extensions.duckdb.org/v1.4.5/linux_amd64/httpfs.duckdb_extension.gz`); v1.4.1 extensions make it
-   refuse to start; `flight-server-libs` stays on the classpath; plugins are NOT on the classpath. Add int4 as a
-   selectable server and run all checks against it (it is the release candidate of the server). Add both
-   checksums to SHA256SUMS.
-1a. **Local final check 2026-10-22 FAILED** (`docs/M4-RESULTS.md`, section "local final check"; series
-   `4a9848e-fl598360`, stand server s3p4). Failures to fix, in order:
-   - **(connector, FE) No CBO statistics for Flight tables.** `EXPLAIN COSTS` shows every `FlightScanNode` with
-     `cardinality: -1`, `stats source: NONE`, column stats UNKNOWN, so row count = `default_statistics_output_row_count`
-     (1); q05 builds a PARTITIONED hash join with lineitem as the build side. At SF10 with the stand's BE
-     `mem_limit = 4G` q05/q08/q09/q18/q21 fail `Memory of default_wg exceed limit` (6G: q05/q08/q09 still fail) while
-     the JDBC catalog (TABLE_METADATA counts, broadcast joins) runs q05 fine. No FE warning is logged, so find why
-     `FlightMetadata.getTableStatistics` (0002) / `StatisticsCalculator.computeFlightScanNode` (0004) do not reach
-     the plan (async row-count cache never completed? MetadataMgr routing?). Add a plan test asserting a real
-     cardinality and the broadcast/build-side choice; an SF1 check in m4 can assert `EXPLAIN COSTS` has no
-     `cardinality: -1` for Flight scans.
-   - **(connector, BE) keepalive kills slow streams.** Intermittent `IOError: Flight returned unavailable error,
-     with message: keepalive watchdog timeout … grpc_status 14` (q18 on the 3-node cluster at host load ~20; 3
-     re-runs OK). `grpc.keepalive_timeout_ms` is fixed at 5 s (0003). Consider a longer timeout (e.g. 20 s) or
-     tying it to `flight.keepalive_ms`, so a busy server is not treated as dead mid-stream.
-   - **(server s3p4, not patches — tell the maintainer) silent partial result after losing 2 of 3 cluster
-     members** (B5): the survivor plans lineitem with `records=30126212` of 59986052 and the scan succeeds with a
-     wrong result (also through the Trino plugin); Hazelcast "Promotion commit failed for 47 migrations". Re-check
-     with int2/int4 locally before the release; nothing the connector can detect (FlightInfo is self-consistent).
-   - **(server s3p4) no backup locations** (B2): each endpoint has one location, so a clean stop of a node fails
-     queries for ~12 s; the connector behaves as designed. Re-run B2 against int2/int4 (backup locations) locally.
-   - **(server s3p4) DuckDB fatal error** in the pushed q18 aggregation (`INTERNAL Error: Attempted to dereference
-     unique_ptr that is NULL!`, then `database has been invalidated` until restart); seen once at SF10, not
-     reproduced. For the server maintainer; the connector reported it cleanly.
-   Everything else passed: all produced results equal the SF10 reference and the JDBC bridge (44/44 + 44/44 with
-   more memory / spill), sr-cases 26/26, B1/B3/B4×3/B6/B7, C1/C2/C4/C5 (C3 n/a: s3p4 has no TLS); native is 3×
-   faster than the JDBC bridge (165.9 s vs 497.5 s) and on par with Trino v10 (180.1 s cold). After the connector
-   fixes: a short local re-run of A (q05/q08/q09/q18/q21 at BE 4G) and B2/B5 against the release-candidate server.
-1. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
-   `docs/M4-RESULTS.md`; fix failures in the patches (then FE + BE of the new series, `m4` of the touched checks,
-   refresh the draft). If `bench/reference/sf10` has another layout, adapt `load_ref` in `ci/m4/m4.py`.
-2. After the final check passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false
+1. **Local re-check of the 2026-10-22 failures** (maintainer's stand, short; `docs/LOCAL-FINAL-CHECK.md`), build
+   under test: draft `v4.1.4-flight.0-dryrun` for series `4a9848e-flf35d9a` (A-1 + keepalive fixes):
+   - A: q05/q08/q09/q18/q21 at SF10 with BE `mem_limit = 4G`; `EXPLAIN COSTS <q05>` must show real
+     `cardinality` (lineitem 59986052) for every FlightScanNode and lineitem on the probe side.
+   - q18 on the 3-node cluster under load (keepalive): no `keepalive watchdog timeout`.
+   - B2/B5 against the release-candidate server **int4** (backup locations; partial result after losing 2 of 3
+     members is a server bug, see Open questions).
+   When reported: record in `docs/M4-RESULTS.md`; fix failures in the patches.
+2. After the re-check passes and the maintainer agrees: `release tag=v4.1.4-flight.1 draft=false
    prerelease=false`; delete the `v4.1.4-flight.0-dryrun` draft. Retention: CI artifacts 7 days, caches evicted
    after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
    FE **and** BE outputs of the new series before `m4` or `release` (the other side: `fe/be force=true`).
+3. Optional (only if A-1 plans are still poor at SF10): use the connector's column NDV estimates in
+   `computeFlightScanNode` (today column stats come from `estimateScanColumns`, UNKNOWN, as for JDBC).
 
 ## Open questions for the maintainer
 

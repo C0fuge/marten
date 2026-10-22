@@ -17,7 +17,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../flight/FlightAggregationPushdown.java     |  83 ++++
  .../connector/flight/FlightConnector.java     |  57 +++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
- .../connector/flight/FlightMetadata.java      | 322 +++++++++++++
+ .../connector/flight/FlightMetadata.java      | 332 +++++++++++++
  .../connector/flight/FlightProperties.java    | 316 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 444 +++++++++++++++++
@@ -27,7 +27,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2042 insertions(+), 3 deletions(-)
+ 18 files changed, 2052 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -402,10 +402,10 @@ index 00000000..7553542b
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
 new file mode 100644
-index 00000000..aec68827
+index 00000000..6264df87
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
-@@ -0,0 +1,322 @@
+@@ -0,0 +1,332 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -456,6 +456,7 @@ index 00000000..aec68827
 +import org.apache.logging.log4j.Logger;
 +
 +import java.util.ArrayList;
++import java.util.Collections;
 +import java.util.HashSet;
 +import java.util.List;
 +import java.util.Locale;
@@ -463,6 +464,7 @@ index 00000000..aec68827
 +import java.util.Objects;
 +import java.util.Optional;
 +import java.util.Set;
++import java.util.WeakHashMap;
 +import java.util.concurrent.CompletableFuture;
 +import java.util.concurrent.ExecutionException;
 +import java.util.concurrent.ExecutorService;
@@ -479,9 +481,13 @@ index 00000000..aec68827
 + */
 +public class FlightMetadata implements ConnectorMetadata {
 +    private static final Logger LOG = LogManager.getLogger(FlightMetadata.class);
-+    /** How long planning waits for a row count that is not cached yet. */
-+    static final long ROW_COUNT_WAIT_MS = 1000;
-+    private static final ExecutorService STATS_EXECUTOR = Executors.newFixedThreadPool(2,
++    /**
++     * How long planning waits, once per load, for a row count that is not cached yet. Statistics are asked for
++     * many times per plan and the memo phase has a 3 s budget (new_planner_optimize_timeout), so a slow count must
++     * never be waited for again.
++     */
++    static final long ROW_COUNT_WAIT_MS = 250;
++    private static final ExecutorService STATS_EXECUTOR = Executors.newFixedThreadPool(4,
 +            new ThreadFactoryBuilder().setDaemon(true).setNameFormat("flight-row-count-%d").build());
 +
 +    private final String catalogName;
@@ -492,6 +498,9 @@ index 00000000..aec68827
 +    private final Cache<List<String>, Optional<FlightTable>> tables;
 +    private final Map<String, Database> databases = new java.util.concurrent.ConcurrentHashMap<>();
 +    private final AsyncLoadingCache<List<String>, Long> rowCounts;
++    /** Row-count loads somebody already waited for (weak: a finished load is dropped with its cache entry). */
++    private final Set<CompletableFuture<Long>> waitedLoads =
++            Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 +
 +    public FlightMetadata(String catalogName, FlightProperties props, FlightSqlMetadataClient client) {
 +        this.catalogName = catalogName;
@@ -654,13 +663,14 @@ index 00000000..aec68827
 +    }
 +
 +    /**
-+     * Cached row count, or -1 if not known yet. A cold entry is waited for at most {@link #ROW_COUNT_WAIT_MS}
-+     * (the server answers count(*) from Parquet footers); after that the load goes on in the background.
++     * Cached row count, or -1 if not known yet. The first caller of a load waits for it at most
++     * {@link #ROW_COUNT_WAIT_MS} (the server answers count(*) from Parquet footers); later callers do not wait, and
++     * the load goes on in the background.
 +     */
 +    public long getRowCount(FlightTable table) {
 +        CompletableFuture<Long> f = rowCounts.get(ImmutableList.of(table.getCatalogDBName(), table.getCatalogTableName()));
 +        Long v = f.getNow(null);
-+        if (v == null) {
++        if (v == null && waitedLoads.add(f)) {
 +            try {
 +                v = f.get(ROW_COUNT_WAIT_MS, TimeUnit.MILLISECONDS);
 +            } catch (InterruptedException e) {
