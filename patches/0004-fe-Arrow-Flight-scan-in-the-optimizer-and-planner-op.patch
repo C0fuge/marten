@@ -8,7 +8,7 @@ Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, FlightAggregat
 count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, statistics, EXPLAIN, FlightScanNode
 (remote SQL, endpoint scan ranges), session variables flight_filter_pushdown / flight_aggregate_pushdown.
 ---
- .../com/starrocks/planner/FlightScanNode.java | 304 ++++++++++++++++++
+ .../com/starrocks/planner/FlightScanNode.java | 307 ++++++++++++++++++
  .../com/starrocks/qe/SessionVariable.java     |  25 ++
  .../main/java/com/starrocks/sql/Explain.java  |  20 ++
  .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
@@ -22,14 +22,14 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
  .../sql/optimizer/rule/RuleType.java          |   2 +
  .../FlightScanImplementationRule.java         |  38 +++
- .../FlightAggregationPushdownRule.java        | 270 ++++++++++++++++
+ .../FlightAggregationPushdownRule.java        | 270 +++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |   4 +
  .../sql/plan/PlanFragmentBuilder.java         |  40 +++
- 21 files changed, 935 insertions(+), 1 deletion(-)
+ 21 files changed, 938 insertions(+), 1 deletion(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -38,10 +38,10 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 new file mode 100644
-index 00000000..548df763
+index 00000000..a658f54b
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
-@@ -0,0 +1,304 @@
+@@ -0,0 +1,307 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -336,6 +336,9 @@ index 00000000..548df763
 +            node.setKeepalive_ms(props.getKeepaliveMs());
 +            node.setRpc_timeout_ms(props.getRpcTimeoutMs());
 +            node.setLocation_failover(props.isLocationFailover());
++            Map<String, String> options = new HashMap<>();
++            options.put(FlightProperties.OPTION_EXCHANGE_BUFFER_MB, String.valueOf(props.getExchangeBufferMb()));
++            node.setOptions(options);
 +        }
 +        msg.flight_scan_node = node;
 +        setConnectorCatalogType(msg);

@@ -80,3 +80,8 @@ EXPLAIN SELECT count(*) FROM flight.<schema>.<table>;   -- shows the REMOTE SQL 
 
 All catalog properties: `docs/PLAN.md` §2.1. Session switches: `flight_filter_pushdown`, `flight_aggregate_pushdown`
 (both default `true`). The token and password are masked in `SHOW CREATE CATALOG`, logs and profiles.
+
+Memory: Flight scans are fast, so a join's probe-side rows can arrive long before its build sides are ready. The
+local exchange behind each Flight scan is capped at `flight.exchange_buffer_mb` (default 16 MB) per driver instead
+of StarRocks' 128 MB. Large joins/aggregations still need memory like on any other catalog: TPC-H SF10 q18 is at the
+edge of a BE with `mem_limit = 4G`; give the BE more memory or `SET enable_spill = true` for such queries.

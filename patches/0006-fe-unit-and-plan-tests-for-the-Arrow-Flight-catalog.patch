@@ -6,14 +6,14 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 112 +++++++
+ .../flight/FlightPropertiesTest.java          | 117 +++++++
  .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++
  .../flight/FlightSqlRendererTest.java         | 123 ++++++++
  .../flight/FlightTypeMapperTest.java          | 164 ++++++++++
  .../flight/MockedFlightSqlMetadataClient.java | 132 ++++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 +++++
  .../sql/plan/FlightScanPlanTest.java          | 297 ++++++++++++++++++
- 7 files changed, 1007 insertions(+)
+ 7 files changed, 1012 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -24,10 +24,10 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
 
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
-index 00000000..8e366765
+index 00000000..8bf29268
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,117 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,6 +81,9 @@ index 00000000..8e366765
 +        Assertions.assertTrue(p.isLimitPushdown());
 +        Assertions.assertTrue(p.isColumnStats());
 +        Assertions.assertFalse(props("flight.uri", "grpc://h1:8815", "flight.column_stats", "false").isColumnStats());
++        Assertions.assertEquals(16, p.getExchangeBufferMb());
++        Assertions.assertEquals(0, props("flight.uri", "grpc://h1:8815", "flight.exchange_buffer_mb", "0")
++                .getExchangeBufferMb());
 +        Assertions.assertEquals(ImmutableMap.of("x-flight-result-mode", "partial", "x-flight-location-failover", "1"),
 +                p.getCallHeaders());
 +    }
@@ -114,6 +117,8 @@ index 00000000..8e366765
 +                () -> props("flight.uri", "grpc://h:1", "flight.result_mode", "bogus"));
 +        Assertions.assertThrows(StarRocksConnectorException.class,
 +                () -> props("flight.uri", "grpc://h:1", "flight.connect_timeout_ms", "-5"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.exchange_buffer_mb", "2048"));
 +    }
 +
 +    @Test

@@ -18,7 +18,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../connector/flight/FlightConnector.java     |  57 +++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
  .../connector/flight/FlightMetadata.java      | 475 ++++++++++++++++++
- .../connector/flight/FlightProperties.java    | 338 +++++++++++++
+ .../connector/flight/FlightProperties.java    | 352 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 467 +++++++++++++++++
  .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++
@@ -27,7 +27,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2331 insertions(+), 3 deletions(-)
+ 18 files changed, 2345 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -883,10 +883,10 @@ index 00000000..c2f915c1
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
 new file mode 100644
-index 00000000..68bf3d6b
+index 00000000..5d43ad97
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
-@@ -0,0 +1,338 @@
+@@ -0,0 +1,352 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -946,6 +946,13 @@ index 00000000..68bf3d6b
 +    public static final String METADATA_CACHE_TTL_S = "flight.metadata_cache_ttl_s";
 +    public static final String STATS_CACHE_TTL_S = "flight.stats_cache_ttl_s";
 +    public static final String COLUMN_STATS = "flight.column_stats";
++    /**
++     * Per-driver memory of the local exchange behind a Flight scan in MB (StarRocks default: 128 MB per driver,
++     * {@code local_exchange_buffer_mem_limit_per_driver}); 0 keeps the StarRocks default.
++     */
++    public static final String EXCHANGE_BUFFER_MB = "flight.exchange_buffer_mb";
++    /** Key in {@code TFlightScanNode.options}. */
++    public static final String OPTION_EXCHANGE_BUFFER_MB = "exchange_buffer_mb";
 +
 +    /** Property keys whose values are secrets (masked in SHOW CREATE CATALOG, logs and the audit log). */
 +    public static final Set<String> SENSITIVE_KEYS = ImmutableSet.of(TOKEN, PASSWORD);
@@ -958,7 +965,7 @@ index 00000000..68bf3d6b
 +    private static final Set<String> KNOWN = ImmutableSet.of(URI, TOKEN, USER, PASSWORD, TLS_VERIFY, TLS_CA_FILE,
 +            TLS_OVERRIDE_HOSTNAME, RESULT_MODE, LOCATION_FAILOVER, CONNECT_TIMEOUT_MS, KEEPALIVE_MS, RPC_TIMEOUT_MS,
 +            CATALOG, NESTED_TYPES, CONVERTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE, METADATA_CACHE_TTL_S,
-+            STATS_CACHE_TTL_S, COLUMN_STATS, "type");
++            STATS_CACHE_TTL_S, COLUMN_STATS, EXCHANGE_BUFFER_MB, "type");
 +
 +    private final List<URI> uris;
 +    private final String token;
@@ -982,6 +989,7 @@ index 00000000..68bf3d6b
 +    private final long metadataCacheTtlSec;
 +    private final long statsCacheTtlSec;
 +    private final boolean columnStats;
++    private final int exchangeBufferMb;
 +
 +    public FlightProperties(Map<String, String> props) {
 +        String uriList = props.get(URI);
@@ -1061,6 +1069,7 @@ index 00000000..68bf3d6b
 +        this.metadataCacheTtlSec = parseLong(props, METADATA_CACHE_TTL_S, 60, 0, 86_400 * 30L);
 +        this.statsCacheTtlSec = parseLong(props, STATS_CACHE_TTL_S, 600, 0, 86_400 * 30L);
 +        this.columnStats = parseBool(props, COLUMN_STATS, true);
++        this.exchangeBufferMb = (int) parseLong(props, EXCHANGE_BUFFER_MB, 16, 0, 1024);
 +    }
 +
 +    private static String emptyToNull(String s) {
@@ -1219,6 +1228,11 @@ index 00000000..68bf3d6b
 +    /** True if per-column min/max ({@code SELECT min(c), max(c)}) are loaded for the CBO. */
 +    public boolean isColumnStats() {
 +        return columnStats;
++    }
++
++    /** Local exchange memory per driver behind a Flight scan in MB; 0 = StarRocks default. */
++    public int getExchangeBufferMb() {
++        return exchangeBufferMb;
 +    }
 +
 +    public boolean isTls() {

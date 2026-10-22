@@ -13,12 +13,13 @@ and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescrip
  be/src/connector/CMakeLists.txt              |   1 +
  be/src/connector/connector.cpp               |   3 +
  be/src/connector/connector.h                 |   2 +
- be/src/connector/flight_connector.cpp        | 701 +++++++++++++++++++
- be/src/connector/flight_connector.h          | 146 ++++
+ be/src/connector/flight_connector.cpp        | 718 +++++++++++++++++++
+ be/src/connector/flight_connector.h          | 149 ++++
  be/src/exec/arrow_to_starrocks_converter.cpp |  23 +-
+ be/src/exec/connector_scan_node.cpp          |  14 +
  be/src/exec/exec_node.cpp                    |   7 +
  be/src/runtime/descriptors.cpp               |   5 +
- 8 files changed, 885 insertions(+), 3 deletions(-)
+ 9 files changed, 919 insertions(+), 3 deletions(-)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -84,10 +85,10 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..5f853e7b
+index 00000000..4a20166e
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,718 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,6 +115,7 @@ index 00000000..5f853e7b
 +
 +#include <algorithm>
 +#include <chrono>
++#include <cstdlib>
 +#include <thread>
 +#include <unordered_set>
 +
@@ -419,6 +421,22 @@ index 00000000..5f853e7b
 +
 +const TupleDescriptor* FlightDataSourceProvider::tuple_descriptor(RuntimeState* state) const {
 +    return state->desc_tbl().get_tuple_descriptor(_flight_scan_node.tuple_id);
++}
++
++int64_t FlightDataSourceProvider::exchange_buffer_bytes_per_driver() const {
++    if (!_flight_scan_node.__isset.options) {
++        return 0;
++    }
++    auto it = _flight_scan_node.options.find("exchange_buffer_mb");
++    if (it == _flight_scan_node.options.end()) {
++        return 0;
++    }
++    char* end = nullptr;
++    long long mb = std::strtoll(it->second.c_str(), &end, 10);
++    if (end == it->second.c_str() || *end != '\0' || mb <= 0 || mb > 1024) {
++        return 0;
++    }
++    return static_cast<int64_t>(mb) * 1024 * 1024;
 +}
 +
 +// ================================
@@ -791,10 +809,10 @@ index 00000000..5f853e7b
 +} // namespace starrocks::connector
 diff --git a/be/src/connector/flight_connector.h b/be/src/connector/flight_connector.h
 new file mode 100644
-index 00000000..f3d2db03
+index 00000000..ffbbb748
 --- /dev/null
 +++ b/be/src/connector/flight_connector.h
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,149 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -861,6 +879,9 @@ index 00000000..f3d2db03
 +    bool insert_local_exchange_operator() const override { return true; }
 +
 +    const TFlightScanNode& flight_scan_node() const { return _flight_scan_node; }
++    // memory limit per driver of the local exchange behind the scan (catalog option flight.exchange_buffer_mb);
++    // 0 = StarRocks default (local_exchange_buffer_mem_limit_per_driver)
++    int64_t exchange_buffer_bytes_per_driver() const;
 +
 +private:
 +    ConnectorScanNode* _scan_node;
@@ -996,6 +1017,40 @@ index 03fca8db..841b08d4 100644
                  return Status::InternalError(strings::Substitute("Illegal timestamp value($0)", arrow_data[i]));
              }
          }
+diff --git a/be/src/exec/connector_scan_node.cpp b/be/src/exec/connector_scan_node.cpp
+index da28d6c9..f1bb4077 100644
+--- a/be/src/exec/connector_scan_node.cpp
++++ b/be/src/exec/connector_scan_node.cpp
+@@ -18,6 +18,8 @@
+ #include <memory>
+ 
+ #include "common/config.h"
++#include "connector/flight_connector.h"
++#include "exec/pipeline/exchange/local_exchange_source_operator.h"
+ #include "exec/pipeline/scan/chunk_buffer_limiter.h"
+ #include "exec/pipeline/scan/connector_scan_operator.h"
+ #include "exec/stream/scan/stream_scan_operator.h"
+@@ -164,8 +166,20 @@ pipeline::OpFactories ConnectorScanNode::decompose_to_pipeline(pipeline::Pipelin
+     auto operators = pipeline::decompose_scan_node_to_pipeline(scan_op, this, context);
+ 
+     if (_data_source_provider->insert_local_exchange_operator()) {
++        auto* scan_source = operators[0].get();
+         operators = context->maybe_interpolate_local_passthrough_exchange(
+                 context->fragment_context()->runtime_state(), id(), operators, context->degree_of_parallelism());
++        // Arrow Flight: one fast endpoint stream would fill the passthrough exchange up to dop * 128 MB while the
++        // join build sides downstream are not ready yet (TPC-H q18); the catalog sets a smaller buffer.
++        auto* flight = dynamic_cast<connector::FlightDataSourceProvider*>(_data_source_provider.get());
++        auto* exchange = dynamic_cast<pipeline::LocalExchangeSourceOperatorFactory*>(operators[0].get());
++        if (flight != nullptr && exchange != nullptr && operators[0].get() != scan_source) {
++            int64_t per_driver = flight->exchange_buffer_bytes_per_driver();
++            auto* mem_mgr = exchange->memory_manager();
++            if (per_driver > 0 && static_cast<size_t>(per_driver) < mem_mgr->get_memory_limit_per_driver()) {
++                mem_mgr->update_max_memory_usage(per_driver * mem_mgr->get_max_input_dop());
++            }
++        }
+     }
+     return operators;
+ }
 diff --git a/be/src/exec/exec_node.cpp b/be/src/exec/exec_node.cpp
 index d927b831..eae5909c 100644
 --- a/be/src/exec/exec_node.cpp

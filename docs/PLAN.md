@@ -217,6 +217,7 @@ Lessons from the Trino plugin v10 (`~/Projects/trino-arrow-flight-connector` 6ee
 | `flight.converted_types` | `convert` | `convert`: TIME, DURATION, INTERVAL, DECIMAL256, *View columns exposed converted (table below, added 2026-10-22, STATUS P1); `hide`: hidden as before |
 | `flight.pushdown.filter` / `.limit` / `.count` | true | per-feature kill switches (also session variables, see 2.6) |
 | `flight.metadata_cache_ttl_s` / `flight.stats_cache_ttl_s` | 60 / 600 | table-list and schema cache; row-count and column min/max cache |
+| `flight.exchange_buffer_mb` | 16 | memory per driver of the BE local exchange behind a Flight scan (StarRocks default 128 MB per driver; 0 keeps it). A fast endpoint stream otherwise fills dop × 128 MB while the join build sides are not ready (TPC-H q18 SF10 at BE 4G, STATUS A-4; added 2026-10-22) |
 | `flight.column_stats` | `true` | per-table `SELECT min(c), max(c), …` (numeric/date columns that are filterable, ≤ 100 per table; answered from Parquet footers by our servers) gives the CBO column min/max and a range NDV; loaded in the background like row counts (added 2026-10-22, STATUS P2) |
 
 ### 2.2 FE files (new package `FE/connector/flight/`)

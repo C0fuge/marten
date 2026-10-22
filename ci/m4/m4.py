@@ -957,6 +957,49 @@ def check9(conn, args, res):
     res.add("BE alive afterwards", be_alive(conn))
     ok, r, _ = try_sql(conn, "SELECT count(*) FROM flight.tpch.nation")
     res.add("next query works", ok and r[0][0] == 25, str(r)[:200])
+    guarded(res, "q18 local exchange behind the Flight scans", lambda: check9_exchange(conn, args, res))
+
+
+def byte_values(profile, name):
+    """Values of a BYTES counter `name` in a profile text (e.g. `name: 12.345 MB`), in bytes."""
+    mult = {"": 1, "B": 1, "KB": 1 << 10, "MB": 1 << 20, "GB": 1 << 30, "TB": 1 << 40}
+    return [float(v) * mult[u or ""] for v, u in re.findall(rf"(?<![\w]){name}: ([\d.]+)\s*([KMGT]?B)?", profile)]
+
+
+def check9_exchange(conn, args, res):
+    """A-4 (q18 SF10 at BE 4G): a fast Flight scan used to fill the local passthrough exchange behind it up to
+    dop * 128 MB while the join build sides were not ready; flight.exchange_buffer_mb (default 16) caps it."""
+    sql = open(os.path.join(M4, "queries", "q18.sql")).read().strip().rstrip(";")
+    out = {}
+    try:
+        catalog(conn, "f_exch0", flight__exchange_buffer_mb="0")
+        for cat in ("flight", "f_exch0"):
+            sr(conn, f"SET CATALOG {cat}")
+            sr(conn, "USE tpch")
+            sr(conn, "SET enable_profile = true")
+            try:
+                rows = sr(conn, sql)
+                qid = sr(conn, "SELECT last_query_id()")[0][0]
+            finally:
+                sr(conn, "SET enable_profile = false")
+            p, err = query_profile(conn, qid, args.out, f"check9-q18-{cat}")
+            peaks = byte_values(p, "LocalExchangePeakMemoryUsage")
+            node = byte_values(p, "QueryPeakMemoryUsagePerNode")
+            out[cat] = (rows, max(peaks) if peaks else None, max(node) if node else None, err)
+    finally:
+        sr(conn, "SET CATALOG default_catalog")
+        sr(conn, "DROP CATALOG IF EXISTS f_exch0")
+    mb = lambda v: "n/a" if v is None else f"{v / 1048576:.1f} MB"
+    (r16, ex16, node16, e16), (r0, ex0, node0, e0) = out["flight"], out["f_exch0"]
+    det = (f"flight (16 MB/driver): exchange peak {mb(ex16)}, query peak/node {mb(node16)}; "
+           f"exchange_buffer_mb=0: exchange peak {mb(ex0)}, query peak/node {mb(node0)}; "
+           f"cpus {os.cpu_count()}" + (f" | {e16 or e0}" if ex16 is None or ex0 is None else ""))
+    res.add("q18 same rows with flight.exchange_buffer_mb=16 and 0",
+            sorted(map(tuple, r16)) == sorted(map(tuple, r0)) and len(r16) > 0, f"rows {len(r16)}/{len(r0)}")
+    res.add("q18 local exchange peak with the cap <= without", ex16 is not None and ex0 is not None and ex16 <= ex0,
+            det)
+    bound = 16 * 1048576 * (os.cpu_count() or 1) + 16 * 1048576
+    res.add("q18 local exchange peak <= 16 MB x cpus (+16 MB)", ex16 is not None and ex16 <= bound, det)
 
 
 # ---------------------------------------------------------------- main
