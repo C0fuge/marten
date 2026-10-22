@@ -243,6 +243,14 @@ P3. **lakeFS through the connector in CI**: `int4-plugins.tar.zst` has `plugins/
     lakeFS container (docker.io/treeverse/lakefs:1.38.0, local KV, MinIO blockstore) in front of MinIO, server
     `-DdataDir=lakefs://<repo>/main/...` (START-NOTES.txt in the plugins tarball), and run checks 1, 3, 4 there plus
     a "commit to main between two queries" check (a query sees one commit).
+P5. **Server int5 with Iceberg** (release asset `arrow-flight-server-1.0.0-int5.jar` sha256 01feeb77…5808 +
+    `int5-plugins.tar.zst` sha256 f600585d…5f68 with `plugins/{s3,lakefs,iceberg}` and START-NOTES.txt = int4 + catalog
+    plugin `iceberg`: kinds `iceberg-hadoop` (warehouse dir on local/HDFS/S3) and `iceberg-rest` (Gravitino/Polaris);
+    `-Dcatalog=` list; partial mode pins the snapshot per query, falls back to a complete answer with delete files /
+    nested schema changes / joins). Add an Iceberg variant to CI: generate Iceberg tables in the job (e.g. pyiceberg
+    with a local SQL catalog writing parquet into the S3 bucket, or Spark/iceberg if simpler): TPC-H SF1 lineitem/orders
+    as Iceberg + a table with position/equality deletes + a renamed column; check the engine sees them, results equal
+    the parquet tables / DuckDB, partial and complete modes; a commit between two queries is seen by the second only.
 P4. **Upgrade readiness**: try the patch series on the newest 4.1.x tag (`git am` only, no build unless it applies
     with small fixes); write `docs/REBASE.md` with conflicts and effort. Do not change the release target (4.1.4).
 
