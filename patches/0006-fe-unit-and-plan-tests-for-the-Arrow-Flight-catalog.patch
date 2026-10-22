@@ -6,14 +6,14 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 104 +++++++++++
- .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++++++
- .../flight/FlightSqlRendererTest.java         | 123 +++++++++++++
- .../flight/FlightTypeMapperTest.java          | 116 ++++++++++++
- .../flight/MockedFlightSqlMetadataClient.java |  99 +++++++++++
- .../FlightAggregationPushdownRuleTest.java    |  72 ++++++++
- .../sql/plan/FlightScanPlanTest.java          | 168 ++++++++++++++++++
- 7 files changed, 789 insertions(+)
+ .../flight/FlightPropertiesTest.java          | 104 +++++++++
+ .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++++
+ .../flight/FlightSqlRendererTest.java         | 123 ++++++++++
+ .../flight/FlightTypeMapperTest.java          | 116 +++++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 113 +++++++++
+ .../FlightAggregationPushdownRuleTest.java    |  72 ++++++
+ .../sql/plan/FlightScanPlanTest.java          | 220 ++++++++++++++++++
+ 7 files changed, 855 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -498,10 +498,10 @@ index 00000000..4bc29fd3
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..f3bbd654
+index 00000000..0e8ad998
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,113 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -533,18 +533,23 @@ index 00000000..f3bbd654
 +import java.util.ArrayList;
 +import java.util.Collections;
 +import java.util.List;
++import java.util.concurrent.atomic.AtomicInteger;
 +
 +/**
-+ * Flight SQL metadata client without a server: one schema {@code s1} with table {@code t1(id INT, k VARCHAR,
-+ * price FLOAT)}; every planned query gets two endpoints. The planned SQL is recorded.
++ * Flight SQL metadata client without a server: one schema {@code s1} with tables {@code t1(id INT, k VARCHAR,
++ * price FLOAT)} ({@link #ROW_COUNT} rows) and {@code t2} (same columns, {@link #BIG_ROW_COUNT} rows); every planned
++ * query gets two endpoints. The planned SQL and the number of count queries are recorded.
 + */
 +public class MockedFlightSqlMetadataClient extends FlightSqlMetadataClient {
 +    public static final String SCHEMA = "s1";
 +    public static final String TABLE = "t1";
 +    public static final String LOCATION = "grpc://127.0.0.1:31337";
 +    public static final long ROW_COUNT = 1000;
++    public static final String BIG_TABLE = "t2";
++    public static final long BIG_ROW_COUNT = 10_000_000;
 +
 +    private final List<String> executed = Collections.synchronizedList(new ArrayList<>());
++    private final AtomicInteger countQueries = new AtomicInteger();
 +
 +    public MockedFlightSqlMetadataClient(FlightProperties props) {
 +        super(props);
@@ -565,12 +570,12 @@ index 00000000..f3bbd654
 +
 +    @Override
 +    public List<String> listTables(String schema) {
-+        return SCHEMA.equals(schema) ? ImmutableList.of(TABLE) : ImmutableList.of();
++        return SCHEMA.equals(schema) ? ImmutableList.of(TABLE, BIG_TABLE) : ImmutableList.of();
 +    }
 +
 +    @Override
 +    public RemoteTable getTable(String schema, String table) {
-+        if (!SCHEMA.equals(schema) || !TABLE.equals(table)) {
++        if (!SCHEMA.equals(schema) || !(TABLE.equals(table) || BIG_TABLE.equals(table))) {
 +            return null;
 +        }
 +        return new RemoteTable(null, schema, table, t1Schema());
@@ -584,12 +589,21 @@ index 00000000..f3bbd654
 +                new FlightEndpoint(new Ticket("e0".getBytes(StandardCharsets.UTF_8)), location),
 +                new FlightEndpoint(new Ticket("e1".getBytes(StandardCharsets.UTF_8)), location));
 +        return new FlightInfo(t1Schema(), FlightDescriptor.command(sql.getBytes(StandardCharsets.UTF_8)), endpoints,
-+                -1, ROW_COUNT);
++                -1, rowCountOf(sql));
 +    }
 +
 +    @Override
 +    public long querySumOfLong(String sql) {
-+        return ROW_COUNT;
++        countQueries.incrementAndGet();
++        return rowCountOf(sql);
++    }
++
++    private static long rowCountOf(String sql) {
++        return sql.contains("\"" + BIG_TABLE + "\"") ? BIG_ROW_COUNT : ROW_COUNT;
++    }
++
++    public int getCountQueries() {
++        return countQueries.get();
 +    }
 +
 +    @Override
@@ -681,10 +695,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..cc26beca
+index 00000000..6cac83e7
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,220 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -701,6 +715,7 @@ index 00000000..cc26beca
 +package com.starrocks.sql.plan;
 +
 +import com.starrocks.connector.MockedMetadataMgr;
++import com.starrocks.catalog.FlightTable;
 +import com.starrocks.connector.flight.FlightConnector;
 +import com.starrocks.connector.flight.FlightMetadata;
 +import com.starrocks.connector.flight.FlightProperties;
@@ -714,10 +729,14 @@ index 00000000..cc26beca
 +import java.util.HashMap;
 +import java.util.Map;
 +
-+/** Plans of Flight scans: the REMOTE SQL in EXPLAIN for projection, filters, LIMIT and aggregation pushdown. */
++/**
++ * Plans of Flight scans: the REMOTE SQL in EXPLAIN for projection, filters, LIMIT and aggregation pushdown; row-count
++ * statistics in the plan (t1: 1000 rows, t2: 10M rows).
++ */
 +public class FlightScanPlanTest extends PlanTestBase {
 +    private static final String CATALOG = "flight0";
 +    private static final String T1 = CATALOG + ".s1.t1";
++    private static final String T2 = CATALOG + ".s1.t2";
 +
 +    @BeforeAll
 +    public static void beforeClass() throws Exception {
@@ -832,6 +851,53 @@ index 00000000..cc26beca
 +        plan = getFragmentPlan("select count(*) from " + T1 + " where price > 1.5");
 +        assertNotContains(plan, "__flight_agg_");
 +        assertContains(plan, "PUSHED CONJUNCTS: 0/1", "PREDICATES: ");
++    }
++
++    @Test
++    public void testScanStatistics() throws Exception {
++        // the row counts reach the scan node (EXPLAIN COSTS showed cardinality: -1 / stats source NONE before)
++        String plan = getCostExplain("select id, k from " + T2);
++        assertContains(plan, "FlightScanNode", "cardinality: " + MockedFlightSqlMetadataClient.BIG_ROW_COUNT);
++        assertNotContains(plan, "cardinality: -1");
++        plan = getCostExplain("select id, k from " + T1);
++        assertContains(plan, "cardinality: " + MockedFlightSqlMetadataClient.ROW_COUNT);
++    }
++
++    @Test
++    public void testSmallTableIsBuildSide() throws Exception {
++        // both join orders: only real row counts make t1 the (broadcast) build side
++        for (String sql : new String[] {
++                "select count(*) from " + T1 + " a join " + T2 + " b on a.id = b.id",
++                "select count(*) from " + T2 + " b join " + T1 + " a on a.id = b.id"}) {
++            String plan = getFragmentPlan(sql);
++            String joinFragment = null;
++            for (String fragment : plan.split("PLAN FRAGMENT")) {
++                if (fragment.contains("HASH JOIN")) {
++                    joinFragment = fragment;
++                }
++            }
++            Assertions.assertNotNull(joinFragment, plan);
++            // the probe side (t2) is scanned in the join's fragment, t1 arrives through the build-side exchange
++            assertContains(joinFragment, "TABLE: s1.t2", "BROADCAST");
++            assertNotContains(joinFragment, "TABLE: s1.t1");
++        }
++    }
++
++    @Test
++    public void testRowCountsSurviveClear() {
++        // MetadataMgr calls clear() on the query-level metadata at the end of every query
++        FlightProperties props = new FlightProperties(Map.of("type", "flight",
++                FlightProperties.URI, MockedFlightSqlMetadataClient.LOCATION));
++        MockedFlightSqlMetadataClient client = new MockedFlightSqlMetadataClient(props);
++        FlightMetadata metadata = new FlightMetadata(CATALOG, props, client);
++        FlightTable t2 = (FlightTable) metadata.getTable(connectContext, "s1", "t2");
++        Assertions.assertNotNull(t2);
++        Assertions.assertEquals(MockedFlightSqlMetadataClient.BIG_ROW_COUNT, metadata.getRowCount(t2));
++        int queries = client.getCountQueries();
++        metadata.clear();
++        Assertions.assertEquals(MockedFlightSqlMetadataClient.BIG_ROW_COUNT, metadata.getRowCount(t2));
++        Assertions.assertSame(t2, metadata.getTable(connectContext, "s1", "t2"));
++        Assertions.assertEquals(queries, client.getCountQueries());
 +    }
 +
 +    @Test

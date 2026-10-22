@@ -17,7 +17,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../flight/FlightAggregationPushdown.java     |  83 ++++
  .../connector/flight/FlightConnector.java     |  57 +++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
- .../connector/flight/FlightMetadata.java      | 300 ++++++++++++
+ .../connector/flight/FlightMetadata.java      | 322 +++++++++++++
  .../connector/flight/FlightProperties.java    | 316 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 444 +++++++++++++++++
@@ -27,7 +27,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2020 insertions(+), 3 deletions(-)
+ 18 files changed, 2042 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -402,10 +402,10 @@ index 00000000..7553542b
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
 new file mode 100644
-index 00000000..1c5215d6
+index 00000000..aec68827
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightMetadata.java
-@@ -0,0 +1,300 @@
+@@ -0,0 +1,322 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -464,9 +464,11 @@ index 00000000..1c5215d6
 +import java.util.Optional;
 +import java.util.Set;
 +import java.util.concurrent.CompletableFuture;
++import java.util.concurrent.ExecutionException;
 +import java.util.concurrent.ExecutorService;
 +import java.util.concurrent.Executors;
 +import java.util.concurrent.TimeUnit;
++import java.util.concurrent.TimeoutException;
 +
 +import static com.starrocks.connector.ConnectorTableId.CONNECTOR_ID_GENERATOR;
 +
@@ -477,6 +479,8 @@ index 00000000..1c5215d6
 + */
 +public class FlightMetadata implements ConnectorMetadata {
 +    private static final Logger LOG = LogManager.getLogger(FlightMetadata.class);
++    /** How long planning waits for a row count that is not cached yet. */
++    static final long ROW_COUNT_WAIT_MS = 1000;
 +    private static final ExecutorService STATS_EXECUTOR = Executors.newFixedThreadPool(2,
 +            new ThreadFactoryBuilder().setDaemon(true).setNameFormat("flight-row-count-%d").build());
 +
@@ -558,7 +562,12 @@ index 00000000..1c5215d6
 +        if (props.getMetadataCacheTtlSec() == 0) {
 +            return loadTable(dbName, tblName).orElse(null);
 +        }
-+        return tables.get(key, k -> loadTable(dbName, tblName)).orElse(null);
++        Table table = tables.get(key, k -> loadTable(dbName, tblName)).orElse(null);
++        if (table != null) {
++            // start the row count now, so it is usually known when the optimizer asks for statistics
++            rowCounts.get(key);
++        }
++        return table;
 +    }
 +
 +    @Override
@@ -644,10 +653,22 @@ index 00000000..1c5215d6
 +        }
 +    }
 +
-+    /** Cached row count, or -1 if not known yet (a background load is started). */
++    /**
++     * Cached row count, or -1 if not known yet. A cold entry is waited for at most {@link #ROW_COUNT_WAIT_MS}
++     * (the server answers count(*) from Parquet footers); after that the load goes on in the background.
++     */
 +    public long getRowCount(FlightTable table) {
 +        CompletableFuture<Long> f = rowCounts.get(ImmutableList.of(table.getCatalogDBName(), table.getCatalogTableName()));
 +        Long v = f.getNow(null);
++        if (v == null) {
++            try {
++                v = f.get(ROW_COUNT_WAIT_MS, TimeUnit.MILLISECONDS);
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            } catch (ExecutionException | TimeoutException e) {
++                // not known yet
++            }
++        }
 +        return v == null ? -1 : v;
 +    }
 +
@@ -683,12 +704,13 @@ index 00000000..1c5215d6
 +        rowCounts.synchronous().invalidate(ImmutableList.of(srDbName, table.getCatalogTableName()));
 +    }
 +
++    /**
++     * Keeps every cache: MetadataMgr calls clear() on the query-level metadata at the end of EVERY query, and
++     * this object is the catalog's only metadata, so clearing here left each plan with a cold row-count cache
++     * (no CBO statistics). The caches expire by their TTLs; REFRESH EXTERNAL TABLE uses refreshTable().
++     */
 +    @Override
 +    public void clear() {
-+        tables.invalidateAll();
-+        tableNames.invalidateAll();
-+        dbNames.invalidateAll();
-+        rowCounts.synchronous().invalidateAll();
 +    }
 +
 +    @Override

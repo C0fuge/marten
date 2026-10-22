@@ -28,8 +28,8 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  37 +++
  .../transformer/RelationTransformer.java      |   4 +
- .../sql/plan/PlanFragmentBuilder.java         |  39 +++
- 21 files changed, 918 insertions(+), 1 deletion(-)
+ .../sql/plan/PlanFragmentBuilder.java         |  40 +++
+ 21 files changed, 919 insertions(+), 1 deletion(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -1203,7 +1203,7 @@ index 133b0a74..52d26ebd 100644
              scanOperator = new LogicalKuduScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build(),
                  columnMetaToColRefMap, Operator.DEFAULT_LIMIT, null);
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
-index 93a8bf9d..19f35197 100644
+index 93a8bf9d..df9f52c7 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 @@ -56,6 +56,7 @@ import com.starrocks.common.Pair;
@@ -1230,7 +1230,7 @@ index 93a8bf9d..19f35197 100644
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHashAggregateOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHashJoinOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHiveScanOperator;
-@@ -1556,6 +1559,42 @@ public class PlanFragmentBuilder {
+@@ -1556,6 +1559,43 @@ public class PlanFragmentBuilder {
              return fragment;
          }
  
@@ -1260,6 +1260,7 @@ index 93a8bf9d..19f35197 100644
 +                throw new StarRocksPlannerException(e.getMessage(), INTERNAL_ERROR);
 +            }
 +            flightScanNode.setLimit(node.getLimit());
++            flightScanNode.computeStatistics(optExpression.getStatistics());
 +
 +            tupleDescriptor.computeMemLayout();
 +            context.getScanNodes().add(flightScanNode);
