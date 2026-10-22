@@ -173,6 +173,14 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+0b. **Server candidate int4** in `m4-assets`: `arrow-flight-server-1.0.0-int4.jar` (sha256 aabaa550…144f; branch
+   integration-2: int2 fixes + DuckDB **1.4.5** + plugin SPI, S3 and lakeFS as plugins) and `int4-plugins.tar.zst`
+   (sha256 35df1178…d3ae; `plugins/s3`, `plugins/lakefs`, START-NOTES.txt — read it). Differences for m4.yml: the
+   S3 path needs `-Darrowflight.plugins.dir=<dir>/plugins` and the **v1.4.5** httpfs
+   (`http://extensions.duckdb.org/v1.4.5/linux_amd64/httpfs.duckdb_extension.gz`); v1.4.1 extensions make it
+   refuse to start; `flight-server-libs` stays on the classpath; plugins are NOT on the classpath. Add int4 as a
+   selectable server and run all checks against it (it is the release candidate of the server). Add both
+   checksums to SHA256SUMS.
 1. When the maintainer reports the local final check (`docs/LOCAL-FINAL-CHECK.md` §4): record it in
    `docs/M4-RESULTS.md`; fix failures in the patches (then FE + BE of the new series, `m4` of the touched checks,
    refresh the draft). If `bench/reference/sf10` has another layout, adapt `load_ref` in `ci/m4/m4.py`.
