@@ -189,11 +189,13 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   (memo > 3 s, m4 39732232288) → once per load, 250 ms. Builds: FE 39730095868 / 39733048078 (32/32 tests), BE
   39730083919 / 39733050937, be-ut 39730083877 (20/20); m4 39735198246 (int4, series `fl6b6a1d`): 1–9 all PASS;
   release dry run 39735200365.
+- 2026-10-22 07:40 UTC (cloud session): no local re-check results yet (step 1 waits on the maintainer); Next step 1
+  named the old series `flf35d9a`, corrected to `fl6b6a1d` (the dry-run draft's series). No patch changed, no CI run.
 
 ## Next steps
 
 1. **Local re-check of the 2026-10-22 failures** (maintainer's stand, short; `docs/LOCAL-FINAL-CHECK.md`), build
-   under test: draft `v4.1.4-flight.0-dryrun` for series `4a9848e-flf35d9a` (A-1 + keepalive fixes):
+   under test: draft `v4.1.4-flight.0-dryrun` for series `4a9848e-fl6b6a1d` (A-1 + keepalive fixes):
    - A: q05/q08/q09/q18/q21 at SF10 with BE `mem_limit = 4G`; `EXPLAIN COSTS <q05>` must show real
      `cardinality` (lineitem 59986052) for every FlightScanNode and lineitem on the probe side.
    - q18 on the 3-node cluster under load (keepalive): no `keepalive watchdog timeout`.
