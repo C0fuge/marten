@@ -20,14 +20,14 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../connector/flight/FlightMetadata.java      | 475 ++++++++++++++++++
  .../connector/flight/FlightProperties.java    | 338 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
- .../flight/FlightSqlMetadataClient.java       | 462 +++++++++++++++++
+ .../flight/FlightSqlMetadataClient.java       | 467 +++++++++++++++++
  .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 257 ++++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2326 insertions(+), 3 deletions(-)
+ 18 files changed, 2331 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -1297,10 +1297,10 @@ index 00000000..75bee134
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..f669a9db
+index 00000000..ccd844ea
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
-@@ -0,0 +1,462 @@
+@@ -0,0 +1,467 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1596,6 +1596,11 @@ index 00000000..f669a9db
 +                    }
 +                }
 +            } catch (FlightRuntimeException e) {
++                if (own) {
++                    // another server's endpoint: its failure must not make withFailover drop this connection
++                    throw new StarRocksConnectorException("Flight metadata stream from " + loc + " failed: "
++                            + describe(e), e);
++                }
 +                throw e;
 +            } catch (Exception e) {
 +                throw new StarRocksConnectorException("Flight metadata stream failed: " + e.getMessage(), e);
