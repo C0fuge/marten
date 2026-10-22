@@ -6,9 +6,9 @@
 #                                                    jar asset to run (default $M4_SERVER_JAR), copied to x/server.jar;
 #                                                    writes x/server.env (DuckDB httpfs + plugin dir of that server)
 #   ci/m4/stack.sh minio   ASSET_DIR                 start MinIO, upload tpch (SF1) + types tables to s3://lake/parquet
-#   ci/m4/stack.sh lakefs  ASSET_DIR                 start lakeFS (local KV, MinIO blockstore), repository m4 with the same
+#   ci/m4/stack.sh lakefs  ASSET_DIR                 start lakeFS (local KV, MinIO blockstore), repository m4lake with the same
 #                                                    tables + lfs.t on branch main (one commit); later `flight` calls serve
-#                                                    lakefs://m4/main/parquet (settings in $M4_STATE/store.env)
+#                                                    lakefs://m4lake/main/parquet (settings in $M4_STATE/store.env)
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
 #   ci/m4/stack.sh wait    NAME                      wait until the Flight server NAME is started (M4_NO_WAIT=1 skips it in `flight`)
@@ -160,7 +160,7 @@ lakefs)
     MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD LAKEFS_KEY=$LAKEFS_KEY \
     LAKEFS_SECRET=$LAKEFS_SECRET python3 "$REPO_ROOT/ci/m4/lakefs.py" setup "$A/x/sf1/tpch" "$REPO_ROOT/tests/m4/data/types"
     { echo "M4_STORE=lakefs"
-      echo "M4_DATA_DIR=lakefs://m4/main/parquet"
+      echo "M4_DATA_DIR=lakefs://m4lake/main/parquet"
       echo "M4_STORE_OPTS='-Darrowflight.lakefs.endpoint=http://lakefs:8000 -Darrowflight.lakefs.apiEndpoint=http://lakefs:8000/api/v1'"
       echo "FLIGHT_LAKEFS_ACCESS_KEY=$LAKEFS_KEY"
       echo "FLIGHT_LAKEFS_SECRET_KEY=$LAKEFS_SECRET"; } > "$M4_STATE/store.env"

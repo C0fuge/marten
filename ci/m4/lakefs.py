@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """lakeFS helpers for the m4 lakeFS variant (ci/m4/stack.sh lakefs, m4.py check 10).
 
-    lakefs.py setup TPCH_DIR TYPES_DIR     create repository m4 (storage namespace s3://lakefs/m4 on MinIO), upload the
+    lakefs.py setup TPCH_DIR TYPES_DIR     create repository m4lake (storage namespace s3://lakefs/m4lake on MinIO), upload the
                                            tables to branch main under parquet/<schema>/, plus lfs/t (1 row), commit
 
 lakeFS on http://127.0.0.1:8000 (API /api/v1, S3 gateway at the root); credentials from $LAKEFS_KEY / $LAKEFS_SECRET,
@@ -10,7 +10,7 @@ MinIO's from $MINIO_ROOT_USER / $MINIO_ROOT_PASSWORD.
 import base64, io, json, os, sys, urllib.error, urllib.request
 
 URL = os.environ.get("M4_LAKEFS_URL", "http://127.0.0.1:8000")
-REPO, BRANCH, PREFIX = "m4", "main", "parquet"
+REPO, BRANCH, PREFIX = "m4lake", "main", "parquet"   # lakeFS names: ^[a-z0-9][a-z0-9-]{2,62}$
 
 
 def api(method, path, body=None, ok=(200, 201, 204)):

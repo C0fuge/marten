@@ -84,7 +84,8 @@ from `tests/m4/starrocks/`. Clients via `mysql -h127.0.0.1 -P9030 -uroot`.
 | 7 | KILL QUERY during a long scan | stops within ~1 s, server-side stream cancelled |
 | 8 | token: right / wrong / missing; TLS: trusted, wrong host, `tls_verify=false` | as in BE unit test 0007; no token or password in fe.log, be.INFO, be.WARNING, query profile (grep) |
 | 9 | memory: big scan under a small `query_mem_limit` | clean error, BE stays up |
-| 10 | timings (informational only, shared runner): TPC-H per query | recorded, not a gate |
+| 10 | lakeFS (`store=lakefs` only, P3): `lfs.t` before / with a staged file / after a 2-file commit / after a delete commit; tpch through lakeFS | each commit seen by the next queries (≤ 60 s), never half a commit; staged-file visibility recorded as a note |
+| – | timings (informational only, shared runner): TPC-H per query, recorded by check 4 | recorded, not a gate |
 
 Write the results of every run to `docs/M4-RESULTS.md` (date, run id, series, pass/fail per check, failures with
 the error text). Each failure becomes a "Next steps" item in STATUS.md.
@@ -113,7 +114,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   open mode; flight1 also on 127.0.0.1:32010 for ADBC probes), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).
 - `ci/m4/m4.py` runs the checks with pymysql against 127.0.0.1:9030 and DuckDB 1.4.1 on the same parquet files
   (types tables, M4-TESTS §1–2, sr-cases) or `tests/m4/reference/sf1` (TPC-H). Implemented: checks 1–5 (+ the
-  log grep of check 8 for the dummy catalog token, + TPC-H timings of check 10). Normalisation: decimals
+  log grep of check 8 for the dummy catalog token, + TPC-H timings in check 4). Normalisation: decimals
   rounded to 4 places (exact for the types tables), DOUBLE 9 / FLOAT 6 significant digits, timestamps in UTC
   (session `time_zone='UTC'`), binary/UUID as hex; TPC-H rows compared as multisets plus the order of the `key`
   columns.
@@ -126,6 +127,12 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   host alias `flight1-alias` for the mismatch, untrusted, `tls.verify=false`, plain client); 9 = 3-key GROUP BY
   over lineitem under `query_mem_limit`=100 MB must fail with a memory error, BE alive. Each restores the open
   single-server setup at the end.
+- Input `store=lakefs` (P3, server int4+; `m4 checks=1,3,4,10 store=lakefs`): `stack.sh lakefs` starts
+  `treeverse/lakefs:1.38.0` (local KV, MinIO blockstore `s3://lakefs/m4lake`, admin key from `installation.*`, throwaway
+  values in `$M4_STATE/lakefs.env`), `ci/m4/lakefs.py setup` uploads tpch + types + `lfs/t` through the S3 gateway to
+  repository `m4lake` branch `main` and commits; `$M4_STATE/store.env` then makes every `stack.sh flight` serve
+  `lakefs://m4lake/main/parquet` (`-Darrowflight.lakefs.endpoint=http://lakefs:8000`, `FLIGHT_LAKEFS_ACCESS_KEY/SECRET_KEY`).
+  results.md names the store.
 - Check 1 also compares each `DESC` exactly (order, names, types) with the PLAN §2.2 mapping (`plan_type` in
   m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`, `flight.converted_types=convert`) of the Arrow schema the server returns in
   GetTables(include_schema).

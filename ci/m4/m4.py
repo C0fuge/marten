@@ -1017,7 +1017,7 @@ def store_env():
 
 
 def check10(conn, args, res):
-    """lakeFS (m4 input store=lakefs): the server reads lakefs://m4/main/parquet; a commit between two queries is
+    """lakeFS (m4 input store=lakefs): the server reads lakefs://m4lake/main/parquet; a commit between two queries is
     seen by the second one, never half of it, and staged (uncommitted) files are reported as a note."""
     env = store_env()
     if env.get("M4_STORE") != "lakefs":
