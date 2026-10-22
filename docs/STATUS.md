@@ -168,6 +168,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   release's SHA256SUMS against `ci/m4/server-jars.sha256` (int2 pinned); results.md names the server. m4 run
   39695113106 (int2, checks 1–9): all PASS; m4 run 39696030255 (int1, checks 1,2): PASS. Connector workarounds
   kept. No patch changed (no source preparation needed). Note: a `[skip ci]` commit does not trigger dispatch.yml.
+- 2026-10-22 00:40 UTC (cloud session): no local final check results yet (step 1 waits on the maintainer). No patch
+  changed, no CI run.
 
 ## Next steps
 
