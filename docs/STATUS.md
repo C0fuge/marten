@@ -11,8 +11,8 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green**: `m4.yml` + `ci/m4/` checks 1–9 **all pass** on series `4a9848e-fl598360` (run 39665941130; TPC-H SF1 22/22 with topn default and 0, types, pushdown, failover, KILL, token/TLS, memory, log masking). Hardened checks 1/6/8 (exact DESC vs PLAN §2.2, failover kill proven to hit the read, profile grep) green (run 39688089343). Server int2 (new default, input `server`): checks 1–9 all pass (run 39695113106); int1 still passes 1,2 (run 39696030255). Summary `docs/M4-RESULTS.md`. Left: local final check (M4-CI §6), checklist **`docs/LOCAL-FINAL-CHECK.md`** (ready) |
-| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted (release assets described); patch series of 7 patches (0007 = BE unit test; current series `4a9848e-fl598360`, FE 39664615702, BE 39664594320); release workflow `release.yml` + `ci/release.sh` **done**: draft release `v4.1.4-flight.0-dryrun` refreshed for series `4a9848e-fl598360` (release run 39670616758; FE 39664615702, BE 39664594320); publish after the local final check |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items) — connector items fixed this session, local re-check pending (Next steps 1). Summary `docs/M4-RESULTS.md` |
+| M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check |
 
 ## Patch series (on tag 4.1.4)
 
@@ -176,6 +176,19 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   slow stream) and 3 server-side (s3p4) items (silent partial result after losing 2 of 3 members, no backup
   locations, one DuckDB fatal error). Details and timings: `docs/M4-RESULTS.md` "local final check"; items under
   Next steps 1a. No patch changed.
+
+- 2026-10-22 05:40–06:55 UTC (cloud session; the locks of 01:34 and 03:41 were stale, those sessions left no
+  work): **Next step 0b done:** `stack.sh assets` picks DuckDB httpfs version and plugin dir from the jar name
+  (int1/int2: 1.4.1; int4+: 1.4.5 + `<tag>-plugins.tar.zst`, `-Darrowflight.plugins.dir`), int4 jar + plugins
+  pinned in `ci/m4/server-jars.sha256` (equal to the release asset digests), cache key `m4-assets-v3`; m4 run
+  39729516833 failed (renamed httpfs file → wrong entry point), 39730011530 int4 checks 1–9 all PASS; int4 is now
+  the m4 default. **1a connector items fixed:** A-1 root cause = `FlightMetadata.clear()` (called by MetadataMgr
+  after every query) emptied the row-count cache → `clear()` keeps caches, count started on `getTable`, first
+  caller waits ≤ 250 ms (0002); FlightScanNode `computeStatistics` (0004); plan tests (0006); keepalive timeout
+  max(20 s, keepalive_ms) (0003); m4 check 4 asserts q05 row counts. A 1 s wait on every call broke check 6
+  (memo > 3 s, m4 39732232288) → once per load, 250 ms. Builds: FE 39730095868 / 39733048078 (32/32 tests), BE
+  39730083919 / 39733050937, be-ut 39730083877 (20/20); m4 39735198246 (int4, series `fl6b6a1d`): 1–9 all PASS;
+  release dry run 39735200365.
 
 ## Next steps
 
