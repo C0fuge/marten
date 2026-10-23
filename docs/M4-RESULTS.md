@@ -348,3 +348,8 @@ partial mode 5.4 s later (snapshot pinned per query; only before/after states se
 First attempt 39881458465: 19/20, the REST fixture's default in-memory SQLite is one database per JDBC connection, so
 the check's own commit failed in the catalog (fixture now uses a SQLite file). Runs 39879641829 (int6, checks 1+3 on
 the plain S3 store: PASS) and 39880765661 (int5, check 1: PASS) also printed the int6/int5 START-NOTES.
+
+## 2026-10-23, CI: server int4b as the m4 default — series `4a9848e-fld145f6`, m4 run 39883591960
+
+int4b (int4 rebuilt with the cluster fixes for B5 member loss and the ticket secret; plugins of int4): checks 1 (25/25),
+6 failover (6/6, FailoverCount 3 after the kill during the read) and 8 token/TLS (14/14) PASS. int4b is the m4 default.

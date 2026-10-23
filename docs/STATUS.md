@@ -249,7 +249,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   m4 39881458465: 19/20 (fixture's in-memory SQLite = one db per connection, the check's own append failed) → SQLite
   file; m4 39882258299: checks 1 (25/25) and 11 (22/22) PASS — deletes applied, rename by field id, append seen by
   partial mode after 5.4 s and complete mode after 24.9 s. Details `docs/M4-RESULTS.md`. Also dispatched m4 1,6,8 on
-  int4b (run 39882298126) for "make int4b the m4 default".
+  int4b: run 39882298126 failed in setup (int4b has no own plugins asset → `stack.sh assets` now uses the base
+  build's `int4-plugins.tar.zst` for lettered rebuilds); run 39883591960: checks 1 (25/25), 6 (6/6), 8 (14/14) PASS →
+  int4b is now the m4 default (`m4.yml`, `stack.sh`). No patch changed; no fe/be build this session.
 
 ## Next steps
 
@@ -307,8 +309,8 @@ P5. **Done 2026-10-23 (m4 input `store=iceberg`, check 11, server int6, see Log)
 P4. **Upgrade readiness**: try the patch series on the newest 4.1.x tag (`git am` only, no build unless it applies
     with small fixes); write `docs/REBASE.md` with conflicts and effort. Do not change the release target (4.1.4).
 
-A new server build with cluster fixes (B5, ticket secret) will appear in `m4-assets` (name `…-int4b…` or
-newer) — when it does, make it the m4 default and rerun checks 6 and 8.
+Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 default; checks 1, 6, 8 PASS on it (run
+39883591960). Checks 2–5, 7, 9 last ran on int4 (same build apart from the cluster fixes).
 
 ## Open questions for the maintainer
 
