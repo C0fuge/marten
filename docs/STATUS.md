@@ -11,7 +11,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items); **local re-check 2026-10-22 (series `fl6b6a1d`, fixed int4): A-1, keepalive, B2/B5 PASS, SF10 85/87 + 26/26 single node, 45/45 + 26/26 3-node; q18 at BE 4G fails on memory (A-4, Next steps 1)**. Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Newest series `4a9848e-fld145f6` (+ A-4 `flight.exchange_buffer_mb`): checks 1–9 all pass (run 39873438298, check 9 6/6 incl. the q18 exchange items); lakeFS variant checks 1,3,4,10 (run 39875156594); Iceberg variant on server int6 checks 1,11 (run 39882258299). Summary `docs/M4-RESULTS.md` |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items); **local re-check 2026-10-22 (series `fl6b6a1d`, fixed int4): A-1, keepalive, B2/B5 PASS, SF10 85/87 + 26/26 single node, 45/45 + 26/26 3-node; q18 at BE 4G fails on memory (A-4, Next steps 1)**. Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Newest series `4a9848e-fld145f6` (+ A-4 `flight.exchange_buffer_mb`): checks 1–9 all pass (run 39873438298, check 9 6/6 incl. the q18 exchange items); lakeFS variant checks 1,3,4,10 (run 39875156594); Iceberg variant on server int6 checks 1,11 (run 39882258299). **Local A-4 re-check 2026-10-23 (draft `v4.1.4-flight.0-a4`): q18 at BE 4G passes with the cap (14/14 single node, 6/6 3-node; fails with the cap off), checks 4,5 SF10 87/89 + 26/26 and 45/46 + 26/26 (3-node, no spill); headroom item: pre-agg above the pushed aggregation (Next steps 1)**. Summary `docs/M4-RESULTS.md` |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check. Newer series `4a9848e-fl9ec2c3` (P1): FE 39825739612 (Flight tests), BE 39825723550, be-ut 39825723598. Newest `4a9848e-fl67776b` (P1 + P2): FE 39842646955 (Flight tests), BE 39842650526 (ccache-only rebuild; BE sources unchanged since be-ut 39825723598) — the draft was deliberately NOT refreshed (it is the build under the maintainer's re-check). Newest `4a9848e-fld145f6` (P1 + P2 + A-4 exchange cap): FE 39847449823 (Flight tests), BE 39847433502, be-ut 39847433352; separate draft `v4.1.4-flight.0-a4` for the stand's q18 re-check (release run 39874283999) |
 
 ## Patch series (on tag 4.1.4)
@@ -259,21 +259,29 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   FE base classes/SPI unchanged; BE headers additive; risk = FE gRPC 1.63 → 1.76 (grpc-bom) and a cold BE build
   in `dev-env-ubuntu:4.1.6` (thirdparty changed). No patch changed; no CI run this session.
 
+- 2026-10-23 11:03–11:35 UTC (local agent on the maintainer's stand): **A-4 re-check** with draft `v4.1.4-flight.0-a4`
+  (both build-info files `4a9848e-fld145f6`, SHA256SUMS OK), server int4 fixed, BE 4G, no spill. q18 SF10 with the default
+  exchange cap: 14/14 OK single node, 6/6 OK on 3 nodes, LocalExchangePeak 128 + 128 MB, peak per node 2.35–3.08 GB; with
+  `flight.exchange_buffer_mb = 0`: fails (972 + 367 MB, query_pool), i.e. the cap is the fix. Checks 4,5 SF10: 87/89 + 26/26
+  single node vs reference + JDBC (fails: SF1-band q05 estimate item; one q18 topn=0 at the BE process limit), 45/46 + 26/26
+  on 3 nodes without spill. Remaining peak: pre-aggregation above the pushed aggregation (Next steps 1 (a)). No patch changed.
+
 ## Next steps
 
 > **Use server int6 instead of int5** (2026-10-22, local coordinator): int5 overflows its stack on the first table refresh ~30 s after start when any catalog is configured AND the data dir has a table (then every call fails "Application error processing RPC"). int6 = int5 + fix + catalog plugin `hive` (Hive Metastore; SPI 1.1): assets `arrow-flight-server-1.0.0-int6.jar` sha256 78f06212…8d09, `int6-plugins.tar.zst` sha256 fa870ddb…adaf (plugins s3/lakefs/iceberg/hive + START-NOTES.txt). With the iceberg plugin present, `catalog=hive` needs the iceberg+avro extensions or `hive.icebergTables=skip`.
 
-1. **A-4 (q18 SF10 at BE `mem_limit = 4G`, memory) — fix in CI, waits for the stand.** Series `4a9848e-fld145f6`
-   caps the local exchange behind each Flight scan at `flight.exchange_buffer_mb` (default 16 MB per driver instead
-   of 128 MB; the stand's profile had 979 MB + 396 MB in the two exchanges behind the lineitem/orders scans, and
-   `pipeline_dop = 4` already made q18 pass). CI: m4 1–9 green (run 39873438298), but SF1 on 2 vCPUs never reaches
-   the cap, so only the stand can show the effect. **Maintainer / local agent:** with draft release
-   `v4.1.4-flight.0-a4` (both build-info files `4a9848e-fld145f6`), rerun q18 at BE 4G on the single node (both topn;
-   once more with a catalog `"flight.exchange_buffer_mb" = "0"` for comparison, record `LocalExchangePeakMemoryUsage`
-   and `QueryPeakMemoryUsagePerNode`) and on the 3-node cluster; then checks 4,5 SF10 vs reference + JDBC to make sure
-   nothing else moved. If q18 still fails: next session looks at (a) the semi-join distribution (native
-   BUCKET_SHUFFLE with orders shuffled vs JDBC PARTITIONED), else (c) document the memory need (INSTALL already says
-   q18 SF10 is at the edge of 4G and names `enable_spill`).
+1. **A-4 (q18 SF10 at BE `mem_limit = 4G`, memory) — exchange cap confirmed on the stand 2026-10-23; one headroom item
+   left.** Local A-4 re-check (draft `v4.1.4-flight.0-a4`, series `fld145f6`, server int4 fixed, BE 4G, no spill; see
+   `docs/M4-RESULTS.md`): with the default cap q18 passes 14/14 on the single node and 6/6 on the 3-node cluster (= reference,
+   4.2–7.9 s), `LocalExchangePeakMemoryUsage` 128 + 128 MB (was 979 + 396 MB); with `"flight.exchange_buffer_mb" = "0"` it
+   fails as before (972 + 367 MB, query_pool limit). Checks 4,5 SF10: single node 87/89 + 26/26 (all results = reference
+   = JDBC), 3 nodes without spill 45/46 + 26/26. Remaining: (a) peak per node is bimodal 2.35 / ~3.0 GB — the local
+   streaming pre-aggregation above the **pushed** `GROUP BY l_orderkey` (input already unique per endpoint) sometimes builds
+   a full 1.43 GB hash table next to the 1.43 GB merge-finalize table; in the m4 sequence that once hit the BE process limit
+   (`q18 topn=0`, 3.51 of 3.87 GB). Next session: when the aggregation is pushed into the Flight scan, make the
+   pre-aggregation above it force-streaming (passthrough) or drop it; plan test + m4 check 9 item. (b) m4.py check 4 item
+   `q05 EXPLAIN COSTS: orders estimate` has an SF1-only band (150K–320K); scale it with the orders row count (SF10: 2276507
+   is correct).
 2. After item 1 is settled (fix or documented) and the maintainer agrees: refresh the draft for the newest series (now `fld145f6`,
    adds P1 + P2 + A-4 cap; or release `fl6b6a1d` if the maintainer prefers the re-checked build — see Open questions), then
    `release tag=v4.1.4-flight.1 draft=false prerelease=false`; delete the `v4.1.4-flight.0-dryrun` and `v4.1.4-flight.0-a4` drafts. Retention: CI artifacts 7 days, caches evicted

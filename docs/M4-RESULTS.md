@@ -353,3 +353,41 @@ the plain S3 store: PASS) and 39880765661 (int5, check 1: PASS) also printed the
 
 int4b (int4 rebuilt with the cluster fixes for B5 member loss and the ticket secret; plugins of int4): checks 1 (25/25),
 6 failover (6/6, FailoverCount 3 after the kill during the read) and 8 token/TLS (14/14) PASS. int4b is the m4 default.
+
+## 2026-10-23, local A-4 re-check (maintainer's stand) — series `4a9848e-fld145f6`, server int4 (fixed): **A-4 fixed by the exchange cap; q18 at 4G passes, but peaks at up to 3.05 GB (pre-aggregation above the pushed aggregation)**
+
+Build: draft `v4.1.4-flight.0-a4` downloaded, `sha256sum -c SHA256SUMS` OK, `fe-build-info.txt` and `be-build-info.txt` both
+`commit_hash=4a9848e-fld145f6` (FE run 39847449823, BE run 39847433502), `starrocks_be` sha256 `29897679…` = be-build-info;
+allin1 overlay as before; `current_version()` and `SHOW BACKENDS` Version = `4.1.4-4a9848e-fld145f6`. Server int4 (fixed, jar md5
+`ff3d6a72…`, DuckDB 1.4.5): single HDFS server on `dn` (open mode) and the 3-node HDFS cluster `c3-dn1..3` (token auth).
+BE `mem_limit = 4G` (stand `be.conf`, MemLimit 3.6 GB), **no spill anywhere**. Host load 5–7. Catalogs `flight` (default cap,
+16 MB per driver) and `flight0` (`"flight.exchange_buffer_mb" = "0"`, cap off); the same pair `fc3` / `fc30` on the cluster.
+Agent notes: `bench/tools/agent-sr-final/NOTES.md` ("A-4 re-check").
+
+q18 SF10 at BE 4G (`QueryPeakMemoryUsagePerNode`; `LocalExchangePeakMemoryUsage` of the two big exchanges behind the lineitem / orders scans):
+
+| Catalog | Runs | Result | Peak per node | LocalExchangePeak (lineitem, orders) |
+|---|---|---|---|---|
+| `flight` (cap 16 MB), single node | 14 (7 per topn) | 14/14 OK, 4.9–6.7 s, = reference | 2.35–3.05 GB | 128 MB + 128 MB (16 MB × dop 8), sum of all ~265 MB |
+| `flight0` (cap off), single node | 2 (both topn) | FAIL `Memory of query_pool exceed limit … Used: 3185975568 / 3090642232, Limit: 3478923509` | 3.20 / 3.18 GB | 972 + 367 MB / 976 + 383 MB (= the 979 + 396 MB of the 2026-10-22 profile) |
+| `fc3` (cap), 3 nodes | 6 | 6/6 OK, 4.2–7.9 s, = reference | 2.36–3.08 GB | 128 MB + 128 MB |
+| `fc30` (cap off), 3 nodes | 2 | FAIL `query_pool` (3.14 / 3.11 GB used) | 3.19 / 3.18 GB | 977 + 396 MB / 904 + 382 MB |
+| `jdbc` (bridge), single node | 2 | topn default FAIL `Memory of process exceed limit` (3.6 of 3.87 GB, right after the `flight0` failures); topn 0 OK 9.0 s | 0.84 / 0.94 GB | 398 MB / 983 + 397 MB |
+
+Checks 4,5 at SF10 (`m4.py --checks 4,5 --existing-catalog --reference bench/reference/sf10`):
+
+| Run | Check 4 | Check 5 | Notes |
+|---|---|---|---|
+| single node, `flight`, `--ref-catalog jdbc` | 87/89 | 26/26 | every produced result = reference = JDBC (q18 topn default 4.74 s). FAIL 1: `q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max` orders=2276507 — the check's band 150K–320K is for SF1; at SF10 2.28 M (15 % of 15 M) is the correct estimate (check-script item). FAIL 2: `q18 topn=0` `Memory of process exceed limit … Used: 3507291128, Limit: 3865470566` (see below) |
+| 3 nodes, `fc3`, no spill (first runs used spill) | 45/46 | 26/26 | only the SF1-band q05 item; totals 22 q 42.7 s (topn default) / 42.2 s (topn 0), q18 3.74 / 3.36 s |
+
+Single node, 22 q topn default: native 60.5 s, JDBC 191.5 s (q18 4.74 vs 13.26 s; lower host load than on 2026-10-22).
+
+**Why q18 still peaks near 3 GB (remaining headroom item):** the peaks are bimodal (2.35 GB in 2 of 8 repeated runs, 2.96–3.05 GB
+in 6 of 8). The difference is the local streaming pre-aggregation above the pushed aggregation (plan fragment 4: Flight scan
+with `SELECT l_orderkey, sum(…) … GROUP BY l_orderkey` → `7:AGGREGATE (update serialize) STREAMING`). Its input is already
+grouped by the server (15 M unique keys per endpoint), so it can never reduce; in the 3 GB runs it nonetheless put all 15 M keys
+into hash tables (`HashTableMemoryUsage` 1.428 GB = 8 × 183 MB, `AggComputeTime` 281 ms) while the merge-finalize aggregation
+(node 9) holds another 1.427 GB; in the 2.35 GB runs it switched to passthrough (28 MB, 4.7 ms). With other memory resident in
+the BE process (the m4 sequence) a 3 GB peak can hit the process limit — the one m4 failure above. Fix candidate: when the
+aggregation is pushed into the Flight scan, force the pre-aggregation above it to streaming passthrough (or drop it).
