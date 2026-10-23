@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       checks:
-        description: "comma-separated check numbers of docs/M4-CI.md §4 (implemented: 1-10; 6-9 restart the Flight server; 10 needs store=lakefs)"
+        description: "comma-separated check numbers of docs/M4-CI.md §4 (implemented: 1-11; 6-9 restart the Flight server; 10 needs store=lakefs, 11 store=iceberg)"
         default: "1,2,3,4,5"
       ref_catalog:
         description: "check 4 also compares every query with this catalog (m4.py --ref-catalog; flight_c exists after check 3)"
@@ -16,7 +16,7 @@ on:
         description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, release candidate)"
         default: "arrow-flight-server-1.0.0-int4.jar"
       store:
-        description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet) or lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+)"
+        description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet), lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+) or iceberg (s3 + Iceberg REST catalog, schema ice; int6+)"
         default: "s3"
 
 concurrency:
@@ -39,7 +39,7 @@ jobs:
       - name: Check inputs
         run: |
           [[ "$M4_SERVER_JAR" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
-          case "${{ inputs.store }}" in s3|lakefs) ;; *) echo "::error::store must be s3 or lakefs"; exit 1 ;; esac
+          case "${{ inputs.store }}" in s3|lakefs|iceberg) ;; *) echo "::error::store must be s3, lakefs or iceberg"; exit 1 ;; esac
       - name: Free disk
         timeout-minutes: 5
         continue-on-error: true
@@ -106,12 +106,17 @@ jobs:
       - name: Python
         run: |
           pip install --quiet duckdb==1.4.1 pymysql pytz boto3 pyarrow adbc-driver-flightsql
-          echo "127.0.0.1 flight1" | sudo tee -a /etc/hosts
+          [ "${{ inputs.store }}" != iceberg ] || pip install --quiet "pyiceberg[pyarrow]==0.10.0"
+          # minio: a REST catalog may hand out its own S3 endpoint (http://minio:9000) to pyiceberg on the runner
+          echo "127.0.0.1 flight1 minio" | sudo tee -a /etc/hosts
       - name: MinIO + data
         run: ci/m4/stack.sh minio /home/runner/m4-assets
       - name: lakeFS + data
         if: inputs.store == 'lakefs'
         run: ci/m4/stack.sh lakefs /home/runner/m4-assets
+      - name: Iceberg REST catalog + tables
+        if: inputs.store == 'iceberg'
+        run: ci/m4/stack.sh iceberg /home/runner/m4-assets
       - name: Flight server
         run: ci/m4/stack.sh flight /home/runner/m4-assets flight1
       - name: StarRocks

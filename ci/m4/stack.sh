@@ -9,6 +9,10 @@
 #   ci/m4/stack.sh lakefs  ASSET_DIR                 start lakeFS (local KV, MinIO blockstore), repository m4lake with the same
 #                                                    tables + lfs.t on branch main (one commit); later `flight` calls serve
 #                                                    lakefs://m4lake/main/parquet (settings in $M4_STATE/store.env)
+#   ci/m4/stack.sh iceberg ASSET_DIR                 start an Iceberg REST catalog (apache/iceberg-rest-fixture, warehouse
+#                                                    s3://lake/parquet/_iceberg), namespace ice: tpch lineitem/orders, ren, t
+#                                                    (ci/m4/iceberg.py) + del with position deletes (Spark); later `flight`
+#                                                    calls serve it with -Dcatalog=iceberg-rest (int6+)
 #   ci/m4/stack.sh flight  ASSET_DIR NAME [HOSTS]    start a Flight server container NAME (port 32010 in the network)
 #   ci/m4/stack.sh starrocks FE_OUT BE_OUT           build the overlay image and start container `sr`
 #   ci/m4/stack.sh wait    NAME                      wait until the Flight server NAME is started (M4_NO_WAIT=1 skips it in `flight`)
@@ -31,6 +35,9 @@ M4_SERVER_JAR=${M4_SERVER_JAR:-arrow-flight-server-1.0.0-int4.jar}
 # docker.io/minio/minio no longer exists (2026-10-21: "pull access denied"); first image that pulls wins.
 # Format: image|args (args empty = the image's own entrypoint/cmd serves /data, as bitnami does).
 LAKEFS_IMAGE=docker.io/treeverse/lakefs:1.38.0
+ICEBERG_REST_IMAGE=docker.io/apache/iceberg-rest-fixture:1.9.2
+SPARK_IMAGE=docker.io/apache/spark:3.5.6
+SPARK_ICEBERG_PACKAGES=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.9.2,org.apache.iceberg:iceberg-aws-bundle:1.9.2
 MINIO_IMAGES=("quay.io/minio/minio:latest|server /data" "docker.io/bitnamilegacy/minio:latest|"
               "cgr.dev/chainguard/minio:latest|server /data")
 
@@ -74,6 +81,16 @@ assets)
         mkdir -p "$A/x/duckdb-v$duckdb"
         curl -sSfL "http://extensions.duckdb.org/v$duckdb/linux_amd64/httpfs.duckdb_extension.gz" | gunzip > "$A/x/$ext"
     fi
+    # Iceberg tables (int5+, plugin iceberg) are read by DuckDB's iceberg + avro extensions: an extension
+    # directory in DuckDB's layout (<dir>/v<version>/<platform>/), passed by `flight` as arrowflight.duckdb.extensionDir
+    edir=duckdb-ext/v$duckdb/linux_amd64
+    if [ -n "$plugins" ]; then
+        mkdir -p "$A/x/$edir"
+        for e in iceberg avro httpfs; do
+            [ -s "$A/x/$edir/$e.duckdb_extension" ] ||
+                curl -sSfL "http://extensions.duckdb.org/v$duckdb/linux_amd64/$e.duckdb_extension.gz" | gunzip > "$A/x/$edir/$e.duckdb_extension"
+        done
+    fi
     pdir=
     if [ -n "$plugins" ]; then
         rm -rf "$A/x/$tag" && mkdir -p "$A/x/$tag" && tar -C "$A/x/$tag" --zstd -xf "$A/$plugins"
@@ -82,7 +99,7 @@ assets)
         echo "--- $plugins: START-NOTES.txt"; cat "$A/x/$tag/START-NOTES.txt" 2>/dev/null || echo "(missing)"; echo "---"
         ls -lR "$A/x/$tag/plugins"
     fi
-    printf 'M4_HTTPFS=/srv/%s\nM4_PLUGINS_DIR=%s\n' "$ext" "$pdir" > "$A/x/server.env"
+    printf 'M4_HTTPFS=/srv/%s\nM4_PLUGINS_DIR=%s\nM4_EXT_DIR=%s\n' "$ext" "$pdir" "${plugins:+/srv/duckdb-ext}" > "$A/x/server.env"
     ls -la "$A/x" "$A/x/sf1/tpch"
     ;;
 minio)
@@ -164,6 +181,45 @@ lakefs)
       echo "M4_STORE_OPTS='-Darrowflight.lakefs.endpoint=http://lakefs:8000 -Darrowflight.lakefs.apiEndpoint=http://lakefs:8000/api/v1'"
       echo "FLIGHT_LAKEFS_ACCESS_KEY=$LAKEFS_KEY"
       echo "FLIGHT_LAKEFS_SECRET_KEY=$LAKEFS_SECRET"; } > "$M4_STATE/store.env"
+    ;;
+iceberg)
+    A=$2; net
+    . "$M4_STATE/minio.env"
+    docker run -d --name iceberg-rest --network m4 -p 127.0.0.1:8181:8181 \
+        -e AWS_ACCESS_KEY_ID="$MINIO_ROOT_USER" -e AWS_SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" -e AWS_REGION=us-east-1 \
+        -e CATALOG_WAREHOUSE=s3://lake/parquet/_iceberg/ -e CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO \
+        -e CATALOG_S3_ENDPOINT=http://minio:9000 -e CATALOG_S3_PATH__STYLE__ACCESS=true "$ICEBERG_REST_IMAGE" >/dev/null
+    ok=
+    for i in $(seq 90); do curl -sf http://127.0.0.1:8181/v1/config >/dev/null && { ok=1; break; }; sleep 1; done
+    [ -n "$ok" ] || { docker logs iceberg-rest 2>&1 | tail -60; echo "iceberg REST catalog did not start" >&2; exit 1; }
+    echo "iceberg REST catalog started after ${i}s"
+    MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
+        python3 "$REPO_ROOT/ci/m4/iceberg.py" setup "$A/x/sf1/tpch"
+    # ice.del with position deletes (pyiceberg only writes copy-on-write deletes): Spark + iceberg-spark-runtime
+    docker run --rm --network m4 -e AWS_ACCESS_KEY_ID="$MINIO_ROOT_USER" -e AWS_SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" \
+        -e AWS_REGION=us-east-1 -e HOME=/tmp "$SPARK_IMAGE" /opt/spark/bin/spark-sql --master 'local[2]' \
+        --conf spark.jars.ivy=/tmp/.ivy --packages "$SPARK_ICEBERG_PACKAGES" \
+        --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions \
+        --conf spark.sql.catalog.m4=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.m4.type=rest \
+        --conf spark.sql.catalog.m4.uri=http://iceberg-rest:8181 \
+        --conf spark.sql.catalog.m4.io-impl=org.apache.iceberg.aws.s3.S3FileIO \
+        --conf spark.sql.catalog.m4.s3.endpoint=http://minio:9000 --conf spark.sql.catalog.m4.s3.path-style-access=true \
+        -e "CREATE TABLE m4.ice.del (id BIGINT, v STRING) USING iceberg TBLPROPERTIES ('format-version'='2',
+              'write.delete.mode'='merge-on-read', 'write.update.mode'='merge-on-read');
+            INSERT INTO m4.ice.del SELECT id, concat('v', id) FROM range(1, 1001);
+            DELETE FROM m4.ice.del WHERE id % 10 = 0;
+            SELECT count(*), sum(id) FROM m4.ice.del;" 2>&1 | { grep -v ' INFO \|^\s*$' || true; } | tail -40
+    MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD \
+        python3 "$REPO_ROOT/ci/m4/iceberg.py" summary del
+    # int5+ (use int6: int5 overflows its stack on the first refresh with a catalog): the catalog's namespaces appear
+    # as schemas next to the dataDir ones; a root outside the dataDir would need a second s3 store (refused), so the
+    # warehouse lies below it in _iceberg (check 1 shows whether the dataDir listing hides it)
+    . "$A/x/server.env"
+    [ -n "${M4_EXT_DIR:-}" ] || { echo "the iceberg store needs a server with plugins (int6)" >&2; exit 1; }
+    { echo "M4_STORE=iceberg"
+      echo "M4_ICEBERG_SCHEMA=ice"
+      echo "M4_STORE_OPTS='-Dcatalog=iceberg-rest -Darrowflight.iceberg-rest.uri=http://iceberg-rest:8181 -Darrowflight.iceberg-rest.roots=s3://lake/parquet/_iceberg -Darrowflight.duckdb.extensionDir=$M4_EXT_DIR'"
+    } > "$M4_STATE/store.env"
     ;;
 flight)
     A=$2 NAME=$3 HOSTS=${4:-$3}; net

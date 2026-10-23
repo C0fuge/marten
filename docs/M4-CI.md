@@ -85,6 +85,7 @@ from `tests/m4/starrocks/`. Clients via `mysql -h127.0.0.1 -P9030 -uroot`.
 | 8 | token: right / wrong / missing; TLS: trusted, wrong host, `tls_verify=false` | as in BE unit test 0007; no token or password in fe.log, be.INFO, be.WARNING, query profile (grep) |
 | 9 | memory: big scan under a small `query_mem_limit` | clean error, BE stays up |
 | 10 | lakeFS (`store=lakefs` only, P3): `lfs.t` before / with a staged file / after a 2-file commit / after a delete commit; tpch through lakeFS | each commit seen by the next queries (≤ 60 s), never half a commit; staged-file visibility recorded as a note |
+| 11 | Iceberg (`store=iceberg` only, P5): schema `ice` from an Iceberg REST catalog next to the parquet schemas; `lineitem`/`orders` (pyiceberg, several snapshots) vs the parquet tables and q01/q04/q12 vs `reference/sf1` in both result modes; `del` with Spark position deletes; `ren` with a column renamed between two appends; an append to `t` between two queries | equal to parquet / reference; deletes applied; rename read by field id; append seen by partial mode within 90 s and by complete mode after the 60 s view refresh, never another state |
 | – | timings (informational only, shared runner): TPC-H per query, recorded by check 4 | recorded, not a gate |
 
 Write the results of every run to `docs/M4-RESULTS.md` (date, run id, series, pass/fail per check, failures with
@@ -133,6 +134,14 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   repository `m4lake` branch `main` and commits; `$M4_STATE/store.env` then makes every `stack.sh flight` serve
   `lakefs://m4lake/main/parquet` (`-Darrowflight.lakefs.endpoint=http://lakefs:8000`, `FLIGHT_LAKEFS_ACCESS_KEY/SECRET_KEY`).
   results.md names the store.
+- Input `store=iceberg` (P5, server **int6**+; `m4 checks=1,11 store=iceberg server=arrow-flight-server-1.0.0-int6.jar`):
+  `stack.sh iceberg` starts `apache/iceberg-rest-fixture:1.9.2` (in-memory catalog, S3FileIO on MinIO, warehouse
+  `s3://lake/parquet/_iceberg` — below the dataDir, since a second s3 store is refused by the server),
+  `ci/m4/iceberg.py setup` writes namespace `ice` with pyiceberg 0.10.0, and a one-shot `apache/spark:3.5.6` container
+  (iceberg-spark-runtime 1.9.2) writes `ice.del` with merge-on-read deletes. `stack.sh assets` puts DuckDB's iceberg +
+  avro v1.4.5 extensions into `x/duckdb-ext/v1.4.5/linux_amd64` for plugin builds; the server gets `-Dcatalog=iceberg-rest
+  -Darrowflight.iceberg-rest.uri=http://iceberg-rest:8181 -Darrowflight.iceberg-rest.roots=s3://lake/parquet/_iceberg
+  -Darrowflight.duckdb.extensionDir=/srv/duckdb-ext`. Not covered: equality deletes (Spark cannot write them).
 - Check 1 also compares each `DESC` exactly (order, names, types) with the PLAN §2.2 mapping (`plan_type` in
   m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`, `flight.converted_types=convert`) of the Arrow schema the server returns in
   GetTables(include_schema).

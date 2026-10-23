@@ -1066,13 +1066,122 @@ def check10(conn, args, res):
     res.add("tpch through lakeFS after the commits", ok and r[0][0] == 6001215, str(r)[:200])
 
 
+# ---------------------------------------------------------------- check 11: Iceberg tables (P5)
+
+def ref_query(conn, res, args, q, label):
+    """TPC-H query q (unqualified, current database) vs tests/m4/reference/sf1."""
+    sql = open(os.path.join(M4, "queries", f"{q}.sql")).read().strip().rstrip(";")
+    cols, ref = load_ref(q, os.path.join(M4, "reference", "sf1"))
+    t0 = time.time()
+    got = sr(conn, sql)
+    secs = time.time() - t0
+    types = [c[1] for c in cols]
+    g = [tuple(norm_sr_as(v, ty) for v, ty in zip(r, types)) for r in got]
+    e = [tuple(norm_text(v, ty) for v, ty in zip(r, types)) for r in ref]
+    det = f"rows {len(got)}/{len(ref)} {secs:.2f}s"
+    if sorted(g) != sorted(e):
+        det += f" | only in sr: {[r for r in g if r not in set(e)][:2]} | only in ref: {[r for r in e if r not in set(g)][:2]}"
+    res.add(label, sorted(g) == sorted(e), det)
+
+
+def check11(conn, args, res):
+    """Iceberg (m4 input store=iceberg): REST catalog namespace `ice` served by the iceberg plugin next to the parquet
+    directory. TPC-H lineitem/orders as Iceberg equal the parquet tables and the SF1 answers in both result modes;
+    position deletes (Spark, merge-on-read) applied; a renamed column read by field id; an append between two queries
+    is seen by the second one only, never half of it."""
+    env = store_env()
+    if env.get("M4_STORE") != "iceberg":
+        res.add("store is iceberg", False, "run the m4 workflow with store=iceberg")
+        return
+    sys.path.insert(0, os.path.join(REPO, "ci", "m4"))
+    import iceberg
+    for line in open(os.path.join(os.environ.get("M4_STATE", os.path.expanduser("~/.m4-state")), "minio.env")):
+        k, _, v = line.strip().partition("=")
+        if k:
+            os.environ.setdefault(k, v)
+    ice = env.get("M4_ICEBERG_SCHEMA", "ice")
+    make_catalogs(conn, args)
+    dbs = [r[0] for r in sr(conn, "SHOW DATABASES FROM flight")]
+    res.add(f"SHOW DATABASES has tpch and {ice}", {"tpch", ice} <= set(dbs), f"got {dbs}")
+    tabs = sorted(r[0] for r in sr(conn, f"SHOW TABLES FROM flight.{ice}"))
+    res.add(f"SHOW TABLES FROM flight.{ice}", {"del", "lineitem", "orders", "ren", "t"} <= set(tabs), f"got {tabs}")
+    for t in ("lineitem", "orders"):
+        def desc(t=t):
+            a = [(r[0], r[1]) for r in sr(conn, f"DESC flight.{ice}.{t}")]
+            b = [(r[0], r[1]) for r in sr(conn, f"DESC flight.tpch.{t}")]
+            res.add(f"DESC flight.{ice}.{t} = DESC flight.tpch.{t}", a == b, f"{a[:4]} vs {b[:4]}")
+        guarded(res, f"DESC {t}", desc)
+    sums = {"lineitem": "count(*), sum(l_quantity), sum(l_extendedprice), max(l_shipdate), count(DISTINCT l_orderkey)",
+            "orders": "count(*), sum(o_totalprice), min(o_orderdate), count(DISTINCT o_custkey)"}
+    for cat in ("flight", "flight_c"):
+        for t, agg in sums.items():
+            def same(cat=cat, t=t, agg=agg):
+                a = [tuple(norm(v) for v in r) for r in sr(conn, f"SELECT {agg} FROM {cat}.{ice}.{t}")]
+                b = [tuple(norm(v) for v in r) for r in sr(conn, f"SELECT {agg} FROM {cat}.tpch.{t}")]
+                res.add(f"{cat}.{ice}.{t} aggregates = parquet", a == b, f"{a} vs {b}")
+            guarded(res, f"{cat} {t} aggregates", same)
+        sr(conn, f"SET CATALOG {cat}")
+        try:
+            sr(conn, f"USE {ice}")
+            for q in ("q01", "q04", "q12"):
+                guarded(res, f"{cat} {q}", lambda q=q: ref_query(conn, res, args, q, f"{q} on {cat}.{ice} = reference"))
+        finally:
+            sr(conn, "SET CATALOG default_catalog")
+        # 1000 rows, ids 1..1000, every 10th deleted by a position delete file
+        def dels(cat=cat):
+            got = tuple(int(x) for x in sr(conn, f"SELECT count(*), sum(id) FROM {cat}.{ice}.del")[0])
+            n0 = sr(conn, f"SELECT count(*) FROM {cat}.{ice}.del WHERE id % 10 = 0")[0][0]
+            res.add(f"{cat}.{ice}.del: position deletes applied", got == (900, 450000) and n0 == 0,
+                    f"got {got}, deleted ids visible {n0}")
+        guarded(res, f"{cat} del", dels)
+        def ren(cat=cat):
+            got = [tuple(r) for r in sr(conn, f"SELECT id, new_name FROM {cat}.{ice}.ren ORDER BY id")]
+            one = sr(conn, f"SELECT id FROM {cat}.{ice}.ren WHERE new_name = 'b'")
+            ok = got == [(1, "a"), (2, "b"), (3, "c"), (4, "d"), (5, "e")] and [tuple(r) for r in one] == [(2,)]
+            res.add(f"{cat}.{ice}.ren: column renamed after the first append", ok, f"got {got}, filter {one}")
+        guarded(res, f"{cat} ren", ren)
+    try:
+        res.notes.append(f"{ice}.del snapshot summary: {iceberg.summary('del')}")
+    except Exception as e:
+        res.notes.append(f"{ice}.del summary: {e}")
+    rs, _ = remote_sql(conn, f"SELECT count(*) FROM flight.{ice}.del")
+    res.notes.append(f"REMOTE SQL of count(*) on {ice}.del: {rs[:300]}")
+
+    q = f"SELECT count(*), sum(id) FROM flight.{ice}.t"
+    val = lambda: tuple(int(x or 0) for x in sr(conn, q)[0])
+    first = val()
+    res.add(f"{ice}.t before the append", first == (1, 1), f"got {first}")
+    snap = iceberg.append_t([2, 3])
+    t0, seen, last = time.time(), set(), None
+    while time.time() - t0 < 90:
+        last = val()
+        seen.add(last)
+        if last == (3, 6):
+            break
+        time.sleep(1)
+    res.add("an append (one snapshot, 1 file) is seen by later queries", last == (3, 6),
+            f"got {last} after {time.time() - t0:.1f} s, snapshot {snap}")
+    res.add("no query saw a state other than before/after", seen <= {first, (3, 6)}, f"seen {sorted(seen)}")
+    # complete mode reads the server's views, refreshed every 60 s
+    t0 = time.time()
+    while True:
+        ok, r, _ = try_sql(conn, f"SELECT count(*), sum(id) FROM flight_c.{ice}.t")
+        done = ok and tuple(int(x) for x in r[0]) == (3, 6)
+        if done or time.time() - t0 > 90:
+            break
+        time.sleep(2)
+    res.add("complete mode sees the append (views refresh every 60 s)", done,
+            f"{str(r)[:200]} after {time.time() - t0:.1f} s")
+
+
 # ---------------------------------------------------------------- main
 
 TITLES = {1: "catalog, SHOW, DESC, masking", 2: "types tables, every column", 3: "M4-TESTS §1–2 (EXPLAIN + results)",
           4: "TPC-H SF1 q01–q22, topn default and 0", 5: "sr-cases on SF1", 6: "failover (2 servers)",
           7: "KILL QUERY during a long scan", 8: "token and TLS", 9: "memory limit",
-          10: "lakeFS: commits between queries"}
-FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8, 9: check9, 10: check10}
+          10: "lakeFS: commits between queries", 11: "Iceberg: REST catalog tables, deletes, rename, appends"}
+FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8, 9: check9, 10: check10,
+         11: check11}
 
 
 def main():
@@ -1129,7 +1238,7 @@ def main():
     run = os.environ.get("GITHUB_RUN_ID", "local")
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "
