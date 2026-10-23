@@ -13,8 +13,8 @@ on:
         description: "check 4 also compares every query with this catalog (m4.py --ref-catalog; flight_c exists after check 3)"
         default: ""
       server:
-        description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, int4b = int4 + cluster fixes (default), int6 = + Iceberg/Hive catalogs (store=iceberg))"
-        default: "arrow-flight-server-1.0.0-int4b.jar"
+        description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, int4b = int4 + cluster fixes, int6 = + Iceberg/Hive catalogs, int7 = int6b + stand fixes (default))"
+        default: "arrow-flight-server-1.0.0-int7.jar"
       store:
         description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet), lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+) or iceberg (s3 + Iceberg REST catalog, schema ice; int6+)"
         default: "s3"
@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-v4
+          key: m4-assets-v5
       - name: Download m4 assets
         run: ci/m4/stack.sh assets /home/runner/m4-assets
       - name: Save m4 assets
@@ -102,7 +102,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-v4
+          key: m4-assets-v5
       - name: Python
         run: |
           pip install --quiet duckdb==1.4.1 pymysql pytz boto3 pyarrow adbc-driver-flightsql

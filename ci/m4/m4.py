@@ -612,22 +612,29 @@ def check4(conn, args, res):
                     secs = time.time() - t0
                     timings.append((q, topn, secs))
                     if args.ref_catalog:
-                        # same query on the other catalog (e.g. the JDBC bridge): equal rows, timing for comparison
+                        # same query on the other catalog (e.g. the JDBC bridge): equal rows, timing for comparison.
+                        # Its errors belong to its own item, not to the item of the catalog under test.
+                        other, ref_err = None, None
                         sr(conn, f"SET CATALOG {args.ref_catalog}")
                         try:
                             sr(conn, "USE tpch")
                             t1 = time.time()
                             other = sr(conn, sql)
                             ref_timings.append((q, topn, time.time() - t1))
+                        except Exception as e:
+                            ref_err = f"ERROR of {args.ref_catalog} {type(e).__name__}: {e}".replace("\n", " ")
                         finally:
                             sr(conn, f"SET CATALOG {args.catalog}")
                             sr(conn, "USE tpch")
-                        a = [tuple(norm(v) for v in r) for r in got]
-                        b = [tuple(norm(v) for v in r) for r in other]
-                        same = sorted(a) == sorted(b) and ("ORDER BY" not in sql.upper() or a == b)
-                        res.add(f"{q} topn={topn} = {args.ref_catalog}", same,
-                                f"rows {len(a)}/{len(b)}" + ("" if same else f" | {args.catalog}={a[:2]} "
-                                                             f"{args.ref_catalog}={b[:2]}"))
+                        if ref_err:
+                            res.add(f"{q} topn={topn} = {args.ref_catalog}", False, ref_err)
+                        else:
+                            a = [tuple(norm(v) for v in r) for r in got]
+                            b = [tuple(norm(v) for v in r) for r in other]
+                            same = sorted(a) == sorted(b) and ("ORDER BY" not in sql.upper() or a == b)
+                            res.add(f"{q} topn={topn} = {args.ref_catalog}", same,
+                                    f"rows {len(a)}/{len(b)}" + ("" if same else f" | {args.catalog}={a[:2]} "
+                                                                 f"{args.ref_catalog}={b[:2]}"))
                     types = [c[1] for c in cols]
                     g = [tuple(norm_sr_as(v, ty) for v, ty in zip(r, types)) for r in got]
                     e = [tuple(norm_text(v, ty) for v, ty in zip(r, types)) for r in ref]
