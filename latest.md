@@ -1,16 +1,17 @@
-# M4 run 39880765661
+# M4 run 39881458465
 
-2026-10-23 00:57 UTC, series `4.1.4-4a9848e-fld145f6`, server `arrow-flight-server-1.0.0-int5.jar`, store `s3://lake/parquet`, checks 1
+2026-10-23 01:06 UTC, series `4.1.4-4a9848e-fld145f6`, server `arrow-flight-server-1.0.0-int6.jar`, store `iceberg: s3://lake/parquet`, checks 1,11
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 6 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 10 s |
+| 11 | Iceberg: REST catalog tables, deletes, rename, appends | FAIL | 19/20 | 29 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
 - PASS `create catalog` 
 - PASS `SHOW CREATE CATALOG masks the token` flight CREATE EXTERNAL CATALOG `flight` PROPERTIES ("type"  =  "flight", "flight.token"  =  "******", "flight.uri"  =  "grpc://flight1:32010" )
-- PASS `SHOW DATABASES has tpch and types` got ['information_schema', 'tpch', 'types']
+- PASS `SHOW DATABASES has tpch and types` got ['_iceberg', 'ice', 'information_schema', 'tpch', 'types']
 - PASS `SHOW TABLES FROM flight.tpch` got ['customer', 'lineitem', 'nation', 'orders', 'part', 'partsupp', 'region', 'supplier']
 - PASS `SHOW TABLES FROM flight.types` got ['alltypes', 'alltypes_full']
 - PASS `DESC flight.tpch.customer` 
@@ -35,6 +36,31 @@
 - PASS `DESC flight.types.alltypes_full = PLAN §2.2 mapping of the server schema` 
 - note: DESC flight.types.alltypes: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME
 - note: DESC flight.types.alltypes_full: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_blob VARBINARY, c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME, c_uuid VARCHAR(1073741824), c_interval VARCHAR(1073741824), c_list ARRAY<BIGINT>, c_struct struct<`a` int(11), `b` varchar(1073741824)>, c_map MAP<VARCHAR(1073741824),INT>
+
+## Check 11: Iceberg: REST catalog tables, deletes, rename, appends
+
+- PASS `SHOW DATABASES has tpch and ice` got ['_iceberg', 'ice', 'information_schema', 'tpch', 'types']
+- PASS `SHOW TABLES FROM flight.ice` got ['del', 'lineitem', 'orders', 'ren', 't']
+- PASS `DESC flight.ice.lineitem = DESC flight.tpch.lineitem` [('l_orderkey', 'BIGINT'), ('l_partkey', 'BIGINT'), ('l_suppkey', 'BIGINT'), ('l_linenumber', 'BIGINT')] vs [('l_orderkey', 'BIGINT'), ('l_partkey', 'BIGINT'), ('l_suppkey', 'BIGINT'), ('l_linenumber', 'BIGINT')]
+- PASS `DESC flight.ice.orders = DESC flight.tpch.orders` [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')] vs [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')]
+- PASS `flight.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
+- PASS `flight.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
+- PASS `q01 on flight.ice = reference` rows 4/4 2.92s
+- PASS `q04 on flight.ice = reference` rows 5/5 1.08s
+- PASS `q12 on flight.ice = reference` rows 2/2 1.01s
+- PASS `flight.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
+- PASS `flight.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
+- PASS `flight_c.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
+- PASS `flight_c.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
+- PASS `q01 on flight_c.ice = reference` rows 4/4 2.37s
+- PASS `q04 on flight_c.ice = reference` rows 5/5 1.27s
+- PASS `q12 on flight_c.ice = reference` rows 2/2 1.13s
+- PASS `flight_c.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
+- PASS `flight_c.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
+- PASS `ice.t before the append` got (1, 1)
+- **FAIL** `check aborted` ServerError: UncheckedSQLException: Failed to get table ice.t from catalog rest_backend
+- note: ice.del snapshot summary: {'spark.app.id': 'local-1792717456381', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3323', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6582', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792717456381', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
+- note: REMOTE SQL of count(*) on ice.del: SELECT count(*) AS "__flight_agg_0" FROM "ice"."del"
 
 ## Log masking
 
