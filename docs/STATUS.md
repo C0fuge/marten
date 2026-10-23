@@ -253,6 +253,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   build's `int4-plugins.tar.zst` for lettered rebuilds); run 39883591960: checks 1 (25/25), 6 (6/6), 8 (14/14) PASS →
   int4b is now the m4 default (`m4.yml`, `stack.sh`). No patch changed; no fe/be build this session.
 
+- 2026-10-23 01:40–02:10 UTC (cloud session): **P4 upgrade readiness done** (`docs/REBASE.md`). Newest 4.1.x tag is
+  4.1.6 (`6862092f`, no 4.1.5). The series `fld145f6` applies with plain `git am` (no conflicts, no fuzz; offsets in
+  0002/0004/0007). Semantic review: 7 shared files with harmless upstream changes; thrift ids/enums collision-free;
+  FE base classes/SPI unchanged; BE headers additive; risk = FE gRPC 1.63 → 1.76 (grpc-bom) and a cold BE build
+  in `dev-env-ubuntu:4.1.6` (thirdparty changed). No patch changed; no CI run this session.
+
 ## Next steps
 
 > **Use server int6 instead of int5** (2026-10-22, local coordinator): int5 overflows its stack on the first table refresh ~30 s after start when any catalog is configured AND the data dir has a table (then every call fails "Application error processing RPC"). int6 = int5 + fix + catalog plugin `hive` (Hive Metastore; SPI 1.1): assets `arrow-flight-server-1.0.0-int6.jar` sha256 78f06212…8d09, `int6-plugins.tar.zst` sha256 fa870ddb…adaf (plugins s3/lakefs/iceberg/hive + START-NOTES.txt). With the iceberg plugin present, `catalog=hive` needs the iceberg+avro extensions or `hive.icebergTables=skip`.
@@ -306,13 +312,20 @@ P5. **Done 2026-10-23 (m4 input `store=iceberg`, check 11, server int6, see Log)
     as Iceberg + a table with position/equality deletes + a renamed column; check the engine sees them, results equal
     the parquet tables / DuckDB, partial and complete modes; a commit between two queries is seen by the second only.~~
     Not covered: equality deletes (Spark cannot write them), `catalog=hive` (int6; needs a Hive Metastore container).
-P4. **Upgrade readiness**: try the patch series on the newest 4.1.x tag (`git am` only, no build unless it applies
-    with small fixes); write `docs/REBASE.md` with conflicts and effort. Do not change the release target (4.1.4).
+P4. **Done 2026-10-23 (`docs/REBASE.md`, see Log).** ~~**Upgrade readiness**: try the patch series on the newest 4.1.x tag (`git am` only, no build unless it applies
+    with small fixes); write `docs/REBASE.md` with conflicts and effort. Do not change the release target (4.1.4).~~
+    Newest tag 4.1.6: all 7 patches apply unchanged (offsets only); no 4.1.6 build run (see Open questions).
+
+All parallel items P1–P5 are done (2026-10-23); until the stand reports on item 1, sessions have no open CI work.
 
 Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 default; checks 1, 6, 8 PASS on it (run
 39883591960). Checks 2–5, 7, 9 last ran on int4 (same build apart from the cluster fixes).
 
 ## Open questions for the maintainer
+
+- P4 (2026-10-23): the series applies unchanged to 4.1.6 (`docs/REBASE.md`). Do you want a trial build on 4.1.6
+  (first FE-only compile + Flight unit tests ≈ 15 min after making the tag a workflow input; a full BE build is
+  cold, ≈ 90+ min)? Default plan: no build until you ask; release target stays 4.1.4.
 
 - P5 (2026-10-23), server finding (minor): with `-Dcatalog=iceberg-rest` and the warehouse below the dataDir (required:
   a second s3 store is refused), the dataDir listing also shows the warehouse directory as a schema (`_iceberg`, table
