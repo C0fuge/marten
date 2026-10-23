@@ -323,3 +323,12 @@ Checks 1–9 all PASS against int4 (25/25, 52/52, 21/21, 46/46, 26/26, 6/6, 2/2,
 returns the same 57 rows with `flight.exchange_buffer_mb` 16 (default) and 0; `LocalExchangePeakMemoryUsage` 2.5 MB vs
 2.7 MB, `QueryPeakMemoryUsagePerNode` 191.7 MB vs 188.6 MB (2 vCPUs). At SF1 the cap does not bind; the SF10 q18 effect
 at BE 4G is for the stand (STATUS Next steps 1, draft `v4.1.4-flight.0-a4`).
+
+## 2026-10-23, CI: lakeFS variant (P3) — series `4a9848e-fld145f6`, m4 run 39875156594
+
+Server int4 with the lakefs plugin on `lakefs://m4lake/main/parquet` (lakeFS 1.38.0, local KV, MinIO blockstore): checks
+1 (25/25), 3 (21/21), 4 (46/46) and the new check 10 (5/5) PASS. Check 10: `lfs.t` = (1 row) at the setup commit; a
+staged, uncommitted file is not visible; a commit adding 2 files (6 rows) is seen 1.1 s later and no query saw only one
+of the two files; a commit deleting a file is seen 1.1 s later; tpch lineitem 6001215 rows afterwards. First attempt
+39874644488 failed in setup (repository name `m4` too short for lakeFS). Default S3 path re-checked after the
+`stack.sh` change: run 39875877653, checks 1 and 6 PASS.

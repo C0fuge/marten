@@ -231,6 +231,14 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   regression; the SF10 effect needs the stand. Draft release `v4.1.4-flight.0-a4` (separate tag, the re-checked
   `v4.1.4-flight.0-dryrun` stays as is) dispatched: release run 39874283999.
 
+- 2026-10-23 00:00–00:15 UTC (cloud session): **P3 lakeFS in CI done.** m4 input `store=lakefs`: `stack.sh lakefs`
+  starts `treeverse/lakefs:1.38.0` (local KV, MinIO blockstore), `ci/m4/lakefs.py` loads tpch + types + `lfs.t` into
+  repository `m4lake` branch `main` and commits; every `stack.sh flight` then serves `lakefs://m4lake/main/parquet`
+  (int4 lakefs plugin). New check 10: a 2-file commit is seen by the next query after 1.1 s, never half of it; a
+  delete commit too; a staged (uncommitted) file is not visible (server pins the branch). m4 39874644488 failed at
+  setup (lakeFS repo names need ≥ 3 chars) → renamed; m4 39875156594 (`store=lakefs`, checks 1,3,4,10): all PASS
+  (25/25, 21/21, 46/46, 5/5); m4 39875877653 (default S3, checks 1,6): PASS after the stack.sh store change.
+
 ## Next steps
 
 > **Use server int6 instead of int5** (2026-10-22, local coordinator): int5 overflows its stack on the first table refresh ~30 s after start when any catalog is configured AND the data dir has a table (then every call fails "Application error processing RPC"). int6 = int5 + fix + catalog plugin `hive` (Hive Metastore; SPI 1.1): assets `arrow-flight-server-1.0.0-int6.jar` sha256 78f06212…8d09, `int6-plugins.tar.zst` sha256 fa870ddb…adaf (plugins s3/lakefs/iceberg/hive + START-NOTES.txt). With the iceberg plugin present, `catalog=hive` needs the iceberg+avro extensions or `hive.icebergTables=skip`.
@@ -273,10 +281,8 @@ P2. **Done 2026-10-22 (series `fl67776b`, see Log).** ~~**Column statistics for 
     option. Plan tests: join order for TPC-H q05/q08/q09 at SF1 in m4 equals the JDBC catalog's or better.~~ CI has
     no JDBC catalog: m4 records the q05/q08/q09 plan outlines and scan estimates as notes; the join-order comparison
     with the JDBC bridge belongs to the local re-check (`m4.py --ref-catalog`, EXPLAIN of q05/q08/q09 on both).
-P3. **lakeFS through the connector in CI**: `int4-plugins.tar.zst` has `plugins/lakefs`; add an m4 variant with a
-    lakeFS container (docker.io/treeverse/lakefs:1.38.0, local KV, MinIO blockstore) in front of MinIO, server
-    `-DdataDir=lakefs://<repo>/main/...` (START-NOTES.txt in the plugins tarball), and run checks 1, 3, 4 there plus
-    a "commit to main between two queries" check (a query sees one commit).
+P3. **Done 2026-10-23 (m4 input `store=lakefs`, check 10, see Log).** ~~lakeFS through the connector in CI: lakeFS
+    container in front of MinIO, checks 1, 3, 4 there plus a "commit to main between two queries" check.~~
 P5. **Server int5 with Iceberg** (release asset `arrow-flight-server-1.0.0-int5.jar` sha256 01feeb77…5808 +
     `int5-plugins.tar.zst` sha256 f600585d…5f68 with `plugins/{s3,lakefs,iceberg}` and START-NOTES.txt = int4 + catalog
     plugin `iceberg`: kinds `iceberg-hadoop` (warehouse dir on local/HDFS/S3) and `iceberg-rest` (Gravitino/Polaris);
