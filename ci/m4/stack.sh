@@ -185,10 +185,13 @@ lakefs)
 iceberg)
     A=$2; net
     . "$M4_STATE/minio.env"
+    # the image's default jdbc:sqlite::memory: is one database per JDBC connection: a commit on a second
+    # connection failed with "Failed to get table ice.t" (m4 run 39881458465), so the catalog lives in a file
     docker run -d --name iceberg-rest --network m4 -p 127.0.0.1:8181:8181 \
         -e AWS_ACCESS_KEY_ID="$MINIO_ROOT_USER" -e AWS_SECRET_ACCESS_KEY="$MINIO_ROOT_PASSWORD" -e AWS_REGION=us-east-1 \
         -e CATALOG_WAREHOUSE=s3://lake/parquet/_iceberg/ -e CATALOG_IO__IMPL=org.apache.iceberg.aws.s3.S3FileIO \
-        -e CATALOG_S3_ENDPOINT=http://minio:9000 -e CATALOG_S3_PATH__STYLE__ACCESS=true "$ICEBERG_REST_IMAGE" >/dev/null
+        -e CATALOG_S3_ENDPOINT=http://minio:9000 -e CATALOG_S3_PATH__STYLE__ACCESS=true \
+        -e CATALOG_URI=jdbc:sqlite:file:/tmp/m4-catalog.db "$ICEBERG_REST_IMAGE" >/dev/null
     ok=
     for i in $(seq 90); do curl -sf http://127.0.0.1:8181/v1/config >/dev/null && { ok=1; break; }; sleep 1; done
     [ -n "$ok" ] || { docker logs iceberg-rest 2>&1 | tail -60; echo "iceberg REST catalog did not start" >&2; exit 1; }

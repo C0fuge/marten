@@ -1144,6 +1144,9 @@ def check11(conn, args, res):
         res.notes.append(f"{ice}.del snapshot summary: {iceberg.summary('del')}")
     except Exception as e:
         res.notes.append(f"{ice}.del summary: {e}")
+    if "_iceberg" in dbs:
+        res.notes.append("the dataDir listing also shows the warehouse directory as schema _iceberg: tables "
+                         f"{sorted(r[0] for r in sr(conn, 'SHOW TABLES FROM flight._iceberg'))}")
     rs, _ = remote_sql(conn, f"SELECT count(*) FROM flight.{ice}.del")
     res.notes.append(f"REMOTE SQL of count(*) on {ice}.del: {rs[:300]}")
 
