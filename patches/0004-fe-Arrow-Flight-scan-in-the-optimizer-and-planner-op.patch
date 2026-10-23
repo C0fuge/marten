@@ -1222,7 +1222,7 @@ index 133b0a74..52d26ebd 100644
              scanOperator = new LogicalKuduScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build(),
                  columnMetaToColRefMap, Operator.DEFAULT_LIMIT, null);
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
-index 93a8bf9d..63830164 100644
+index 93a8bf9d..50065330 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 @@ -56,6 +56,7 @@ import com.starrocks.common.Pair;
@@ -1301,10 +1301,10 @@ index 93a8bf9d..63830164 100644
          @Override
          public PlanFragment visitPhysicalIcebergScan(OptExpression optExpression, ExecPlan context) {
              return buildIcebergScanNode(optExpression, context);
-@@ -2348,6 +2389,19 @@ public class PlanFragmentBuilder {
+@@ -2347,6 +2388,19 @@ public class PlanFragmentBuilder {
+                     intermediateAggrExprs, removeDistinctFlags);
          }
  
-         @Override
 +        // The pre-aggregation above an aggregation pushed into an Arrow Flight scan sees partial groups that are
 +        // already unique per endpoint: building its hash table only doubles the memory of the merge (A-4).
 +        private static String preaggregationMode(PhysicalHashAggregateOperator node, OptExpression optExpr) {
@@ -1318,9 +1318,9 @@ index 93a8bf9d..63830164 100644
 +            return mode;
 +        }
 +
+         @Override
          public PlanFragment visitPhysicalHashAggregate(OptExpression optExpr, ExecPlan context) {
              PhysicalHashAggregateOperator node = (PhysicalHashAggregateOperator) optExpr.getOp();
-             PlanFragment inputFragment = visit(optExpr.inputAt(0), context);
 @@ -2487,7 +2541,7 @@ public class PlanFragmentBuilder {
              aggregationNode.setUseSortAgg(node.isUseSortAgg());
              aggregationNode.setUsePerBucketOptimize(node.isUsePerBucketOptmize());

@@ -1004,6 +1004,17 @@ def check9_exchange(conn, args, res):
             det)
     bound = 16 * 1048576 * (os.cpu_count() or 1) + 16 * 1048576
     res.add("q18 local exchange peak <= 16 MB x cpus (+16 MB)", ex16 is not None and ex16 <= bound, det)
+    # A-4 headroom: the pre-aggregation above the pushed GROUP BY l_orderkey streams (no second hash table);
+    # whether the optimizer splits that aggregation at all depends on the scale, so this is a note
+    sr(conn, "SET CATALOG flight")
+    sr(conn, "USE tpch")
+    try:
+        plan = "\n".join(r[0] for r in sr(conn, "EXPLAIN VERBOSE " + sql))
+    finally:
+        sr(conn, "SET CATALOG default_catalog")
+    res.notes.append("q18 pre-aggregation modes: "
+                     + (", ".join(sorted(set(re.findall(r"streaming preaggregation mode: (\w+)", plan)))) or "auto only")
+                     + ("; aggregation pushed" if "__flight_agg_" in plan else "; aggregation NOT pushed"))
 
 
 # ---------------------------------------------------------------- check 10: lakeFS commits (P3)
