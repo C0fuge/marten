@@ -568,12 +568,16 @@ def check4_stats(conn, res):
 def check4_column_stats(conn, res):
     # P2: column min/max from the server (flight.column_stats). q05 keeps one year of o_orderdate (1992-01-01 ..
     # 1998-08-02 at SF1): about 15% of the 1.5M orders, ~228K. Without column statistics the optimizer's default
-    # selectivities give 94K or 375K, both outside the band.
+    # selectivities give 94K or 375K, both outside the band. The band scales with the orders row count (the
+    # local check runs SF10: 2276507 is correct there).
     sql = open(os.path.join(M4, "queries", "q05.sql")).read().strip().rstrip(";")
+    scale = int(sr(conn, "SELECT count(*) FROM orders")[0][0]) / 1_500_000
     cards = flight_scan_cardinalities(conn, sql)
     orders = [c for t, c in cards if t.split(".")[-1] == "orders"]
-    ok = len(orders) == 1 and 150_000 <= orders[0] <= 320_000
-    res.add("q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max", ok, f"orders={orders}")
+    lo, hi = int(150_000 * scale), int(320_000 * scale)
+    ok = len(orders) == 1 and lo <= orders[0] <= hi
+    res.add("q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max", ok,
+            f"orders={orders}, band {lo}..{hi} (scale {scale:g})")
     for q in ("q05", "q08", "q09"):
         sql = open(os.path.join(M4, "queries", f"{q}.sql")).read().strip().rstrip(";")
         joins = [l.strip() for l in (r[0] for r in sr(conn, "EXPLAIN " + sql))

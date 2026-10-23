@@ -28,8 +28,8 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |   4 +
- .../sql/plan/PlanFragmentBuilder.java         |  40 +++
- 21 files changed, 938 insertions(+), 1 deletion(-)
+ .../sql/plan/PlanFragmentBuilder.java         |  56 +++-
+ 21 files changed, 953 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -1222,7 +1222,7 @@ index 133b0a74..52d26ebd 100644
              scanOperator = new LogicalKuduScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build(),
                  columnMetaToColRefMap, Operator.DEFAULT_LIMIT, null);
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
-index 93a8bf9d..df9f52c7 100644
+index 93a8bf9d..63830164 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 @@ -56,6 +56,7 @@ import com.starrocks.common.Pair;
@@ -1241,7 +1241,15 @@ index 93a8bf9d..df9f52c7 100644
  import com.starrocks.planner.FragmentNormalizer;
  import com.starrocks.planner.HashJoinNode;
  import com.starrocks.planner.HdfsScanNode;
-@@ -181,6 +183,7 @@ import com.starrocks.sql.optimizer.operator.physical.PhysicalDistributionOperato
+@@ -124,6 +126,7 @@ import com.starrocks.planner.stream.StreamAggNode;
+ import com.starrocks.planner.stream.StreamJoinNode;
+ import com.starrocks.qe.ConnectContext;
+ import com.starrocks.qe.SessionVariable;
++import com.starrocks.qe.SessionVariableConstants;
+ import com.starrocks.server.GlobalStateMgr;
+ import com.starrocks.server.LocalMetastore;
+ import com.starrocks.server.WarehouseManager;
+@@ -181,6 +184,7 @@ import com.starrocks.sql.optimizer.operator.physical.PhysicalDistributionOperato
  import com.starrocks.sql.optimizer.operator.physical.PhysicalEsScanOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalFileScanOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalFilterOperator;
@@ -1249,7 +1257,7 @@ index 93a8bf9d..df9f52c7 100644
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHashAggregateOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHashJoinOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHiveScanOperator;
-@@ -1556,6 +1559,43 @@ public class PlanFragmentBuilder {
+@@ -1556,6 +1560,43 @@ public class PlanFragmentBuilder {
              return fragment;
          }
  
@@ -1293,3 +1301,32 @@ index 93a8bf9d..df9f52c7 100644
          @Override
          public PlanFragment visitPhysicalIcebergScan(OptExpression optExpression, ExecPlan context) {
              return buildIcebergScanNode(optExpression, context);
+@@ -2348,6 +2389,19 @@ public class PlanFragmentBuilder {
+         }
+ 
+         @Override
++        // The pre-aggregation above an aggregation pushed into an Arrow Flight scan sees partial groups that are
++        // already unique per endpoint: building its hash table only doubles the memory of the merge (A-4).
++        private static String preaggregationMode(PhysicalHashAggregateOperator node, OptExpression optExpr) {
++            String mode = node.getNeededPreaggregationMode();
++            if (node.getType().isLocal() && node.canUseStreamingPreAgg()
++                    && SessionVariableConstants.AUTO.equalsIgnoreCase(mode)
++                    && optExpr.inputAt(0).getOp() instanceof PhysicalFlightScanOperator scan
++                    && scan.getAggregationPushdown() != null) {
++                return SessionVariableConstants.FORCE_STREAMING;
++            }
++            return mode;
++        }
++
+         public PlanFragment visitPhysicalHashAggregate(OptExpression optExpr, ExecPlan context) {
+             PhysicalHashAggregateOperator node = (PhysicalHashAggregateOperator) optExpr.getOp();
+             PlanFragment inputFragment = visit(optExpr.inputAt(0), context);
+@@ -2487,7 +2541,7 @@ public class PlanFragmentBuilder {
+             aggregationNode.setUseSortAgg(node.isUseSortAgg());
+             aggregationNode.setUsePerBucketOptimize(node.isUsePerBucketOptmize());
+             aggregationNode.setLocalLimit(node.getLocalLimit());
+-            aggregationNode.setStreamingPreaggregationMode(node.getNeededPreaggregationMode());
++            aggregationNode.setStreamingPreaggregationMode(preaggregationMode(node, optExpr));
+             aggregationNode.setHasNullableGenerateChild();
+             aggregationNode.computeStatistics(optExpr.getStatistics());
+             aggregationNode.setGroupByMinMaxStats(node.getGroupByMinMaxStatistic());

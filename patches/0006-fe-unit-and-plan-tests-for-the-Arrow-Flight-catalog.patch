@@ -7,13 +7,13 @@ FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggrega
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
  .../flight/FlightPropertiesTest.java          | 117 +++++++
- .../flight/FlightSqlMetadataClientTest.java   | 107 +++++++
- .../flight/FlightSqlRendererTest.java         | 123 ++++++++
- .../flight/FlightTypeMapperTest.java          | 164 ++++++++++
+ .../flight/FlightSqlMetadataClientTest.java   | 107 ++++++
+ .../flight/FlightSqlRendererTest.java         | 123 +++++++
+ .../flight/FlightTypeMapperTest.java          | 164 +++++++++
  .../flight/MockedFlightSqlMetadataClient.java | 132 ++++++++
- .../FlightAggregationPushdownRuleTest.java    |  72 +++++
- .../sql/plan/FlightScanPlanTest.java          | 297 ++++++++++++++++++
- 7 files changed, 1012 insertions(+)
+ .../FlightAggregationPushdownRuleTest.java    |  72 ++++
+ .../sql/plan/FlightScanPlanTest.java          | 316 ++++++++++++++++++
+ 7 files changed, 1031 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -775,10 +775,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..794cc15b
+index 00000000..fd75268c
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,316 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -917,6 +917,25 @@ index 00000000..794cc15b
 +        // the WHERE is part of the remote aggregation; the scan keeps no predicate
 +        assertNotContains(plan, "PREDICATES: ", "coalesce(");
 +        assertContains(plan, "having: ");
++    }
++
++    @Test
++    public void testPreAggregationAbovePushedAggregationStreams() throws Exception {
++        // A-4: the partial groups of a pushed GROUP BY are already unique per endpoint; a hash-table
++        // pre-aggregation above them only doubles the memory of the merge
++        String sql = "select k, count(*), min(id) from " + T2 + " group by k";
++        int stage = connectContext.getSessionVariable().getNewPlannerAggStage();
++        try {
++            connectContext.getSessionVariable().setNewPlanerAggStage(2);
++            String plan = getVerboseExplain(sql);
++            assertContains(plan, "__flight_agg_", "streaming preaggregation mode: force_streaming");
++            connectContext.getSessionVariable().setFlightAggregatePushdown(false);
++            plan = getVerboseExplain(sql);
++            assertNotContains(plan, "__flight_agg_", "streaming preaggregation mode: force_streaming");
++        } finally {
++            connectContext.getSessionVariable().setFlightAggregatePushdown(true);
++            connectContext.getSessionVariable().setNewPlanerAggStage(stage);
++        }
 +    }
 +
 +    @Test
