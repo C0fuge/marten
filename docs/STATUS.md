@@ -270,18 +270,20 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 > **Use server int6 instead of int5** (2026-10-22, local coordinator): int5 overflows its stack on the first table refresh ~30 s after start when any catalog is configured AND the data dir has a table (then every call fails "Application error processing RPC"). int6 = int5 + fix + catalog plugin `hive` (Hive Metastore; SPI 1.1): assets `arrow-flight-server-1.0.0-int6.jar` sha256 78f06212…8d09, `int6-plugins.tar.zst` sha256 fa870ddb…adaf (plugins s3/lakefs/iceberg/hive + START-NOTES.txt). With the iceberg plugin present, `catalog=hive` needs the iceberg+avro extensions or `hive.icebergTables=skip`.
 
-1. **A-4 (q18 SF10 at BE `mem_limit = 4G`, memory) — exchange cap confirmed on the stand 2026-10-23; one headroom item
-   left.** Local A-4 re-check (draft `v4.1.4-flight.0-a4`, series `fld145f6`, server int4 fixed, BE 4G, no spill; see
+1. **A-4 (q18 SF10 at BE `mem_limit = 4G`, memory) — exchange cap confirmed on the stand 2026-10-23; headroom items (a)
+   and (b) done in CI 2026-10-23 (series `fl4bda75`, see Log); needs a stand re-check of q18 at 4G (peak per node expected
+   ≈ 2.35 GB every time).** Local A-4 re-check (draft `v4.1.4-flight.0-a4`, series `fld145f6`, server int4 fixed, BE 4G, no spill; see
    `docs/M4-RESULTS.md`): with the default cap q18 passes 14/14 on the single node and 6/6 on the 3-node cluster (= reference,
    4.2–7.9 s), `LocalExchangePeakMemoryUsage` 128 + 128 MB (was 979 + 396 MB); with `"flight.exchange_buffer_mb" = "0"` it
    fails as before (972 + 367 MB, query_pool limit). Checks 4,5 SF10: single node 87/89 + 26/26 (all results = reference
    = JDBC), 3 nodes without spill 45/46 + 26/26. Remaining: (a) peak per node is bimodal 2.35 / ~3.0 GB — the local
    streaming pre-aggregation above the **pushed** `GROUP BY l_orderkey` (input already unique per endpoint) sometimes builds
    a full 1.43 GB hash table next to the 1.43 GB merge-finalize table; in the m4 sequence that once hit the BE process limit
-   (`q18 topn=0`, 3.51 of 3.87 GB). Next session: when the aggregation is pushed into the Flight scan, make the
-   pre-aggregation above it force-streaming (passthrough) or drop it; plan test + m4 check 9 item. (b) m4.py check 4 item
-   `q05 EXPLAIN COSTS: orders estimate` has an SF1-only band (150K–320K); scale it with the orders row count (SF10: 2276507
-   is correct).
+   (`q18 topn=0`, 3.51 of 3.87 GB). **Done 2026-10-23:** the local (split) aggregation directly above a Flight scan with a
+   pushed aggregation is planned `force_streaming` when the session mode is `auto` (PlanFragmentBuilder, patch 0004;
+   plan test `testPreAggregationAbovePushedAggregationStreams`, patch 0006; m4 check 9 notes the q18 pre-aggregation
+   modes). (b) **Done 2026-10-23:** check 4's q05 orders band scales with `count(*)` of orders (SF1 150K–320K, SF10
+   1.5M–3.2M). Stand: re-run q18 at BE 4G and checks 4,5 SF10 with a draft of series `fl4bda75` (Next steps 2 makes it).
 2. After item 1 is settled (fix or documented) and the maintainer agrees: refresh the draft for the newest series (now `fld145f6`,
    adds P1 + P2 + A-4 cap; or release `fl6b6a1d` if the maintainer prefers the re-checked build — see Open questions), then
    `release tag=v4.1.4-flight.1 draft=false prerelease=false`; delete the `v4.1.4-flight.0-dryrun` and `v4.1.4-flight.0-a4` drafts. Retention: CI artifacts 7 days, caches evicted

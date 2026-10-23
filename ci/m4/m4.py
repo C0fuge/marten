@@ -1000,8 +1000,10 @@ def check9_exchange(conn, args, res):
            f"cpus {os.cpu_count()}" + (f" | {e16 or e0}" if ex16 is None or ex0 is None else ""))
     res.add("q18 same rows with flight.exchange_buffer_mb=16 and 0",
             sorted(map(tuple, r16)) == sorted(map(tuple, r0)) and len(r16) > 0, f"rows {len(r16)}/{len(r0)}")
-    res.add("q18 local exchange peak with the cap <= without", ex16 is not None and ex0 is not None and ex16 <= ex0,
-            det)
+    # the comparison only means something when the uncapped exchange gets past one driver's cap; below that (SF1 on
+    # the 2-vCPU runner: 2.5-3.5 MB either way) the two peaks differ by noise (m4 39949914514)
+    res.add("q18 local exchange peak with the cap <= without (when the uncapped peak exceeds 16 MB)",
+            ex16 is not None and ex0 is not None and (ex16 <= ex0 or ex0 <= 16 * 1048576), det)
     bound = 16 * 1048576 * (os.cpu_count() or 1) + 16 * 1048576
     res.add("q18 local exchange peak <= 16 MB x cpus (+16 MB)", ex16 is not None and ex16 <= bound, det)
     # A-4 headroom: the pre-aggregation above the pushed GROUP BY l_orderkey streams (no second hash table);
