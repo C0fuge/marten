@@ -437,3 +437,20 @@ Checks 4,5 at SF10 (`m4.py --checks 4,5 --existing-catalog --reference bench/ref
 | 3 nodes, `fc3`, no spill | **46/46** | 26/26 | q05 orders item PASS (scale 10); 22 q totals 19.9 / 24.1 s, q18 1.85 / 2.39 s |
 
 JDBC bridge (single node, same m4 run): 21 q (q18 failed) 167.7 / 168.5 s.
+
+## 2026-10-23, CI: server int7 as the m4 default — series `4a9848e-fl4bda75`, m4 runs 39984493363 / 39984497103 / 39987340277
+
+int7 (= int6b + the stand fixes for lakeFS, Iceberg and Hive; plugins s3/lakefs/iceberg/hive; sha256 pinned in
+`ci/m4/server-jars.sha256`, equal to the asset digests) is the m4 default for every store; assets cache `m4-assets-v5`.
+Full suite once, all PASS:
+
+| Run | Store | Checks |
+|---|---|---|
+| 39984493363 | s3 | 1 25/25, 2 52/52, 3 21/21, 4 46/46, 5 26/26, 6 6/6, 7 2/2, 8 14/14, 9 6/6 |
+| 39984497103 | iceberg | 1 25/25, 11 22/22 (append seen by partial mode after 5.3 s, complete mode after 20.7 s) |
+| 39987340277 | lakefs | 1 25/25, 3 21/21, 4 46/46, 10 5/5 |
+
+Unchanged with int7: the dataDir listing still shows the Iceberg warehouse directory as schema `_iceberg` (Open
+questions). Harness: check 4 now reports an error of the `--ref-catalog` query under its own item
+`<q> topn=<x> = <ref>` (FAIL with `ERROR of <ref>`) instead of under the item of the catalog under test.
+
