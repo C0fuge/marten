@@ -1,11 +1,11 @@
-# M4 run 39881458465
+# M4 run 39882258299
 
-2026-10-23 01:06 UTC, series `4.1.4-4a9848e-fld145f6`, server `arrow-flight-server-1.0.0-int6.jar`, store `iceberg: s3://lake/parquet`, checks 1,11
+2026-10-23 01:18 UTC, series `4.1.4-4a9848e-fld145f6`, server `arrow-flight-server-1.0.0-int6.jar`, store `iceberg: s3://lake/parquet`, checks 1,11
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 10 s |
-| 11 | Iceberg: REST catalog tables, deletes, rename, appends | FAIL | 19/20 | 29 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 9 s |
+| 11 | Iceberg: REST catalog tables, deletes, rename, appends | PASS | 22/22 | 54 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
@@ -45,21 +45,24 @@
 - PASS `DESC flight.ice.orders = DESC flight.tpch.orders` [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')] vs [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')]
 - PASS `flight.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
 - PASS `flight.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
-- PASS `q01 on flight.ice = reference` rows 4/4 2.92s
-- PASS `q04 on flight.ice = reference` rows 5/5 1.08s
-- PASS `q12 on flight.ice = reference` rows 2/2 1.01s
+- PASS `q01 on flight.ice = reference` rows 4/4 2.25s
+- PASS `q04 on flight.ice = reference` rows 5/5 1.03s
+- PASS `q12 on flight.ice = reference` rows 2/2 0.76s
 - PASS `flight.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
 - PASS `flight.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
 - PASS `flight_c.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
 - PASS `flight_c.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
-- PASS `q01 on flight_c.ice = reference` rows 4/4 2.37s
-- PASS `q04 on flight_c.ice = reference` rows 5/5 1.27s
-- PASS `q12 on flight_c.ice = reference` rows 2/2 1.13s
+- PASS `q01 on flight_c.ice = reference` rows 4/4 1.93s
+- PASS `q04 on flight_c.ice = reference` rows 5/5 0.84s
+- PASS `q12 on flight_c.ice = reference` rows 2/2 0.98s
 - PASS `flight_c.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
 - PASS `flight_c.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
 - PASS `ice.t before the append` got (1, 1)
-- **FAIL** `check aborted` ServerError: UncheckedSQLException: Failed to get table ice.t from catalog rest_backend
-- note: ice.del snapshot summary: {'spark.app.id': 'local-1792717456381', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3323', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6582', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792717456381', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
+- PASS `an append (one snapshot, 1 file) is seen by later queries` got (3, 6) after 5.4 s, snapshot 818627115844537574
+- PASS `no query saw a state other than before/after` seen [(1, 1), (3, 6)]
+- PASS `complete mode sees the append (views refresh every 60 s)` [(3, 6)] after 24.9 s
+- note: ice.del snapshot summary: {'spark.app.id': 'local-1792718119418', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3322', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6581', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792718119418', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
+- note: the dataDir listing also shows the warehouse directory as schema _iceberg: tables ['ice']
 - note: REMOTE SQL of count(*) on ice.del: SELECT count(*) AS "__flight_agg_0" FROM "ice"."del"
 
 ## Log masking
