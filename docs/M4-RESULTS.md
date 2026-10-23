@@ -391,3 +391,14 @@ into hash tables (`HashTableMemoryUsage` 1.428 GB = 8 × 183 MB, `AggComputeTime
 (node 9) holds another 1.427 GB; in the 2.35 GB runs it switched to passthrough (28 MB, 4.7 ms). With other memory resident in
 the BE process (the m4 sequence) a 3 GB peak can hit the process limit — the one m4 failure above. Fix candidate: when the
 aggregation is pushed into the Flight scan, force the pre-aggregation above it to streaming passthrough (or drop it).
+
+## 2026-10-23, CI: A-4 headroom (force-streaming pre-aggregation) — series `4a9848e-fl4bda75`, m4 runs 39949914514 / 39951241481
+
+- The local aggregation directly above a Flight scan with a pushed aggregation is planned `force_streaming` (session
+  mode `auto` only); check 9 note: `q18 pre-aggregation modes: force_streaming; aggregation pushed`.
+- Run 39949914514 (checks 1–9, server int4b): 1–8 PASS (25/25, 52/52, 21/21, 46/46, 26/26, 6/6, 2/2, 14/14); check 9 5/6:
+  "exchange peak with the cap <= without" 3.5 vs 2.5 MB — at SF1 on 2 vCPUs neither run reaches the 16 MB cap, so the
+  comparison is noise (earlier 2.5 vs 2.7 MB). The item now compares only when the uncapped peak exceeds 16 MB.
+- Run 39951241481 (checks 4,9): 46/46 (q05 orders band now scaled by the orders row count: 227651 in 150000..320000),
+  6/6 (exchange 3.4 vs 4.6 MB, query peak/node 189 MB).
+- The SF10 memory effect needs the stand (draft `v4.1.4-flight.0-a4b`).
