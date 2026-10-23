@@ -371,7 +371,7 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 - P5 (2026-10-23), server finding (minor): with `-Dcatalog=iceberg-rest` and the warehouse below the dataDir (required:
   a second s3 store is refused), the dataDir listing also shows the warehouse directory as a schema (`_iceberg`, table
-  `ice`). The server could skip catalog roots (or `_`/`.` directories) in the dataDir listing. No connector change needed.
+  `ice`; still so with int7, m4 39984497103). The server could skip catalog roots (or `_`/`.` directories) in the dataDir listing. No connector change needed.
 
 - A-4 (2026-10-22): `flight.exchange_buffer_mb` defaults to 16 MB per driver (StarRocks uses 128 MB for every scan).
   A smaller buffer can make a fast Flight scan wait more often for slow consumers; m4 timings did not move at SF1.
