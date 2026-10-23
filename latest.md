@@ -1,3 +1,76 @@
-# M4 run 39882298126
+# M4 run 39883591960
 
-Setup failed before the checks finished (checks 1,6,8); see the job log.
+2026-10-23 01:29 UTC, series `4.1.4-4a9848e-fld145f6`, server `arrow-flight-server-1.0.0-int4b.jar`, store `s3: s3://lake/parquet`, checks 1,6,8
+
+| # | Check | Result | Items | Time |
+|---|---|---|---|---|
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 6 s |
+| 6 | failover (2 servers) | PASS | 6/6 | 82 s |
+| 8 | token and TLS | PASS | 14/14 | 27 s |
+
+## Check 1: catalog, SHOW, DESC, masking
+
+- PASS `create catalog` 
+- PASS `SHOW CREATE CATALOG masks the token` flight CREATE EXTERNAL CATALOG `flight` PROPERTIES ("type"  =  "flight", "flight.token"  =  "******", "flight.uri"  =  "grpc://flight1:32010" )
+- PASS `SHOW DATABASES has tpch and types` got ['information_schema', 'tpch', 'types']
+- PASS `SHOW TABLES FROM flight.tpch` got ['customer', 'lineitem', 'nation', 'orders', 'part', 'partsupp', 'region', 'supplier']
+- PASS `SHOW TABLES FROM flight.types` got ['alltypes', 'alltypes_full']
+- PASS `DESC flight.tpch.customer` 
+- PASS `DESC flight.tpch.lineitem` 
+- PASS `DESC flight.tpch.nation` 
+- PASS `DESC flight.tpch.orders` 
+- PASS `DESC flight.tpch.part` 
+- PASS `DESC flight.tpch.partsupp` 
+- PASS `DESC flight.tpch.region` 
+- PASS `DESC flight.tpch.supplier` 
+- PASS `DESC flight.types.alltypes` 
+- PASS `DESC flight.types.alltypes_full` 
+- PASS `DESC flight.tpch.customer = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.lineitem = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.nation = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.orders = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.part = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.partsupp = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.region = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.tpch.supplier = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.types.alltypes = PLAN §2.2 mapping of the server schema` 
+- PASS `DESC flight.types.alltypes_full = PLAN §2.2 mapping of the server schema` 
+- note: DESC flight.types.alltypes: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME
+- note: DESC flight.types.alltypes_full: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_blob VARBINARY, c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME, c_uuid VARCHAR(1073741824), c_interval VARCHAR(1073741824), c_list ARRAY<BIGINT>, c_struct struct<`a` int(11), `b` varchar(1073741824)>, c_map MAP<VARCHAR(1073741824),INT>
+
+## Check 6: failover (2 servers)
+
+- PASS `both servers up: full scan correct` 6.7s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
+- PASS `both servers up: 3x lineitem read correct` 5.3s got=[('18003645', '459236385', '476991627')]
+- PASS `flight2 stopped before the query: succeeds via backup locations` 12.1s got=[('6001215', '153078795', '158997209')]
+- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 5.7s got=[('18003645', '459236385', '476991627')] exp=[('18003645', '459236385', '476991627')]
+- PASS `the kill overlapped the read (query ended after it; error or FailoverCount > 0)` ended 3.7s after the kill, success, FailoverCount=3
+- PASS `BE alive after failover tests` 
+- note: plan of the failover scan mentions 'flight' 0x
+- note: during: read time with both servers 5.3s; flight2 killed 2.0s into the query; query ended 3.7s after the kill
+
+## Check 8: token and TLS
+
+- PASS `token server, right token` ok [(25,)]
+- PASS `token server, wrong token fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAUTHENTICATED: Missing or wrong access token\nFlightRuntimeException: Missing or wrong access token')
+- PASS `token server, no token fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAUTHENTICATED: Missing or wrong access token\nFlightRuntimeException: Missing or wrong access token')
+- PASS `token server, basic auth user:<token>` ok [(25,)]
+- PASS `SHOW CREATE CATALOG masks the password` f_basic CREATE EXTERNAL CATALOG `f_basic`
+PROPERTIES ("flight.password"  =  "******",
+"type"  =  "flight",
+"flight.uri"  =  "grpc://flight1:32010",
+"flight.user"  =  "m4"
+)
+- PASS `query profile of a f_tok scan has the Flight scan` 10742 chars
+- PASS `query profile of a f_tok scan: token not in it` 
+- PASS `query profile of a f_basic scan has the Flight scan` 10693 chars
+- PASS `query profile of a f_basic scan: token not in it` 
+- PASS `TLS, trusted CA file` ok [(25,)]
+- PASS `TLS, wrong host name fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline$TailContext#0]\nFlightRuntimeException: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline
+- PASS `TLS, untrusted certificate fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline$TailContext#0]\nFlightRuntimeException: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline
+- PASS `TLS, flight.tls.verify=false` ok [(25,)]
+- PASS `plain client against the TLS server fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: Network closed for unknown reason\nFlightRuntimeException: Network closed for unknown reason')
+
+## Log masking
+
+- PASS catalog token in no log (fe.log, be.INFO/WARNING, container logs)
