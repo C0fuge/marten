@@ -332,3 +332,19 @@ staged, uncommitted file is not visible; a commit adding 2 files (6 rows) is see
 of the two files; a commit deleting a file is seen 1.1 s later; tpch lineitem 6001215 rows afterwards. First attempt
 39874644488 failed in setup (repository name `m4` too short for lakeFS). Default S3 path re-checked after the
 `stack.sh` change: run 39875877653, checks 1 and 6 PASS.
+
+## 2026-10-23, CI: Iceberg variant (P5) — series `4a9848e-fld145f6`, server int6, m4 run 39882258299
+
+Server int6 (int5 + refresh-recursion fix + hive plugin) with `-Dcatalog=iceberg-rest` against an Iceberg REST catalog
+(`apache/iceberg-rest-fixture:1.9.2`, warehouse `s3://lake/parquet/_iceberg` on MinIO), DuckDB iceberg + avro v1.4.5
+extensions: checks 1 (25/25) and the new check 11 (22/22) PASS. Schema `ice` appears next to `tpch`/`types`.
+`ice.lineitem` / `ice.orders` (written by pyiceberg 0.10.0 in several appends) have the same DESC and aggregates as the
+parquet tables, q01/q04/q12 equal the SF1 reference, in partial and complete mode. `ice.del` (Spark 3.5.6 + Iceberg
+1.9.2, merge-on-read: 2 position delete files, 100 deletes) returns 900 rows in both modes. `ice.ren` (column renamed
+between two appends) reads both files by field id, filter on the new name works. An append to `ice.t` was seen by
+partial mode 5.4 s later (snapshot pinned per query; only before/after states seen) and by complete mode after 24.9 s
+(view refresh, ≤ 60 s). Finding (server, minor): the dataDir listing also shows the warehouse directory as schema
+`_iceberg` (table `ice`). Not covered: equality deletes (Spark cannot write them), Hive Metastore (int6 `catalog=hive`).
+First attempt 39881458465: 19/20, the REST fixture's default in-memory SQLite is one database per JDBC connection, so
+the check's own commit failed in the catalog (fixture now uses a SQLite file). Runs 39879641829 (int6, checks 1+3 on
+the plain S3 store: PASS) and 39880765661 (int5, check 1: PASS) also printed the int6/int5 START-NOTES.

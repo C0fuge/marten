@@ -11,7 +11,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M1 | FE catalog `flight`: schemas, tables, type mapping, secret masking | **done in CI** (compile + unit tests FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest: 14/14, run 39447425479); functional check is M4 |
 | M2 | BE native scanner (partial mode, location failover, cancellation), Arrow → Chunk | thrift (0001), FE FlightScanNode (0004), BE connector 0003 compiles and links (current: run 39484148997); BE unit test 0007 against an in-process Flight server **18/18 green** incl. basic auth and TLS (be-ut run 39514450368); functional check is M4 |
 | M3 | Pushdown: projection, filters (BE re-check), LIMIT, count(*), GROUP BY aggregation; TOP-N fix | **done in CI**: projection/filters/LIMIT, `FlightAggregationPushdownRule` (GROUP BY + count/sum/min/max, also covers count(*)), session switches (0004); TOP-N fix (0005). Unit tests + plan test FlightScanPlanTest (7/7, EXPLAIN REMOTE SQL) green (run 39465778230); functional check is M4 |
-| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items); **local re-check 2026-10-22 (series `fl6b6a1d`, fixed int4): A-1, keepalive, B2/B5 PASS, SF10 85/87 + 26/26 single node, 45/45 + 26/26 3-node; q18 at BE 4G fails on memory (A-4, Next steps 1)**. Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Newest series `4a9848e-fld145f6` (+ A-4 `flight.exchange_buffer_mb`): checks 1–9 all pass (run 39873438298, check 9 6/6 incl. the q18 exchange items). Summary `docs/M4-RESULTS.md` |
+| M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items); **local re-check 2026-10-22 (series `fl6b6a1d`, fixed int4): A-1, keepalive, B2/B5 PASS, SF10 85/87 + 26/26 single node, 45/45 + 26/26 3-node; q18 at BE 4G fails on memory (A-4, Next steps 1)**. Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Newest series `4a9848e-fld145f6` (+ A-4 `flight.exchange_buffer_mb`): checks 1–9 all pass (run 39873438298, check 9 6/6 incl. the q18 exchange items); lakeFS variant checks 1,3,4,10 (run 39875156594); Iceberg variant on server int6 checks 1,11 (run 39882258299). Summary `docs/M4-RESULTS.md` |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check. Newer series `4a9848e-fl9ec2c3` (P1): FE 39825739612 (Flight tests), BE 39825723550, be-ut 39825723598. Newest `4a9848e-fl67776b` (P1 + P2): FE 39842646955 (Flight tests), BE 39842650526 (ccache-only rebuild; BE sources unchanged since be-ut 39825723598) — the draft was deliberately NOT refreshed (it is the build under the maintainer's re-check). Newest `4a9848e-fld145f6` (P1 + P2 + A-4 exchange cap): FE 39847449823 (Flight tests), BE 39847433502, be-ut 39847433352; separate draft `v4.1.4-flight.0-a4` for the stand's q18 re-check (release run 39874283999) |
 
 ## Patch series (on tag 4.1.4)
@@ -239,6 +239,18 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   setup (lakeFS repo names need ≥ 3 chars) → renamed; m4 39875156594 (`store=lakefs`, checks 1,3,4,10): all PASS
   (25/25, 21/21, 46/46, 5/5); m4 39875877653 (default S3, checks 1,6): PASS after the stack.sh store change.
 
+- 2026-10-23 00:40–01:35 UTC (cloud session): **P5 Iceberg in CI done.** Pinned the int4b/int5/int6 checksums (asset
+  digests of `m4-assets`) in `ci/m4/server-jars.sha256`, assets cache key v4. m4 39879641829 (int6, plain S3, checks 1,3:
+  PASS) and 39880765661 (int5, check 1: PASS) printed the START-NOTES (Iceberg settings). New m4 input `store=iceberg`
+  (int6+): `stack.sh iceberg` starts `apache/iceberg-rest-fixture:1.9.2` (warehouse `s3://lake/parquet/_iceberg`, below
+  the dataDir because the server refuses a second s3 store), `ci/m4/iceberg.py` writes namespace `ice` with pyiceberg
+  (lineitem, orders, `ren` with a renamed column, `t`), a Spark 3.5.6 container writes `ice.del` with position deletes;
+  `stack.sh assets` fetches DuckDB iceberg + avro v1.4.5; the server runs with `-Dcatalog=iceberg-rest`. New check 11.
+  m4 39881458465: 19/20 (fixture's in-memory SQLite = one db per connection, the check's own append failed) → SQLite
+  file; m4 39882258299: checks 1 (25/25) and 11 (22/22) PASS — deletes applied, rename by field id, append seen by
+  partial mode after 5.4 s and complete mode after 24.9 s. Details `docs/M4-RESULTS.md`. Also dispatched m4 1,6,8 on
+  int4b (run 39882298126) for "make int4b the m4 default".
+
 ## Next steps
 
 > **Use server int6 instead of int5** (2026-10-22, local coordinator): int5 overflows its stack on the first table refresh ~30 s after start when any catalog is configured AND the data dir has a table (then every call fails "Application error processing RPC"). int6 = int5 + fix + catalog plugin `hive` (Hive Metastore; SPI 1.1): assets `arrow-flight-server-1.0.0-int6.jar` sha256 78f06212…8d09, `int6-plugins.tar.zst` sha256 fa870ddb…adaf (plugins s3/lakefs/iceberg/hive + START-NOTES.txt). With the iceberg plugin present, `catalog=hive` needs the iceberg+avro extensions or `hive.icebergTables=skip`.
@@ -283,14 +295,15 @@ P2. **Done 2026-10-22 (series `fl67776b`, see Log).** ~~**Column statistics for 
     with the JDBC bridge belongs to the local re-check (`m4.py --ref-catalog`, EXPLAIN of q05/q08/q09 on both).
 P3. **Done 2026-10-23 (m4 input `store=lakefs`, check 10, see Log).** ~~lakeFS through the connector in CI: lakeFS
     container in front of MinIO, checks 1, 3, 4 there plus a "commit to main between two queries" check.~~
-P5. **Server int5 with Iceberg** (release asset `arrow-flight-server-1.0.0-int5.jar` sha256 01feeb77…5808 +
+P5. **Done 2026-10-23 (m4 input `store=iceberg`, check 11, server int6, see Log).** ~~**Server int5 with Iceberg** (release asset `arrow-flight-server-1.0.0-int5.jar` sha256 01feeb77…5808 +
     `int5-plugins.tar.zst` sha256 f600585d…5f68 with `plugins/{s3,lakefs,iceberg}` and START-NOTES.txt = int4 + catalog
     plugin `iceberg`: kinds `iceberg-hadoop` (warehouse dir on local/HDFS/S3) and `iceberg-rest` (Gravitino/Polaris);
     `-Dcatalog=` list; partial mode pins the snapshot per query, falls back to a complete answer with delete files /
     nested schema changes / joins). Add an Iceberg variant to CI: generate Iceberg tables in the job (e.g. pyiceberg
     with a local SQL catalog writing parquet into the S3 bucket, or Spark/iceberg if simpler): TPC-H SF1 lineitem/orders
     as Iceberg + a table with position/equality deletes + a renamed column; check the engine sees them, results equal
-    the parquet tables / DuckDB, partial and complete modes; a commit between two queries is seen by the second only.
+    the parquet tables / DuckDB, partial and complete modes; a commit between two queries is seen by the second only.~~
+    Not covered: equality deletes (Spark cannot write them), `catalog=hive` (int6; needs a Hive Metastore container).
 P4. **Upgrade readiness**: try the patch series on the newest 4.1.x tag (`git am` only, no build unless it applies
     with small fixes); write `docs/REBASE.md` with conflicts and effort. Do not change the release target (4.1.4).
 
@@ -298,6 +311,10 @@ A new server build with cluster fixes (B5, ticket secret) will appear in `m4-ass
 newer) — when it does, make it the m4 default and rerun checks 6 and 8.
 
 ## Open questions for the maintainer
+
+- P5 (2026-10-23), server finding (minor): with `-Dcatalog=iceberg-rest` and the warehouse below the dataDir (required:
+  a second s3 store is refused), the dataDir listing also shows the warehouse directory as a schema (`_iceberg`, table
+  `ice`). The server could skip catalog roots (or `_`/`.` directories) in the dataDir listing. No connector change needed.
 
 - A-4 (2026-10-22): `flight.exchange_buffer_mb` defaults to 16 MB per driver (StarRocks uses 128 MB for every scan).
   A smaller buffer can make a fast Flight scan wait more often for slow consumers; m4 timings did not move at SF1.
