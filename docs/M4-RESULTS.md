@@ -402,3 +402,38 @@ aggregation is pushed into the Flight scan, force the pre-aggregation above it t
 - Run 39951241481 (checks 4,9): 46/46 (q05 orders band now scaled by the orders row count: 227651 in 150000..320000),
   6/6 (exchange 3.4 vs 4.6 MB, query peak/node 189 MB).
 - The SF10 memory effect needs the stand (draft `v4.1.4-flight.0-a4b`).
+
+## 2026-10-23, local A-4b re-check (maintainer's stand) — series `4a9848e-fl4bda75`, server int4 (fixed): **A-4 headroom confirmed: q18 at BE 4G peaks at 2.25–2.46 GB on every run, the pre-aggregation above the pushed aggregation is pure passthrough**
+
+Build: draft `v4.1.4-flight.0-a4b` downloaded, `sha256sum -c SHA256SUMS` OK, `fe-build-info.txt` and `be-build-info.txt` both
+`commit_hash=4a9848e-fl4bda75` (FE run 39948153646, BE run 39948156366), `starrocks_be` sha256 `11af5a4c…` = be-build-info, the 9
+FE jar sha256s = fe-build-info; allin1 overlay as before; `current_version()` = `4.1.4-4a9848e-fl4bda75`. Server int4 (fixed, jar
+md5 `ff3d6a72…`, DuckDB 1.4.5): single HDFS server on `dn` (open mode) and the 3-node HDFS cluster `c3-dn1..3` (token auth). BE
+`mem_limit = 4G` (stand `be.conf`), **no spill**. Catalogs `flight` / `fc3` (default cap 16 MB) and `flight0` / `fc30`
+(`"flight.exchange_buffer_mb" = "0"`), `jdbc` (bridge). Agent notes: `bench/tools/agent-sr-final/NOTES.md` ("A-4b re-check").
+
+Plan: `EXPLAIN VERBOSE` q18 (single node and `fc3`, both topn settings, session `streaming_preaggregation_mode = auto`) shows
+`5:AGGREGATE (update serialize)` directly above the Flight scan with `GROUP BY "l_orderkey"` pushed, with
+`streaming preaggregation mode: force_streaming`; `SET streaming_preaggregation_mode = 'force_preaggregation'` turns every
+aggregation to `force_preaggregation` (the old plan).
+
+q18 SF10 at BE 4G (`QueryPeakMemoryUsagePerNode`; pre-aggregation = the `AGGREGATE_STREAMING_SINK` above the pushed
+aggregation; `LocalExchangePeakMemoryUsage` of the two big exchanges):
+
+| Catalog / mode | Runs | Result | Peak per node | Pre-aggregation (hash table, passthrough rows) | LocalExchangePeak |
+|---|---|---|---|---|---|
+| `flight`, auto (= `force_streaming`), single node | 14 (7 per topn) + 2 warm-up | 16/16 OK, 3.0–4.7 s, = reference | **2.249–2.382 GB** (no ~3.0 GB mode) | 192 B, 15.0 M / 15.0 M every run | 128 + 128 MB, sum 259–265 MB |
+| `flight`, `force_preaggregation` (comparison) | 4 (2 per topn) | 4/4 OK, 3.6–4.1 s, = reference | 2.965–3.032 GB | 1.428 GB, 0 / 15.0 M | 128 + 128 MB |
+| `flight0` (cap off), single node | 2 | FAIL `query_pool` (Used 3.13 / 3.18 GB, Limit 3478923509), as before | 3.18 / 3.19 GB | passthrough | 974 + 376 / 974 + 391 MB |
+| `fc3`, auto, 3 nodes | 8 (4 per topn) | 8/8 OK, 1.9–2.9 s, = reference | **2.371–2.458 GB** | 192 B, 15.0 M / 15.0 M every run | 128 + 128 MB |
+| `fc30` (cap off), 3 nodes | 2 | FAIL `query_pool`, as before | 3.19 / 3.18 GB | passthrough | 955 + 378 / 980 + 391 MB |
+
+Checks 4,5 at SF10 (`m4.py --checks 4,5 --existing-catalog --reference bench/reference/sf10`):
+
+| Run | Check 4 | Check 5 | Notes |
+|---|---|---|---|
+| single node, `flight`, `--ref-catalog jdbc` | 86/88 (twice) | 26/26 | every Flight result = reference = JDBC; q05 orders-estimate item PASS (2276507 in 1500000..3200000, scale 10). The 2 FAILs `q18 topn=default/0 … Memory of process exceed limit (Used 3.48–3.87 GB, Limit 3865470566)` are the **JDBC reference runs**: with `enable_profile` on globally, `SHOW PROFILELIST` shows the Flight q18 of both topn `Finished` (peak/node 2.363 / 2.366 GB) and the failing statement right after it on `catalog = jdbc` (`JDBCDataSource` scans, query peak 0.77–0.88 GB). `m4.py` check 4 runs the `--ref-catalog` query inside the same item and reports its exception under the catalog under test (check-script item). The 2026-10-23 a4 run's `q18 topn=0` process-limit FAIL has the same signature and was most likely the JDBC run too. |
+| single node, `flight`, no `--ref-catalog` | 46/46 | — | q18 3.73 / 3.81 s; 22 q totals 35.2 s (topn default) / 34.7 s (topn 0) |
+| 3 nodes, `fc3`, no spill | **46/46** | 26/26 | q05 orders item PASS (scale 10); 22 q totals 19.9 / 24.1 s, q18 1.85 / 2.39 s |
+
+JDBC bridge (single node, same m4 run): 21 q (q18 failed) 167.7 / 168.5 s.
