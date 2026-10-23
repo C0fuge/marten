@@ -62,6 +62,10 @@ assets)
     # -Darrowflight.plugins.dir and kept off the classpath.
     tag=${JAR#arrow-flight-server-*-}; tag=${tag%.jar}
     case "$tag" in int1|int2) duckdb=1.4.1 plugins= ;; *) duckdb=1.4.5 plugins=$tag-plugins.tar.zst ;; esac
+    # a rebuilt jar of the same build (int4b = int4 + cluster fixes) has no plugins asset of its own: use the base's
+    if [ -n "$plugins" ] && [ ! -s "$A/$plugins" ] && [[ "$tag" =~ ^(int[0-9]+)[a-z]$ ]]; then
+        plugins=${BASH_REMATCH[1]}-plugins.tar.zst
+    fi
     [ -z "$plugins" ] || [ -s "$A/$plugins" ] || { echo "$JAR needs the asset $plugins" >&2; exit 1; }
     # Assets added to the release after its SHA256SUMS was written are pinned in the repo.
     for f in "$JAR" $plugins; do
