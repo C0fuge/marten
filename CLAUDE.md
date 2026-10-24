@@ -33,7 +33,10 @@ This repo is developed by a recurring cloud session that starts from zero contex
 ## Rules
 
 - The repo is **public** (since 2026-10-24, maintainer's decision: free Actions minutes). Everything pushed —
-  code, docs, releases, logs — is visible to anyone: never commit secrets, credentials or personal data. Keep
+  code, docs, releases, CI logs — is visible to anyone: never commit secrets, credentials or personal data (names,
+  e-mail addresses, home paths, host names of the maintainer's machines or of production systems). Local commits use
+  `C0fuge <189659128+C0fuge@users.noreply.github.com>`. Keep the repo low-profile: no description, topics or website,
+  no links to it from other projects. Keep
   builds lean anyway. Before pushing a thrift or BE patch change, check `STATUS-CI.md`: a push touching BE patches cancels a
   running BE build on the same branch. Batch BE changes; touch the thrift patch as rarely as possible. Don't use
   `force=true` without a reason. Never re-run a build that failed for the same reason without a fix.

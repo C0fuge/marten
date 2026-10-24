@@ -4,8 +4,7 @@ Goal: run as much of M4 (PLAN.md §4) as possible in CI, so connector bugs are f
 maintainer's stand. The maintainer only runs a short final check locally (section 6). This file is the brief for
 the cloud sessions that build this; extend it as the workflow takes shape.
 
-**The repo is private again (2026-10-21) because of the assets below. Never make it public, never attach these
-assets to a product release, never copy the server jar anywhere else.**
+The repo is public (since 2026-10-24). Don't attach these assets to a product release.
 
 ## 1. Inputs
 
@@ -96,7 +95,7 @@ the error text). Each failure becomes a "Next steps" item in STATUS.md.
 
 ## 5. Budget
 
-Private repo again: ~2000 Actions minutes per month shared with all builds. One full M4 run ≈ 45–75 min. Make
+Public repo: Actions minutes are free, but keep runs short. One full M4 run ≈ 45–75 min. Make
 the workflow selectable (`checks=1,2,3…`) and rerun only what a fix touches; full run only for a new series
 before the final local check. Cache the docker images / assets with actions/cache where it saves time.
 

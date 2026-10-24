@@ -54,7 +54,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - Push-triggered builds (branches `main` and `claude/**`) react only to their patch areas (`*-thrift-*`,
   `*-fe-*`, `*-be-*`). `concurrency: cancel-in-progress` — a new push touching BE patches CANCELS a running BE
   build on the same branch.
-- The repo is private again since 2026-10-21 (~2000 Actions minutes/month; see CLAUDE.md). A full BE build on the 4-vCPU runner is many hours; incremental BE builds with a warm ccache are short. Any change to patch 0001 (thrift) regenerates headers used
+- The repo is public since 2026-10-24 (free Actions minutes; see CLAUDE.md). A full BE build on the 4-vCPU runner is many hours; incremental BE builds with a warm ccache are short. Any change to patch 0001 (thrift) regenerates headers used
   everywhere = near-full BE rebuild, so batch thrift changes and avoid them.
 
 ## Log
@@ -404,5 +404,5 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 - Release naming: the workflow takes any tag `v…`; proposed `v4.1.4-flight.N`. Publishing (draft → public, which
   creates the git tag) is left to you after M4.
 - 2026-10-21 (maintainer): M4 moves to CI as far as possible (docs/M4-CI.md); only a short final check runs on
-  the local stand. The repo is private again because the `m4-assets` release holds our server build.
+  the local stand. The repo is public since 2026-10-24.
 - 2026-10-22 02:30 MSK (local coordinator): server fixes for both M4 findings are in int2 (now the m4 default; all checks pass, m4 run 39695113106). The local final check (agent on the maintainer's stand) starts after the running speed benchmark; it writes its results here and to M4-RESULTS.md.
