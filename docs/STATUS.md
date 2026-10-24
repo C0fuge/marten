@@ -309,7 +309,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
    (8/8), no ~3.0 GB mode; checks 4,5 SF10 = reference (= JDBC) apart from the JDBC reference's own q18 at the process
    limit; 3 nodes 46/46 + 26/26. The check-script item (ref-catalog errors under their own item) is done (2026-10-23).
    Nothing open; the release (item 2) waits on the maintainer.
-2. After item 1 is settled (stand re-check of `v4.1.4-flight.0-a4b`) and the maintainer agrees: refresh the draft for the
+2. **Done 2026-10-25 by the maintainer: v4.1.4-flight.1 released LOCALLY (not on GitHub) from the stand-verified build of series `fl4bda75`. Do not create a public GitHub release.** ~~After item 1 is settled (stand re-check of `v4.1.4-flight.0-a4b`) and the maintainer agrees: refresh the draft for the
    newest series (now `fl4bda75`, adds P1 + P2 + A-4 cap + force-streaming pre-aggregation; or release `fl6b6a1d` if the maintainer prefers the re-checked build — see Open questions), then
    `release tag=v4.1.4-flight.1 draft=false prerelease=false`; delete the `v4.1.4-flight.0-dryrun`, `v4.1.4-flight.0-a4` and `v4.1.4-flight.0-a4b` drafts. Retention: CI artifacts 7 days, caches evicted
    after 7 days without access — after a long pause expect a full BE rebuild (~90 min). Every patch change needs
