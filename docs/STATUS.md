@@ -297,6 +297,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   `workflow_run` does not fire for runs dispatched by dispatch.yml (GITHUB_TOKEN); request `report` in `ci/dispatch.txt`
   (this session's last push does) or read run results from branch `m4-results`. No patch changed.
 
+- 2026-10-24 22:35 UTC (cloud session): no open item in Next steps (all done; release made locally by the maintainer).
+  Marked the release question as answered. No CI run, no patch changed.
+
 ## Next steps
 
 > **Done 2026-10-23 (m4 39984493363 / 39984497103 / 39987340277, see Log):** ~~**Use server int7** (2026-10-23, local coordinator): `arrow-flight-server-1.0.0-int7.jar` sha256 2b9595ab…06fa + `int7-plugins.tar.zst` sha256 4d2416f4…1af4 (plugins s3/lakefs/iceberg/hive + START-NOTES.txt) = int6b + all stand fixes (lakeFS: JOIN commit mixing, complete-mode lag, tags; Iceberg: file:/s3a roots, LocalFileSystem, Gravitino errors; Hive: HDFS paths with space/%, out-of-root partitions hidden, metastore fail-fast, UNAVAILABLE on outage; Iceberg equality deletes read all columns — correct, slow). Replace int6/int6b in CI with int7; rerun the full suite once.~~
@@ -358,9 +361,8 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
-- **Release (2026-10-23):** A-4 is settled on the stand and the full m4 suite passes on server int7 (all three stores).
-  Sessions are ready to run Next steps 2 for series `fl4bda75` (`release tag=v4.1.4-flight.1 draft=false
-  prerelease=false`, then delete the three drafts) — waiting for your go (or a different tag / series).
+- ~~**Release (2026-10-23):** waiting for your go on `v4.1.4-flight.1`.~~ **Answered 2026-10-25:** released locally by
+  the maintainer from series `fl4bda75`; no public GitHub release (the only GitHub release is `m4-assets`; no drafts left).
 
 - A-4 headroom (2026-10-23): **answered by the stand re-check** of `v4.1.4-flight.0-a4b` — peak per node 2.25–2.46 GB on
   every run, `force_streaming` in `EXPLAIN VERBOSE`, q05 orders band passes at SF10 (see Log). Nothing open on A-4.
