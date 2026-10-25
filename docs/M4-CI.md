@@ -138,7 +138,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   repository `m4lake` branch `main` and commits; `$M4_STATE/store.env` then makes every `stack.sh flight` serve
   `lakefs://m4lake/main/parquet` (`-Darrowflight.lakefs.endpoint=http://lakefs:8000`, `FLIGHT_LAKEFS_ACCESS_KEY/SECRET_KEY`).
   results.md names the store.
-- Input `store=iceberg` (P5, server **int6**+, default c3b276054cc3 (time-travel items need it); `m4 checks=1,11 store=iceberg`):
+- Input `store=iceberg` (P5, server **int6**+, default c3b276054cc3; `m4 checks=1,11 store=iceberg`, `1,11,12` with time travel):
   `stack.sh iceberg` starts `apache/iceberg-rest-fixture:1.9.2` (in-memory catalog, S3FileIO on MinIO, warehouse
   `s3://lake/parquet/_iceberg` — below the dataDir, since a second s3 store is refused by the server),
   `ci/m4/iceberg.py setup` writes namespace `ice` with pyiceberg 0.10.0, and a one-shot `apache/spark:3.5.6` container
@@ -146,6 +146,9 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   avro v1.4.5 extensions into `x/duckdb-ext/v1.4.5/linux_amd64` for plugin builds; the server gets `-Dcatalog=iceberg-rest
   -Darrowflight.iceberg-rest.uri=http://iceberg-rest:8181 -Darrowflight.iceberg-rest.roots=s3://lake/parquet/_iceberg
   -Darrowflight.duckdb.extensionDir=/srv/duckdb-ext`. Not covered: equality deletes (Spark cannot write them).
+  Check 12 (time travel, 2026-10-25; connector series `fl536298`+, server c3b276054cc3+): one append to `ice.t`, then
+  `FOR VERSION AS OF` both snapshots in both result modes, the REMOTE SQL, two versions in one query, `FOR TIMESTAMP AS OF`
+  (whole second, with a fraction, later time; session zone +08:00) and the refused `FOR VERSION BETWEEN`.
 - Check 1 also compares each `DESC` exactly (order, names, types) with the PLAN §2.2 mapping (`plan_type` in
   m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`, `flight.converted_types=convert`) of the Arrow schema the server returns in
   GetTables(include_schema).

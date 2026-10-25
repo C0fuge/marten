@@ -41,6 +41,12 @@ def snapshot(name):
     return s.snapshot_id, s.timestamp_ms
 
 
+def count_sum(name):
+    """(row count, sum(id)) of the current snapshot of ice.<name>, read by pyiceberg."""
+    ids = cat().load_table(f"{NS}.{name}").scan(selected_fields=("id",)).to_arrow()["id"].to_pylist()
+    return len(ids), sum(ids)
+
+
 def load_tpch(c, src, name, batch_rows):
     import pyarrow.dataset as ds
     d = ds.dataset(os.path.join(src, name), format="parquet")
