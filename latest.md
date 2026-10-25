@@ -1,11 +1,12 @@
-# M4 run 40229432267
+# M4 run 40229960640
 
-2026-10-25 20:14 UTC, series `4.1.4-4a9848e-fl536298`, server `arrow-flight-server-1.0.0-c3b276054cc3-linux.jar`, store `iceberg: s3://lake/parquet`, checks 1,11
+2026-10-25 20:22 UTC, series `4.1.4-4a9848e-fl536298`, server `arrow-flight-server-1.0.0-c3b276054cc3-linux.jar`, store `iceberg: s3://lake/parquet`, checks 1,11,12
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 5 s |
-| 11 | Iceberg: REST catalog tables, deletes, rename, appends | FAIL | 22/27 | 57 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 6 s |
+| 11 | Iceberg: REST catalog tables, deletes, rename, appends | PASS | 22/22 | 56 s |
+| 12 | Iceberg time travel | FAIL | 1/10 | 3 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
@@ -45,30 +46,38 @@
 - PASS `DESC flight.ice.orders = DESC flight.tpch.orders` [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')] vs [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')]
 - PASS `flight.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
 - PASS `flight.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
-- PASS `q01 on flight.ice = reference` rows 4/4 1.63s
-- PASS `q04 on flight.ice = reference` rows 5/5 0.65s
-- PASS `q12 on flight.ice = reference` rows 2/2 0.69s
+- PASS `q01 on flight.ice = reference` rows 4/4 1.58s
+- PASS `q04 on flight.ice = reference` rows 5/5 0.62s
+- PASS `q12 on flight.ice = reference` rows 2/2 0.74s
 - PASS `flight.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
 - PASS `flight.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
 - PASS `flight_c.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
 - PASS `flight_c.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
-- PASS `q01 on flight_c.ice = reference` rows 4/4 1.66s
+- PASS `q01 on flight_c.ice = reference` rows 4/4 1.64s
 - PASS `q04 on flight_c.ice = reference` rows 5/5 0.73s
-- PASS `q12 on flight_c.ice = reference` rows 2/2 0.84s
+- PASS `q12 on flight_c.ice = reference` rows 2/2 0.75s
 - PASS `flight_c.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
 - PASS `flight_c.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
 - PASS `ice.t before the append` got (1, 1)
-- PASS `an append (one snapshot, 1 file) is seen by later queries` got (3, 6) after 5.3 s, snapshot 3393815269376266325
+- PASS `an append (one snapshot, 1 file) is seen by later queries` got (3, 6) after 5.3 s, snapshot 2502034534997902380
 - PASS `no query saw a state other than before/after` seen [(1, 1), (3, 6)]
 - PASS `complete mode sees the append (views refresh every 60 s)` [(3, 6)] after 34.9 s
-- **FAIL** `flight: FOR VERSION AS OF the snapshot before the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]VERSION AS OF 1641652200507985689'), want (1, 1)
-- **FAIL** `flight: FOR VERSION AS OF the snapshot after the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]VERSION AS OF 3393815269376266325'), want (3, 6)
-- **FAIL** `flight_c: FOR VERSION AS OF the snapshot before the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Parser Error: syntax error at or near "VERSION"'), want (1, 1)
-- **FAIL** `flight_c: FOR VERSION AS OF the snapshot after the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Parser Error: syntax error at or near "VERSION"'), want (3, 6)
-- **FAIL** `time travel` ERROR ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]VERSION AS OF 1641652200507985689')
-- note: ice.del snapshot summary: {'spark.app.id': 'local-1792959141445', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3320', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6579', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792959141445', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
+- note: ice.del snapshot summary: {'spark.app.id': 'local-1792959579186', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3320', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6579', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792959579186', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
 - note: the dataDir listing also shows the warehouse directory as schema _iceberg: tables ['ice']
 - note: REMOTE SQL of count(*) on ice.del: SELECT count(*) AS "__flight_agg_0" FROM "ice"."del"
+
+## Check 12: Iceberg time travel
+
+- **FAIL** `flight: FOR VERSION AS OF the snapshot before the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]VERSION AS OF 2502034534997902380'), want (3, 6)
+- **FAIL** `flight: FOR VERSION AS OF the snapshot after the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]VERSION AS OF 1842922295390074344'), want (4, 106)
+- **FAIL** `flight_c: FOR VERSION AS OF the snapshot before the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Parser Error: syntax error at or near "VERSION"'), want (3, 6)
+- **FAIL** `flight_c: FOR VERSION AS OF the snapshot after the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Parser Error: syntax error at or near "VERSION"'), want (4, 106)
+- **FAIL** `REMOTE SQL carries FOR VERSION AS OF` ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]VERSION AS OF 2502034534997902380')
+- **FAIL** `two versions of one table in one query` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:56] ...T count(*) AS "__flight_agg_0" FROM "ice"."t" FOR [*]VERSION AS OF 2502034534997902380')
+- **FAIL** `FOR TIMESTAMP AS OF a time before the append (whole second, session zone +08:00)` 2026-10-26 04:21:24.000000 -> got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]TIMESTAMP AS OF TIMESTAMP \'2026-10-25 20:21:24 UTC\''), want (3, 6)
+- **FAIL** `FOR TIMESTAMP AS OF a time before the append (with a fraction, session zone +08:00)` 2026-10-26 04:21:23.655000 -> got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]TIMESTAMP AS OF TIMESTAMP \'2026-10-25 20:21:23.655000 UTC\''), want (3, 6)
+- **FAIL** `FOR TIMESTAMP AS OF a later time sees the append` got ProgrammingError: (1064, 'Flight GetFlightInfo failed: INVALID_ARGUMENT: Query execution failed: ParserException: Feature only supported in pro edition: [1:32] SELECT "id" FROM "ice"."t" FOR [*]TIMESTAMP AS OF TIMESTAMP \'2099-12-31 16:00:00 UTC\'')
+- PASS `a version range is refused by the connector` ProgrammingError: (1064, 'Getting analyzing error. Detail message: Arrow Flight tables support only FOR VERSION AS OF <snapshot id> and FOR TIMESTAMP AS OF <datetime>.')
 
 ## Log masking
 
