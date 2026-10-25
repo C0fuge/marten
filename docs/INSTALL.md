@@ -81,6 +81,12 @@ EXPLAIN SELECT count(*) FROM flight.<schema>.<table>;   -- shows the REMOTE SQL 
 All catalog properties: `docs/PLAN.md` §2.1. Session switches: `flight_filter_pushdown`, `flight_aggregate_pushdown`
 (both default `true`). The token and password are masked in `SHOW CREATE CATALOG`, logs and profiles.
 
+Time travel (tables the server keeps versions of, e.g. Iceberg tables of our server from build c3b276054cc3 on):
+`SELECT … FROM flight.<schema>.<table> FOR VERSION AS OF <snapshot id>` or `… FOR TIMESTAMP AS OF '<datetime>'`
+(the datetime is read in the session time zone and sent to the server in UTC); the clause is forwarded after the
+table name in the REMOTE SQL. Ranges (`FOR VERSION BETWEEN …`) are refused; a server without time travel answers
+with its own error.
+
 Memory: Flight scans are fast, so a join's probe-side rows can arrive long before its build sides are ready. The
 local exchange behind each Flight scan is capped at `flight.exchange_buffer_mb` (default 16 MB) per driver instead
 of StarRocks' 128 MB. Large joins/aggregations still need memory like on any other catalog: TPC-H SF10 q18 is at the
