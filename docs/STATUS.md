@@ -20,7 +20,7 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
   and runs them with their own `libs/` (checked against `libs/SHA256SUMS`; `M4_LIBS` in server.env); assets cache key
   `m4-assets-v6`. m4 40166546587 (S3 1–9) failed before any check: no `fe-out-*` cache and no `fe-jars-*` artifact —
   the public repo has no caches/artifacts at all; m4 40166548012 (iceberg) cancelled. Dispatched fe 40166741833 and
-  be 40166743137 (cold BE). No patch changed.
+  be 40166743137 (cold BE, part 1 building at session end); fe 40166741833 success. No patch changed.
 
 ## Patch series (on tag 4.1.4)
 
@@ -313,8 +313,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > **In progress 2026-10-25 (cloud session):** `stack.sh` / `m4.yml` take the new asset layout (dev builds: own
 > `flight-plugins-<ver>-<commit>.tar.zst` + `flight-server-libs-<ver>-<commit>.tar.zst`; assets cache `m4-assets-v6`).
 > **The public repo starts with no Actions caches, artifacts or ccache** (run history begins 2026-10-25): m4 40166546587
-> stopped at "no FE output". Rebuild dispatched: fe 40166741833, be 40166743137 (cold, no ccache: several chained parts,
-> hours). **Next session:** when `ci-status` / the runs API shows `be` done (and `fe`), request
+> stopped at "no FE output". Rebuild dispatched: fe 40166741833 **done** (success, 6 min), be 40166743137 (cold, no ccache; part 1 Build BE
+> started 05:49 UTC; may chain further parts, hours). **Next session:** when `ci-status` / the runs API shows `be` done (and `fe`), request
 > `m4 checks=1,2,3,4,5,6,7,8,9 server=arrow-flight-server-1.0.0-4eaab052deaf-linux.jar` and
 > `m4 checks=1,11 store=iceberg server=…` in one push, then `m4 checks=1,3,4,10 store=lakefs server=…` in a later push
 > (the m4 concurrency group keeps one pending run only); if all PASS make it the default of `m4.yml` / `stack.sh`.
