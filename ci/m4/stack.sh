@@ -60,22 +60,40 @@ assets)
     # Server builds: int1/int2 embed DuckDB 1.4.1; from int4 on DuckDB 1.4.5 (it refuses to start with v1.4.1
     # extensions) and S3/lakeFS are plugins (asset <tag>-plugins.tar.zst: plugins/, START-NOTES.txt), loaded from
     # -Darrowflight.plugins.dir and kept off the classpath.
-    tag=${JAR#arrow-flight-server-*-}; tag=${tag%.jar}
-    case "$tag" in int1|int2) duckdb=1.4.1 plugins= ;; *) duckdb=1.4.5 plugins=$tag-plugins.tar.zst ;; esac
+    # Builds of the server repo CI (arrow-flight-server-<ver>-<commit>-linux.jar, from 4eaab052deaf on) ship their own
+    # plugins (flight-plugins-<ver>-<commit>.tar.zst) and runtime libs (flight-server-libs-<ver>-<commit>.tar.zst,
+    # not to be mixed with the older flight-server-libs.tar.zst).
+    ver=${JAR#arrow-flight-server-}; ver=${ver%%-*}
+    tag=${JAR#arrow-flight-server-*-}; tag=${tag%.jar}; tag=${tag%-linux}
+    libs=flight-server-libs.tar.zst
+    case "$tag" in
+    int1|int2) duckdb=1.4.1 plugins= ;;
+    int*) duckdb=1.4.5 plugins=$tag-plugins.tar.zst ;;
+    *) duckdb=1.4.5 plugins=flight-plugins-$ver-$tag.tar.zst libs=flight-server-libs-$ver-$tag.tar.zst ;;
+    esac
     # a rebuilt jar of the same build (int4b = int4 + cluster fixes) has no plugins asset of its own: use the base's
     if [ -n "$plugins" ] && [ ! -s "$A/$plugins" ] && [[ "$tag" =~ ^(int[0-9]+)[a-z]$ ]]; then
         plugins=${BASH_REMATCH[1]}-plugins.tar.zst
     fi
     [ -z "$plugins" ] || [ -s "$A/$plugins" ] || { echo "$JAR needs the asset $plugins" >&2; exit 1; }
     # Assets added to the release after its SHA256SUMS was written are pinned in the repo.
-    for f in "$JAR" $plugins; do
+    [ -s "$A/$libs" ] || { echo "$JAR needs the asset $libs" >&2; exit 1; }
+    for f in "$JAR" $plugins $libs; do
         grep -q " \*\?$f\$" "$A/SHA256SUMS" && continue
         grep " $f\$" "$REPO_ROOT/ci/m4/server-jars.sha256" > "$A/extra.sha256" ||
             { echo "$f: no checksum in SHA256SUMS or ci/m4/server-jars.sha256" >&2; exit 1; }
         (cd "$A" && sha256sum -c extra.sha256)
     done
     mkdir -p "$A/x"
-    [ -d "$A/x/libs" ] || tar -C "$A/x" --zstd -xf "$A/flight-server-libs.tar.zst"
+    if [ "$libs" = flight-server-libs.tar.zst ]; then
+        [ -d "$A/x/libs" ] || tar -C "$A/x" --zstd -xf "$A/$libs"
+        ldir=/srv/libs
+    else
+        rm -rf "$A/x/libs-$tag" && mkdir -p "$A/x/libs-$tag" && tar -C "$A/x/libs-$tag" --zstd -xf "$A/$libs"
+        [ -d "$A/x/libs-$tag/libs" ] || { echo "$libs has no libs/ directory" >&2; exit 1; }
+        [ ! -s "$A/x/libs-$tag/libs/SHA256SUMS" ] || (cd "$A/x/libs-$tag/libs" && sha256sum --quiet -c SHA256SUMS)
+        ldir=/srv/libs-$tag/libs
+    fi
     [ -d "$A/x/sf1" ] || tar -C "$A/x" --zstd -xf "$A/tpch-sf1-parquet.tar.zst"
     cp "$A/$JAR" "$A/x/server.jar"
     echo "Flight server: $JAR (DuckDB $duckdb${plugins:+, plugins $plugins})"
@@ -103,7 +121,7 @@ assets)
         echo "--- $plugins: START-NOTES.txt"; cat "$A/x/$tag/START-NOTES.txt" 2>/dev/null || echo "(missing)"; echo "---"
         ls -lR "$A/x/$tag/plugins"
     fi
-    printf 'M4_HTTPFS=/srv/%s\nM4_PLUGINS_DIR=%s\nM4_EXT_DIR=%s\n' "$ext" "$pdir" "${plugins:+/srv/duckdb-ext}" > "$A/x/server.env"
+    printf 'M4_HTTPFS=/srv/%s\nM4_PLUGINS_DIR=%s\nM4_EXT_DIR=%s\nM4_LIBS=%s\n' "$ext" "$pdir" "${plugins:+/srv/duckdb-ext}" "$ldir" > "$A/x/server.env"
     ls -la "$A/x" "$A/x/sf1/tpch"
     ;;
 minio)
@@ -252,7 +270,7 @@ flight)
         ${M4_PLUGINS_DIR:+-Darrowflight.plugins.dir=$M4_PLUGINS_DIR} \
         -DioParallelism=4 -DduckDbMemoryLimit=1GB -DduckDbThreads=2 -DflightBackpressureThresholdBytes=16777216 \
         ${FLIGHT_JAVA_OPTS:-} -Xmx2g -XX:MaxDirectMemorySize=1g \
-        -cp "/srv/server.jar:/srv/libs/*" pro.surpin.data.arrowflight.server.HadoopArrowFlightServer \
+        -cp "/srv/server.jar:${M4_LIBS:-/srv/libs}/*" pro.surpin.data.arrowflight.server.HadoopArrowFlightServer \
         --localhost "$NAME" --hosts "$HOSTS" >/dev/null
     [ -z "${M4_NO_WAIT:-}" ] || exit 0
     exec "$0" wait "$NAME"
