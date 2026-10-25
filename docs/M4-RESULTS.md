@@ -454,3 +454,17 @@ Unchanged with int7: the dataDir listing still shows the Iceberg warehouse direc
 questions). Harness: check 4 now reports an error of the `--ref-catalog` query under its own item
 `<q> topn=<x> = <ref>` (FAIL with `ERROR of <ref>`) instead of under the item of the catalog under test.
 
+
+## 2026-10-25, CI: server build 4eaab052deaf as the m4 default — series `4a9848e-fl4bda75`, m4 runs 40172422411 / 40172423737 / 40173169121
+
+First server repo CI build (main 4eaab05 = int7 + hadoopfs timeout defaults 3 s / 10 s + dependency security
+upgrades; own `flight-plugins-1.0.0-4eaab052deaf.tar.zst` and `flight-server-libs-1.0.0-4eaab052deaf.tar.zst`), run on
+FE/BE outputs rebuilt in the re-created public repo (fe 40166741833, be 40166743137, same input hashes as before).
+
+| Run | Store | Checks | Result |
+|---|---|---|---|
+| 40172422411 | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6) |
+| 40172423737 | iceberg | 1, 11 | PASS (25/25, 22/22) |
+| 40173169121 | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+
+No regression against int7. Still listed: the Iceberg warehouse directory as schema `_iceberg` (Open questions).
