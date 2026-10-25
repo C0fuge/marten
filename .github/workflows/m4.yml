@@ -94,7 +94,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-v7
+          key: m4-assets-v8
       - name: Download m4 assets
         run: ci/m4/stack.sh assets /home/runner/m4-assets
       - name: Save m4 assets
@@ -102,7 +102,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-v7
+          key: m4-assets-v8
       - name: Python
         run: |
           pip install --quiet duckdb==1.4.1 pymysql pytz boto3 pyarrow adbc-driver-flightsql
