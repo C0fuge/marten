@@ -13,8 +13,8 @@ on:
         description: "check 4 also compares every query with this catalog (m4.py --ref-catalog; flight_c exists after check 3)"
         default: ""
       server:
-        description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, int4b = int4 + cluster fixes, int6 = + Iceberg/Hive catalogs, int7 = int6b + stand fixes, arrow-flight-server-1.0.0-<commit>-linux.jar = server repo CI builds (default: 4eaab052deaf = int7 + timeouts + dependency upgrades))"
-        default: "arrow-flight-server-1.0.0-4eaab052deaf-linux.jar"
+        description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, int4b = int4 + cluster fixes, int6 = + Iceberg/Hive catalogs, int7 = int6b + stand fixes, arrow-flight-server-1.0.0-<commit>-linux.jar = server repo CI builds (default: c3b276054cc3 = 4eaab052deaf + Iceberg time travel + ZooKeeper libs))"
+        default: "arrow-flight-server-1.0.0-c3b276054cc3-linux.jar"
       store:
         description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet), lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+) or iceberg (s3 + Iceberg REST catalog, schema ice; int6+)"
         default: "s3"

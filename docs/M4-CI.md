@@ -19,7 +19,8 @@ Release `m4-assets` (prerelease, not a product release; download in a workflow w
 | `arrow-flight-server-1.0.0-int4b.jar` | int4 rebuilt with the cluster fixes (B5 member loss, ticket secret); uses `int4-plugins.tar.zst` (`stack.sh assets`: a lettered rebuild without its own plugins asset takes the base's). m4 default 2026-10-23 (run 39883591960) until int7 |
 | `arrow-flight-server-1.0.0-int6.jar` + `int6-plugins.tar.zst` | int4b + table catalogs (plugins `iceberg`: iceberg-hadoop / iceberg-rest, `hive`: Hive Metastore) + refresh-recursion fix of int5 (int5: do not use). Needs DuckDB iceberg + avro v1.4.5 for catalogs. Used by `store=iceberg` (check 11) until int7 |
 | `arrow-flight-server-1.0.0-int7.jar` + `int7-plugins.tar.zst` | int6b + all stand fixes (lakeFS: JOIN commit mixing, complete-mode lag, tags; Iceberg: file:/s3a roots, LocalFileSystem, Gravitino errors; Hive: HDFS paths with space/%, out-of-root partitions hidden, metastore fail-fast, UNAVAILABLE on outage; Iceberg equality deletes). Plugins s3/lakefs/iceberg/hive. Pinned in `ci/m4/server-jars.sha256` (= asset digests). **m4 default** since 2026-10-23 for every store |
-| `arrow-flight-server-1.0.0-4eaab052deaf-linux.jar` + `flight-plugins-1.0.0-4eaab052deaf.tar.zst` + `flight-server-libs-1.0.0-4eaab052deaf.tar.zst` | first server repo CI build (main 4eaab05): int7 + hadoopfs timeout defaults 3 s / 10 s + dependency security upgrades; ships its own plugins and runtime libs (`stack.sh` derives both names from the jar). m4 default since 2026-10-25 (full suite PASS: m4 40172422411, 40172423737, 40173169121). START-NOTES.md |
+| `arrow-flight-server-1.0.0-4eaab052deaf-linux.jar` + `flight-plugins-1.0.0-4eaab052deaf.tar.zst` + `flight-server-libs-1.0.0-4eaab052deaf.tar.zst` | first server repo CI build (main 4eaab05): int7 + hadoopfs timeout defaults 3 s / 10 s + dependency security upgrades; ships its own plugins and runtime libs (`stack.sh` derives both names from the jar). m4 default 2026-10-25 (full suite PASS: m4 40172422411, 40172423737, 40173169121) until c3b276054cc3. START-NOTES.md |
+| `arrow-flight-server-1.0.0-c3b276054cc3-linux.jar` + `flight-plugins-1.0.0-c3b276054cc3.tar.zst` + `flight-server-libs-1.0.0-c3b276054cc3.tar.zst` | 4eaab052deaf + Iceberg time travel (`FOR VERSION AS OF <snapshot>` / `FOR TIMESTAMP AS OF TIMESTAMP '… UTC'` after an Iceberg table name) + ZooKeeper client and lz4-java in the runtime libs. **m4 default** since 2026-10-25 (S3 1–9 m4 40227337083, iceberg 1,11 m4 40227338512, lakefs 1,3,4,10 m4 40228819006). The release's START-NOTES.md is still the 4eaab05 copy (its SHA256SUMS line does not match; `stack.sh` verifies only the assets a run uses) |
 | `flight-server-libs.tar.zst` | `libs/` — runtime jars that must be on the classpath next to the server jar (`-cp "server.jar:libs/*"`) |
 | `tpch-sf1-parquet.tar.zst` | `sf1/tpch/<table>/data_N.parquet` — TPC-H SF1, the exact files `tests/m4/reference/sf1` was computed from |
 | `SHA256SUMS` | checksums |
@@ -111,8 +112,8 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
 - `.github/workflows/m4.yml` (dispatch `m4 checks=1,2,3` in `ci/dispatch.txt`): prepares the source only for the
   input hashes, takes the FE/BE outputs of the current series like `release.yml` (cache, else newest artifact;
   both must report the current series hash), downloads `m4-assets` (draft release: looked up through the release
-  list, cached as `m4-assets-v5` with all server jars; bump the key when the assets change; input `server` picks the
-  jar, default `arrow-flight-server-1.0.0-4eaab052deaf-linux.jar` (since 2026-10-25; int7 2026-10-23 – 10-25), e.g. `m4 checks=1,2 server=arrow-flight-server-1.0.0-int1.jar`;
+  list, cached as `m4-assets-v7` with all server jars; bump the key when the assets change; input `server` picks the
+  jar, default `arrow-flight-server-1.0.0-c3b276054cc3-linux.jar` (since 2026-10-25; 4eaab052deaf and int7 before), e.g. `m4 checks=1,2 server=arrow-flight-server-1.0.0-int1.jar`;
   results.md names it), then `ci/m4/stack.sh`: docker network
   `m4` with `minio` (throwaway credentials, `s3://lake/parquet/{tpch,types}`), `flight1` (eclipse-temurin:21-jre,
   open mode; flight1 also on 127.0.0.1:32010 for ADBC probes), `sr` (allin1 4.1.4 overlay + bench configs, ports 9030/8030/8040 on the runner).
@@ -137,7 +138,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   repository `m4lake` branch `main` and commits; `$M4_STATE/store.env` then makes every `stack.sh flight` serve
   `lakefs://m4lake/main/parquet` (`-Darrowflight.lakefs.endpoint=http://lakefs:8000`, `FLIGHT_LAKEFS_ACCESS_KEY/SECRET_KEY`).
   results.md names the store.
-- Input `store=iceberg` (P5, server **int6**+, default 4eaab052deaf; `m4 checks=1,11 store=iceberg`):
+- Input `store=iceberg` (P5, server **int6**+, default c3b276054cc3 (time-travel items need it); `m4 checks=1,11 store=iceberg`):
   `stack.sh iceberg` starts `apache/iceberg-rest-fixture:1.9.2` (in-memory catalog, S3FileIO on MinIO, warehouse
   `s3://lake/parquet/_iceberg` — below the dataDir, since a second s3 store is refused by the server),
   `ci/m4/iceberg.py setup` writes namespace `ice` with pyiceberg 0.10.0, and a one-shot `apache/spark:3.5.6` container
