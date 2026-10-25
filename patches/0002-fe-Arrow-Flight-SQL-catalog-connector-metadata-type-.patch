@@ -9,25 +9,25 @@ FlightSqlMetadataClient (Flight SQL metadata calls with URI failover), FlightTyp
 FlightTable / TableType FLIGHT. Secrets of the new properties are masked in PrintableMap, CredentialUtil,
 SqlCredentialRedactor and the CatalogMgr logs.
 ---
- .../com/starrocks/catalog/FlightTable.java    |  86 ++++
+ .../com/starrocks/catalog/FlightTable.java    |  92 ++++
  .../java/com/starrocks/catalog/Table.java     |   8 +-
  .../starrocks/common/util/PrintableMap.java   |   2 +
  .../common/util/SqlCredentialRedactor.java    |   2 +
  .../starrocks/connector/ConnectorType.java    |   3 +
  .../flight/FlightAggregationPushdown.java     |  83 +++
- .../connector/flight/FlightConnector.java     |  57 +++
+ .../connector/flight/FlightConnector.java     |  57 ++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
- .../connector/flight/FlightMetadata.java      | 475 ++++++++++++++++++
+ .../connector/flight/FlightMetadata.java      | 475 +++++++++++++++++
  .../connector/flight/FlightProperties.java    | 352 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 467 +++++++++++++++++
- .../connector/flight/FlightSqlRenderer.java   | 445 ++++++++++++++++
- .../connector/flight/FlightTypeMapper.java    | 257 ++++++++++
+ .../connector/flight/FlightSqlRenderer.java   | 488 ++++++++++++++++++
+ .../connector/flight/FlightTypeMapper.java    | 257 +++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2345 insertions(+), 3 deletions(-)
+ 18 files changed, 2394 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -41,10 +41,10 @@ SqlCredentialRedactor and the CatalogMgr logs.
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java b/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
 new file mode 100644
-index 00000000..26abeba2
+index 00000000..26f77397
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,92 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -118,6 +118,12 @@ index 00000000..26abeba2
 +
 +    @Override
 +    public boolean isSupported() {
++        return true;
++    }
++
++    /** {@code FOR VERSION/TIMESTAMP AS OF} is forwarded to the server (supported there for Iceberg tables). */
++    @Override
++    public boolean isTemporal() {
 +        return true;
 +    }
 +
@@ -1784,10 +1790,10 @@ index 00000000..ccd844ea
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
 new file mode 100644
-index 00000000..0eb5249d
+index 00000000..dfe7065f
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlRenderer.java
-@@ -0,0 +1,445 @@
+@@ -0,0 +1,488 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1816,14 +1822,18 @@ index 00000000..0eb5249d
 +import com.starrocks.sql.optimizer.operator.scalar.IsNullPredicateOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.LikePredicateOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
++import com.starrocks.type.DateType;
 +import com.starrocks.type.Type;
 +
 +import java.math.BigDecimal;
 +import java.time.LocalDateTime;
++import java.time.ZoneId;
++import java.time.ZoneOffset;
 +import java.time.format.DateTimeFormatter;
 +import java.util.ArrayList;
 +import java.util.List;
 +import java.util.Map;
++import java.util.Optional;
 +import java.util.StringJoiner;
 +
 +/**
@@ -1837,6 +1847,7 @@ index 00000000..0eb5249d
 +public final class FlightSqlRenderer {
 +    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 +    private static final DateTimeFormatter DATETIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
++    private static final DateTimeFormatter SECONDS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 +    private static final int MAX_IN_LIST = 10_000;
 +
 +    private FlightSqlRenderer() {
@@ -2204,10 +2215,45 @@ index 00000000..0eb5249d
 +    }
 +
 +    /**
++     * Time-travel clause after the table name: {@code FOR VERSION AS OF <snapshot id>} for an integer version,
++     * {@code FOR TIMESTAMP AS OF TIMESTAMP '<UTC time> UTC'} (microseconds only when not zero) for a datetime (or a string castable to one) read in
++     * {@code zone} (the session time zone, as the Iceberg catalog reads it). Null if the value cannot be rendered.
++     */
++    public static String timeTravel(boolean version, ConstantOperator value, ZoneId zone) {
++        if (value.isNull()) {
++            return null;
++        }
++        if (version) {
++            switch (value.getType().getPrimitiveType()) {
++                case TINYINT:
++                case SMALLINT:
++                case INT:
++                case BIGINT:
++                    return "FOR VERSION AS OF " + literal(value);
++                default:
++                    return null;
++            }
++        }
++        Optional<ConstantOperator> dt = value.getType().isDatetime() ? Optional.of(value)
++                : value.castTo(DateType.DATETIME);
++        if (dt.isEmpty() || dt.get().isNull()) {
++            return null;
++        }
++        LocalDateTime utc = LocalDateTime.ofInstant(dt.get().getDatetime().atZone(zone).toInstant(), ZoneOffset.UTC);
++        return "FOR TIMESTAMP AS OF TIMESTAMP '" + utc.format(utc.getNano() == 0 ? SECONDS : DATETIME) + " UTC'";
++    }
++
++    /**
 +     * {@code SELECT items FROM "schema"."table" [WHERE c1 AND c2] [GROUP BY g] [LIMIT n]}.
 +     */
 +    public static String select(String schema, String table, List<SelectItem> items, List<String> where,
 +                                List<String> groupBy, long limit, boolean forceWhere) {
++        return select(schema, table, null, items, where, groupBy, limit, forceWhere);
++    }
++
++    /** As above, with an optional time-travel clause ({@link #timeTravel}) after the table name. */
++    public static String select(String schema, String table, String timeTravel, List<SelectItem> items,
++                                List<String> where, List<String> groupBy, long limit, boolean forceWhere) {
 +        StringBuilder sql = new StringBuilder("SELECT ");
 +        if (items.isEmpty()) {
 +            sql.append("1");
@@ -2217,6 +2263,9 @@ index 00000000..0eb5249d
 +            sql.append(j);
 +        }
 +        sql.append(" FROM ").append(tableRef(schema, table));
++        if (timeTravel != null) {
++            sql.append(' ').append(timeTravel);
++        }
 +        if (!where.isEmpty()) {
 +            sql.append(" WHERE ").append(String.join(" AND ", where));
 +        } else if (forceWhere) {

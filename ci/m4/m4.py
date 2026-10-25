@@ -1112,7 +1112,7 @@ def check11(conn, args, res):
     """Iceberg (m4 input store=iceberg): REST catalog namespace `ice` served by the iceberg plugin next to the parquet
     directory. TPC-H lineitem/orders as Iceberg equal the parquet tables and the SF1 answers in both result modes;
     position deletes (Spark, merge-on-read) applied; a renamed column read by field id; an append between two queries
-    is seen by the second one only, never half of it."""
+    is seen by the second one only, never half of it; FOR VERSION / TIMESTAMP AS OF before and after that append."""
     env = store_env()
     if env.get("M4_STORE") != "iceberg":
         res.add("store is iceberg", False, "run the m4 workflow with store=iceberg")
@@ -1178,6 +1178,7 @@ def check11(conn, args, res):
     val = lambda: tuple(int(x or 0) for x in sr(conn, q)[0])
     first = val()
     res.add(f"{ice}.t before the append", first == (1, 1), f"got {first}")
+    snap0, ts0 = iceberg.snapshot("t")
     snap = iceberg.append_t([2, 3])
     t0, seen, last = time.time(), set(), None
     while time.time() - t0 < 90:
@@ -1199,6 +1200,44 @@ def check11(conn, args, res):
         time.sleep(2)
     res.add("complete mode sees the append (views refresh every 60 s)", done,
             f"{str(r)[:200]} after {time.time() - t0:.1f} s")
+    guarded(res, "time travel", lambda: time_travel(conn, res, ice, (snap0, ts0, first), (snap, (3, 6))))
+
+
+def time_travel(conn, res, ice, before, after):
+    """FOR VERSION / TIMESTAMP AS OF on ice.t, forwarded to the server after the table name (server c3b276054cc3+)."""
+    snap0, ts0, first = before
+    snap, last = after
+
+    def agg(sql):
+        ok, r, _ = try_sql(conn, sql)
+        return tuple(int(x or 0) for x in r[0]) if ok else r
+    for cat in ("flight", "flight_c"):
+        for v, want, when in ((snap0, first, "before"), (snap, last, "after")):
+            got = agg(f"SELECT count(*), sum(id) FROM {cat}.{ice}.t FOR VERSION AS OF {v}")
+            res.add(f"{cat}: FOR VERSION AS OF the snapshot {when} the append", got == want, f"got {got}, want {want}")
+    rs, _ = remote_sql(conn, f"SELECT id FROM flight.{ice}.t FOR VERSION AS OF {snap0}")
+    res.add("REMOTE SQL carries FOR VERSION AS OF", f"FOR VERSION AS OF {snap0}" in rs, rs[:300])
+    got = agg(f"SELECT (SELECT count(*) FROM flight.{ice}.t FOR VERSION AS OF {snap0}), "
+              f"(SELECT count(*) FROM flight.{ice}.t FOR VERSION AS OF {snap})")
+    res.add("two versions of one table in one query", got == (first[0], last[0]), f"got {got}")
+    # the session time zone applies to the datetime; the server gets UTC. ts0 = commit time of the snapshot before
+    # the append (the append comes minutes later), so ts0 + 0.5 s and the next whole second still select it.
+    tz = sr(conn, "SELECT @@time_zone")[0][0]
+    sr(conn, "SET time_zone = 'Asia/Shanghai'")
+    try:
+        utc = datetime.datetime.fromtimestamp(ts0 / 1000 + 0.5, datetime.timezone.utc)
+        for label, t in (("whole second", utc.replace(microsecond=0) + datetime.timedelta(seconds=1)),
+                         ("with a fraction", utc)):
+            local = (t + datetime.timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S.%f")
+            got = agg(f"SELECT count(*), sum(id) FROM flight.{ice}.t FOR TIMESTAMP AS OF '{local}'")
+            res.add(f"FOR TIMESTAMP AS OF a time before the append ({label}, session zone +08:00)", got == first,
+                    f"{local} -> got {got}, want {first}")
+        got = agg(f"SELECT count(*), sum(id) FROM flight.{ice}.t FOR TIMESTAMP AS OF '2100-01-01 00:00:00'")
+        res.add("FOR TIMESTAMP AS OF a later time sees the append", got == last, f"got {got}")
+    finally:
+        sr(conn, f"SET time_zone = '{tz}'")
+    ok, r, _ = try_sql(conn, f"SELECT count(*) FROM flight.{ice}.t FOR VERSION BETWEEN {snap0} AND {snap}")
+    res.add("a version range is refused by the connector", not ok and "support only" in str(r), str(r)[:200])
 
 
 # ---------------------------------------------------------------- main

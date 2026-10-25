@@ -35,6 +35,12 @@ def append_t(ids):
     return t.current_snapshot().snapshot_id
 
 
+def snapshot(name):
+    """(snapshot id, commit time in epoch ms) of the current snapshot of ice.<name>."""
+    s = cat().load_table(f"{NS}.{name}").current_snapshot()
+    return s.snapshot_id, s.timestamp_ms
+
+
 def load_tpch(c, src, name, batch_rows):
     import pyarrow.dataset as ds
     d = ds.dataset(os.path.join(src, name), format="parquet")

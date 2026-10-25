@@ -6,14 +6,14 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 117 +++++++
+ .../flight/FlightPropertiesTest.java          | 117 ++++++
  .../flight/FlightSqlMetadataClientTest.java   | 107 ++++++
- .../flight/FlightSqlRendererTest.java         | 123 +++++++
- .../flight/FlightTypeMapperTest.java          | 164 +++++++++
- .../flight/MockedFlightSqlMetadataClient.java | 132 ++++++++
+ .../flight/FlightSqlRendererTest.java         | 151 ++++++++
+ .../flight/FlightTypeMapperTest.java          | 164 ++++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 132 +++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 ++++
- .../sql/plan/FlightScanPlanTest.java          | 316 ++++++++++++++++++
- 7 files changed, 1031 insertions(+)
+ .../sql/plan/FlightScanPlanTest.java          | 352 ++++++++++++++++++
+ 7 files changed, 1095 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -260,10 +260,10 @@ index 00000000..706f9cba
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
 new file mode 100644
-index 00000000..3c2a91aa
+index 00000000..835eeeb7
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,151 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -298,6 +298,8 @@ index 00000000..3c2a91aa
 +
 +import java.math.BigDecimal;
 +import java.time.LocalDateTime;
++import java.time.ZoneId;
++import java.time.ZoneOffset;
 +import java.util.Collections;
 +
 +public class FlightSqlRendererTest {
@@ -385,6 +387,32 @@ index 00000000..3c2a91aa
 +                                new FlightSqlRenderer.SelectItem("\"g\"", null),
 +                                new FlightSqlRenderer.SelectItem("sum(\"x\")", "__flight_agg_0")),
 +                        Collections.emptyList(), ImmutableList.of("g"), -1, false));
++    }
++
++    @Test
++    public void testTimeTravel() {
++        ZoneId utc = ZoneOffset.UTC;
++        Assertions.assertEquals("FOR VERSION AS OF 123456789012",
++                FlightSqlRenderer.timeTravel(true, ConstantOperator.createBigint(123456789012L), utc));
++        Assertions.assertEquals("FOR VERSION AS OF 5",
++                FlightSqlRenderer.timeTravel(true, ConstantOperator.createInt(5), utc));
++        Assertions.assertNull(FlightSqlRenderer.timeTravel(true, ConstantOperator.createVarchar("main"), utc));
++        Assertions.assertNull(FlightSqlRenderer.timeTravel(true, ConstantOperator.createNull(IntegerType.BIGINT), utc));
++
++        LocalDateTime t = LocalDateTime.of(2026, 1, 2, 3, 4, 5, 678_000_000);
++        Assertions.assertEquals("FOR TIMESTAMP AS OF TIMESTAMP '2026-01-02 03:04:05.678000 UTC'",
++                FlightSqlRenderer.timeTravel(false, ConstantOperator.createDatetime(t), utc));
++        // read in the session zone, sent as UTC (crosses midnight backwards)
++        Assertions.assertEquals("FOR TIMESTAMP AS OF TIMESTAMP '2026-01-01 18:04:05.678000 UTC'",
++                FlightSqlRenderer.timeTravel(false, ConstantOperator.createDatetime(t), ZoneId.of("Asia/Tokyo")));
++        Assertions.assertEquals("FOR TIMESTAMP AS OF TIMESTAMP '2026-01-02 03:04:05 UTC'",
++                FlightSqlRenderer.timeTravel(false, ConstantOperator.createVarchar("2026-01-02 03:04:05"), utc));
++        Assertions.assertNull(FlightSqlRenderer.timeTravel(false, ConstantOperator.createVarchar("yesterday"), utc));
++
++        Assertions.assertEquals("SELECT \"a\" FROM \"s\".\"t\" FOR VERSION AS OF 9 WHERE (\"a\" = 1)",
++                FlightSqlRenderer.select("s", "t", "FOR VERSION AS OF 9",
++                        ImmutableList.of(new FlightSqlRenderer.SelectItem("\"a\"", null)),
++                        ImmutableList.of("(\"a\" = 1)"), Collections.emptyList(), -1, false));
 +    }
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightTypeMapperTest.java
@@ -775,10 +803,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..fd75268c
+index 00000000..40fba1b8
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,316 @@
+@@ -0,0 +1,352 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1093,5 +1121,41 @@ index 00000000..fd75268c
 +        } finally {
 +            connectContext.getSessionVariable().setFlightFilterPushdown(true);
 +        }
++    }
++
++    @Test
++    public void testTimeTravelIsForwarded() throws Exception {
++        String plan = getFragmentPlan("select id from " + T1 + " for version as of 42 where id > 1");
++        assertContains(remoteSql(plan), " FROM \"s1\".\"t1\" FOR VERSION AS OF 42 WHERE (\"id\" > 1)");
++
++        // a pushed aggregation keeps the clause
++        plan = getFragmentPlan("select k, count(*) from " + T1 + " for version as of 7 group by k");
++        assertContains(remoteSql(plan), "FROM \"s1\".\"t1\" FOR VERSION AS OF 7 GROUP BY \"k\"");
++
++        // the session time zone is applied and the server gets UTC
++        String tz = connectContext.getSessionVariable().getTimeZone();
++        try {
++            connectContext.getSessionVariable().setTimeZone("Asia/Shanghai");
++            plan = getFragmentPlan("select id from " + T1 + " for timestamp as of '2026-10-25 12:00:00'");
++            assertContains(remoteSql(plan),
++                    "FROM \"s1\".\"t1\" FOR TIMESTAMP AS OF TIMESTAMP '2026-10-25 04:00:00 UTC'");
++        } finally {
++            connectContext.getSessionVariable().setTimeZone(tz);
++        }
++
++        // the same table at two versions stays two scans
++        plan = getFragmentPlan("select a.id from " + T1 + " for version as of 1 as a join " + T1
++                + " for version as of 2 as b on a.id = b.id");
++        assertContains(plan, "FOR VERSION AS OF 1", "FOR VERSION AS OF 2");
++    }
++
++    @Test
++    public void testTimeTravelRejectsRangesAndBadValues() {
++        Exception e = Assertions.assertThrows(Exception.class,
++                () -> getFragmentPlan("select id from " + T1 + " for version between 1 and 2"));
++        assertContains(e.getMessage(), "support only FOR VERSION AS OF");
++        e = Assertions.assertThrows(Exception.class,
++                () -> getFragmentPlan("select id from " + T1 + " for version as of 'main'"));
++        assertContains(e.getMessage(), "Invalid version for an Arrow Flight table");
 +    }
 +}

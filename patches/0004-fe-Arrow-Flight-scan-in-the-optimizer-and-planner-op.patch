@@ -8,7 +8,7 @@ Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, FlightAggregat
 count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, statistics, EXPLAIN, FlightScanNode
 (remote SQL, endpoint scan ranges), session variables flight_filter_pushdown / flight_aggregate_pushdown.
 ---
- .../com/starrocks/planner/FlightScanNode.java | 307 ++++++++++++++++++
+ .../com/starrocks/planner/FlightScanNode.java | 313 ++++++++++++++++++
  .../com/starrocks/qe/SessionVariable.java     |  25 ++
  .../main/java/com/starrocks/sql/Explain.java  |  20 ++
  .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
@@ -16,20 +16,20 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../sql/optimizer/QueryOptimizer.java         |   3 +
  .../sql/optimizer/operator/OperatorType.java  |   2 +
  .../optimizer/operator/OperatorVisitor.java   |  10 +
- .../logical/LogicalFlightScanOperator.java    |  88 +++++
+ .../logical/LogicalFlightScanOperator.java    | 100 ++++++
  .../operator/pattern/MultiOpPattern.java      |   1 +
- .../physical/PhysicalFlightScanOperator.java  |  60 ++++
+ .../physical/PhysicalFlightScanOperator.java  |  67 ++++
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
  .../sql/optimizer/rule/RuleType.java          |   2 +
  .../FlightScanImplementationRule.java         |  38 +++
- .../FlightAggregationPushdownRule.java        | 270 +++++++++++++++
+ .../FlightAggregationPushdownRule.java        | 271 +++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
- .../transformer/RelationTransformer.java      |   4 +
- .../sql/plan/PlanFragmentBuilder.java         |  56 +++-
- 21 files changed, 953 insertions(+), 2 deletions(-)
+ .../transformer/RelationTransformer.java      |  27 ++
+ .../sql/plan/PlanFragmentBuilder.java         |  57 +++-
+ 21 files changed, 1003 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -38,10 +38,10 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 new file mode 100644
-index 00000000..a658f54b
+index 00000000..d46aefb5
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,313 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -114,10 +114,16 @@ index 00000000..a658f54b
 +    private int pushedConjuncts;
 +    private int totalConjuncts;
 +    private boolean limitPushed;
++    private String timeTravel;
 +
 +    public FlightScanNode(PlanNodeId id, TupleDescriptor desc, String planNodeName) {
 +        super(id, desc, planNodeName);
 +        this.table = (FlightTable) desc.getTable();
++    }
++
++    /** Time-travel clause rendered after the remote table name ({@code FOR VERSION AS OF 42}), or null. */
++    public void setTimeTravel(String timeTravel) {
++        this.timeTravel = timeTravel;
 +    }
 +
 +    private static boolean sessionFilterPushdown() {
@@ -193,8 +199,8 @@ index 00000000..a658f54b
 +            remoteLimit = limit;
 +        }
 +        limitPushed = remoteLimit >= 0;
-+        return FlightSqlRenderer.select(table.getCatalogDBName(), table.getCatalogTableName(), items, where, groupBy,
-+                remoteLimit, false);
++        return FlightSqlRenderer.select(table.getCatalogDBName(), table.getCatalogTableName(), timeTravel, items, where,
++                groupBy, remoteLimit, false);
 +    }
 +
 +    public void setupScanRangeLocations(Map<ColumnRefOperator, Column> columnRefs, ScalarOperator predicate,
@@ -553,10 +559,10 @@ index 36e2b8e6..b37dc2c7 100644
      }
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
 new file mode 100644
-index 00000000..a0e1c41f
+index 00000000..39944293
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,100 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -589,6 +595,8 @@ index 00000000..a0e1c41f
 +public class LogicalFlightScanOperator extends LogicalScanOperator {
 +    /** Partial aggregation computed by the server, or null for a plain scan. */
 +    private FlightAggregationPushdown aggregationPushdown;
++    /** Rendered time-travel clause for the remote table ({@code FOR VERSION AS OF 42}), or null. */
++    private String timeTravel;
 +
 +    public LogicalFlightScanOperator(Table table,
 +                                     Map<ColumnRefOperator, Column> colRefToColumnMetaMap,
@@ -611,6 +619,14 @@ index 00000000..a0e1c41f
 +        this.aggregationPushdown = aggregationPushdown;
 +    }
 +
++    public String getTimeTravel() {
++        return timeTravel;
++    }
++
++    public void setTimeTravel(String timeTravel) {
++        this.timeTravel = timeTravel;
++    }
++
 +    @Override
 +    public <R, C> R accept(OperatorVisitor<R, C> visitor, C context) {
 +        return visitor.visitLogicalFlightScan(this, context);
@@ -621,12 +637,13 @@ index 00000000..a0e1c41f
 +        if (!super.equals(o)) {
 +            return false;
 +        }
-+        return Objects.equals(aggregationPushdown, ((LogicalFlightScanOperator) o).aggregationPushdown);
++        LogicalFlightScanOperator that = (LogicalFlightScanOperator) o;
++        return Objects.equals(aggregationPushdown, that.aggregationPushdown) && Objects.equals(timeTravel, that.timeTravel);
 +    }
 +
 +    @Override
 +    public int hashCode() {
-+        return Objects.hash(super.hashCode(), aggregationPushdown);
++        return Objects.hash(super.hashCode(), aggregationPushdown, timeTravel);
 +    }
 +
 +    public static class Builder
@@ -641,6 +658,7 @@ index 00000000..a0e1c41f
 +        public LogicalFlightScanOperator.Builder withOperator(LogicalFlightScanOperator scanOperator) {
 +            super.withOperator(scanOperator);
 +            builder.aggregationPushdown = scanOperator.aggregationPushdown;
++            builder.timeTravel = scanOperator.timeTravel;
 +            return this;
 +        }
 +    }
@@ -659,10 +677,10 @@ index ccf4c18f..51ad4777 100644
  
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
 new file mode 100644
-index 00000000..00b84cbe
+index 00000000..95845a6f
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,67 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -690,14 +708,20 @@ index 00000000..00b84cbe
 +
 +public class PhysicalFlightScanOperator extends PhysicalScanOperator {
 +    private final FlightAggregationPushdown aggregationPushdown;
++    private final String timeTravel;
 +
 +    public PhysicalFlightScanOperator(LogicalFlightScanOperator scan) {
 +        super(OperatorType.PHYSICAL_FLIGHT_SCAN, scan);
 +        this.aggregationPushdown = scan.getAggregationPushdown();
++        this.timeTravel = scan.getTimeTravel();
 +    }
 +
 +    public FlightAggregationPushdown getAggregationPushdown() {
 +        return aggregationPushdown;
++    }
++
++    public String getTimeTravel() {
++        return timeTravel;
 +    }
 +
 +    @Override
@@ -715,12 +739,13 @@ index 00000000..00b84cbe
 +        if (!super.equals(o)) {
 +            return false;
 +        }
-+        return Objects.equals(aggregationPushdown, ((PhysicalFlightScanOperator) o).aggregationPushdown);
++        PhysicalFlightScanOperator that = (PhysicalFlightScanOperator) o;
++        return Objects.equals(aggregationPushdown, that.aggregationPushdown) && Objects.equals(timeTravel, that.timeTravel);
 +    }
 +
 +    @Override
 +    public int hashCode() {
-+        return Objects.hash(super.hashCode(), aggregationPushdown);
++        return Objects.hash(super.hashCode(), aggregationPushdown, timeTravel);
 +    }
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleSet.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleSet.java
@@ -809,10 +834,10 @@ index 00000000..5a9aeab3
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
 new file mode 100644
-index 00000000..c0e73efc
+index 00000000..113a9418
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,271 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1022,6 +1047,7 @@ index 00000000..c0e73efc
 +        LogicalFlightScanOperator newScan =
 +                new LogicalFlightScanOperator(table, newScanColumns, newScanMeta, scan.getLimit(), null);
 +        newScan.setAggregationPushdown(new FlightAggregationPushdown(groupBy, remoteAggregates, where));
++        newScan.setTimeTravel(scan.getTimeTravel());
 +
 +        LogicalAggregationOperator.Builder builder = LogicalAggregationOperator.builder().withOperator(agg)
 +                .setAggregations(newAggregations);
@@ -1200,10 +1226,21 @@ index cdc07dca..fd9abebe 100644
          return computeHMSTableScanNode(node, context, node.getTable(), node.getColRefToColumnMetaMap());
      }
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/transformer/RelationTransformer.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/transformer/RelationTransformer.java
-index 133b0a74..52d26ebd 100644
+index 133b0a74..b36c1bc7 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/transformer/RelationTransformer.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/transformer/RelationTransformer.java
-@@ -118,6 +118,7 @@ import com.starrocks.sql.optimizer.operator.logical.LogicalIcebergScanOperator;
+@@ -34,8 +34,10 @@ import com.starrocks.catalog.TableFunction;
+ import com.starrocks.catalog.View;
+ import com.starrocks.common.Pair;
+ import com.starrocks.common.tvr.TvrVersionRange;
++import com.starrocks.common.util.TimeUtils;
+ import com.starrocks.connector.ConnectorTableVersion;
+ import com.starrocks.connector.elasticsearch.EsTablePartitions;
++import com.starrocks.connector.flight.FlightSqlRenderer;
+ import com.starrocks.connector.metadata.MetadataTable;
+ import com.starrocks.qe.ConnectContext;
+ import com.starrocks.qe.SessionVariable;
+@@ -118,6 +120,7 @@ import com.starrocks.sql.optimizer.operator.logical.LogicalIcebergScanOperator;
  import com.starrocks.sql.optimizer.operator.logical.LogicalIntersectOperator;
  import com.starrocks.sql.optimizer.operator.logical.LogicalJDBCScanOperator;
  import com.starrocks.sql.optimizer.operator.logical.LogicalJoinOperator;
@@ -1211,18 +1248,46 @@ index 133b0a74..52d26ebd 100644
  import com.starrocks.sql.optimizer.operator.logical.LogicalKuduScanOperator;
  import com.starrocks.sql.optimizer.operator.logical.LogicalLimitOperator;
  import com.starrocks.sql.optimizer.operator.logical.LogicalMetaScanOperator;
-@@ -726,6 +727,9 @@ public class RelationTransformer implements AstVisitorExtendInterface<LogicalPla
+@@ -726,6 +729,12 @@ public class RelationTransformer implements AstVisitorExtendInterface<LogicalPla
                  throw new StarRocksPlannerException("Not support metadata table type: " + metadataTable.getMetadataTableType(),
                          ErrorType.UNSUPPORTED);
              }
 +        } else if (Table.TableType.FLIGHT.equals(node.getTable().getType())) {
 +            scanOperator = new LogicalFlightScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build(),
 +                    columnMetaToColRefMap, Operator.DEFAULT_LIMIT, null);
++            if (node.getQueryPeriodString() != null) {
++                ((LogicalFlightScanOperator) scanOperator).setTimeTravel(flightTimeTravel(node.getQueryPeriod()));
++            }
          } else if (Table.TableType.KUDU.equals(node.getTable().getType())) {
              scanOperator = new LogicalKuduScanOperator(node.getTable(), colRefToColumnMetaMapBuilder.build(),
                  columnMetaToColRefMap, Operator.DEFAULT_LIMIT, null);
+@@ -802,6 +811,24 @@ public class RelationTransformer implements AstVisitorExtendInterface<LogicalPla
+         return true;
+     }
+ 
++    // Flight tables forward a point in time to the server: FOR VERSION AS OF <id> / FOR TIMESTAMP AS OF <datetime>
++    private String flightTimeTravel(QueryPeriod queryPeriod) {
++        if (queryPeriod == null || queryPeriod.getStart().isPresent() || queryPeriod.getEnd().isEmpty()) {
++            throw new SemanticException("Arrow Flight tables support only FOR VERSION AS OF <snapshot id> " +
++                    "and FOR TIMESTAMP AS OF <datetime>");
++        }
++        boolean version = queryPeriod.getPeriodType() == QueryPeriod.PeriodType.VERSION;
++        ConnectorTableVersion v = resolveQueryPeriod(queryPeriod.getEnd(), queryPeriod.getPeriodType()).get();
++        String clause = FlightSqlRenderer.timeTravel(version, v.getConstantOperator(),
++                TimeUtils.getTimeZone().toZoneId());
++        if (clause == null) {
++            throw new SemanticException("Invalid %s for an Arrow Flight table: %s (expected %s)",
++                    version ? "version" : "timestamp", v.getConstantOperator(),
++                    version ? "an integer snapshot id" : "a datetime");
++        }
++        return clause;
++    }
++
+     private Optional<ConnectorTableVersion> resolveQueryPeriod(Optional<Expr> version, QueryPeriod.PeriodType type) {
+         return QueryPeriodResolver.resolve(version, type, session);
+     }
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
-index 93a8bf9d..50065330 100644
+index 93a8bf9d..de031dfe 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/plan/PlanFragmentBuilder.java
 @@ -56,6 +56,7 @@ import com.starrocks.common.Pair;
@@ -1257,7 +1322,7 @@ index 93a8bf9d..50065330 100644
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHashAggregateOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHashJoinOperator;
  import com.starrocks.sql.optimizer.operator.physical.PhysicalHiveScanOperator;
-@@ -1556,6 +1560,43 @@ public class PlanFragmentBuilder {
+@@ -1556,6 +1560,44 @@ public class PlanFragmentBuilder {
              return fragment;
          }
  
@@ -1275,6 +1340,7 @@ index 93a8bf9d..50065330 100644
 +            FlightScanNode flightScanNode =
 +                    new FlightScanNode(context.getNextNodeId(), tupleDescriptor, "FlightScanNode");
 +            flightScanNode.setScanOptimizeOption(node.getScanOptimizeOption());
++            flightScanNode.setTimeTravel(node.getTimeTravel());
 +            ScalarOperatorToExpr.FormatterContext formatterContext =
 +                    new ScalarOperatorToExpr.FormatterContext(context.getColRefToExpr());
 +            for (ScalarOperator predicate : Utils.extractConjuncts(node.getPredicate())) {
@@ -1301,7 +1367,7 @@ index 93a8bf9d..50065330 100644
          @Override
          public PlanFragment visitPhysicalIcebergScan(OptExpression optExpression, ExecPlan context) {
              return buildIcebergScanNode(optExpression, context);
-@@ -2347,6 +2388,19 @@ public class PlanFragmentBuilder {
+@@ -2347,6 +2389,19 @@ public class PlanFragmentBuilder {
                      intermediateAggrExprs, removeDistinctFlags);
          }
  
@@ -1321,7 +1387,7 @@ index 93a8bf9d..50065330 100644
          @Override
          public PlanFragment visitPhysicalHashAggregate(OptExpression optExpr, ExecPlan context) {
              PhysicalHashAggregateOperator node = (PhysicalHashAggregateOperator) optExpr.getOp();
-@@ -2487,7 +2541,7 @@ public class PlanFragmentBuilder {
+@@ -2487,7 +2542,7 @@ public class PlanFragmentBuilder {
              aggregationNode.setUseSortAgg(node.isUseSortAgg());
              aggregationNode.setUsePerBucketOptimize(node.isUsePerBucketOptmize());
              aggregationNode.setLocalLimit(node.getLocalLimit());
