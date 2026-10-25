@@ -58,7 +58,6 @@ assets)
             gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "$A/$name"
         done
     fi
-    (cd "$A" && sha256sum -c SHA256SUMS)
     # Server builds: int1/int2 embed DuckDB 1.4.1; from int4 on DuckDB 1.4.5 (it refuses to start with v1.4.1
     # extensions) and S3/lakeFS are plugins (asset <tag>-plugins.tar.zst: plugins/, START-NOTES.txt), loaded from
     # -Darrowflight.plugins.dir and kept off the classpath.
@@ -80,11 +79,12 @@ assets)
     [ -z "$plugins" ] || [ -s "$A/$plugins" ] || { echo "$JAR needs the asset $plugins" >&2; exit 1; }
     # Assets added to the release after its SHA256SUMS was written are pinned in the repo.
     [ -s "$A/$libs" ] || { echo "$JAR needs the asset $libs" >&2; exit 1; }
-    for f in "$JAR" $plugins $libs; do
-        grep -q " \*\?$f\$" "$A/SHA256SUMS" && continue
-        grep " $f\$" "$REPO_ROOT/ci/m4/server-jars.sha256" > "$A/extra.sha256" ||
+    # Only the assets this run uses are verified: others (e.g. START-NOTES.md) may be stale against SHA256SUMS.
+    for f in "$JAR" $plugins $libs tpch-sf1-parquet.tar.zst; do
+        grep " \*\?$f\$" "$A/SHA256SUMS" > "$A/one.sha256" ||
+            grep " $f\$" "$REPO_ROOT/ci/m4/server-jars.sha256" > "$A/one.sha256" ||
             { echo "$f: no checksum in SHA256SUMS or ci/m4/server-jars.sha256" >&2; exit 1; }
-        (cd "$A" && sha256sum -c extra.sha256)
+        (cd "$A" && sha256sum -c one.sha256)
     done
     mkdir -p "$A/x"
     if [ "$libs" = flight-server-libs.tar.zst ]; then
