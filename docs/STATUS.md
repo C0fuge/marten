@@ -14,6 +14,14 @@ Design: `docs/PLAN.md`. Source survey: `docs/RESEARCH.md`. CI state: branch `ci-
 | M4 | Bench tests, moved to CI as far as possible (`docs/M4-CI.md`); short final check on the maintainer's stand | **CI part green on series `4a9848e-fl6b6a1d` against server int4** (release candidate, now the m4 default): checks 1–9 all pass incl. the new q05 row-count item (run 39735198246). Local final check 2026-10-22 FAILED (A-1 no CBO stats, keepalive; server items); **local re-check 2026-10-22 (series `fl6b6a1d`, fixed int4): A-1, keepalive, B2/B5 PASS, SF10 85/87 + 26/26 single node, 45/45 + 26/26 3-node; q18 at BE 4G fails on memory (A-4, Next steps 1)**. Series `4a9848e-fl9ec2c3` (P1 converted types): checks 1–9 all pass (run 39828677269, check 2 now 52/52 incl. TIME and INTERVAL). Series `4a9848e-fl67776b` (P1 + P2 column min/max): checks 1–9 all pass (run 39845020831, check 4 46/46 incl. the q05 orders estimate). Newest series `4a9848e-fld145f6` (+ A-4 `flight.exchange_buffer_mb`): checks 1–9 all pass (run 39873438298, check 9 6/6 incl. the q18 exchange items); lakeFS variant checks 1,3,4,10 (run 39875156594); Iceberg variant on server int6 checks 1,11 (run 39882258299). **Local A-4 re-check 2026-10-23 (draft `v4.1.4-flight.0-a4`): q18 at BE 4G passes with the cap (14/14 single node, 6/6 3-node; fails with the cap off), checks 4,5 SF10 87/89 + 26/26 and 45/46 + 26/26 (3-node, no spill); headroom item: pre-agg above the pushed aggregation (Next steps 1)**. Newest series `4a9848e-fl4bda75` (+ force-streaming pre-aggregation above a pushed aggregation): checks 1–9 pass (run 39949914514: 1–8 all, 9 5/6 on a noise comparison, fixed in m4.py; run 39951241481: checks 4 46/46, 9 6/6). **Local A-4b re-check 2026-10-23 (draft `v4.1.4-flight.0-a4b`): q18 at BE 4G `force_streaming` pre-aggregation, pure passthrough, peak/node 2.25–2.38 GB single node (16/16) and 2.37–2.46 GB 3-node (8/8); checks 4,5 SF10 86/88 + 26/26 single node (both FAILs = the JDBC reference q18 at the process limit; Flight-only 46/46), 46/46 + 26/26 3-node — A-4 settled**. **Server int7 is the m4 default (2026-10-23): full suite PASS — S3 checks 1–9 (run 39984493363), Iceberg 1,11 (run 39984497103), lakeFS 1,3,4,10 (run 39987340277).** Summary `docs/M4-RESULTS.md` |
 | M5 | Package: patch series + artifacts + install guide | `docs/INSTALL.md` drafted; patch series of 7 patches, current series `4a9848e-fl6b6a1d` (FE 39733048078 with 32 Flight tests, BE 39733050937, be-ut 39730083877 on the same BE sources); draft release `v4.1.4-flight.0-dryrun` refreshed for it (release run 39735200365); publish after the local re-check. Newer series `4a9848e-fl9ec2c3` (P1): FE 39825739612 (Flight tests), BE 39825723550, be-ut 39825723598. Newest `4a9848e-fl67776b` (P1 + P2): FE 39842646955 (Flight tests), BE 39842650526 (ccache-only rebuild; BE sources unchanged since be-ut 39825723598) — the draft was deliberately NOT refreshed (it is the build under the maintainer's re-check). Newest `4a9848e-fld145f6` (P1 + P2 + A-4 exchange cap): FE 39847449823 (Flight tests), BE 39847433502, be-ut 39847433352; separate draft `v4.1.4-flight.0-a4` for the stand's q18 re-check (release run 39874283999). Newest `4a9848e-fl4bda75` (+ A-4 headroom): FE 39948153646 (39 Flight tests), BE 39948156366 (ccache-only rebuild; BE sources unchanged since be-ut 39847433352); draft `v4.1.4-flight.0-a4b` for the stand (release run 39952272222) |
 
+- 2026-10-25 05:40–06:30 UTC (cloud session): **server 4eaab052deaf in CI, step 1.** Release `m4-assets` was re-uploaded
+  for the public repo (int4/int5/int6 jars gone; `int7-plugins.tar.zst` now bad288e0…, listed in the new SHA256SUMS);
+  `ci/m4/stack.sh` derives plugins/libs asset names for server repo CI builds (`arrow-flight-server-<ver>-<commit>-linux.jar`)
+  and runs them with their own `libs/` (checked against `libs/SHA256SUMS`; `M4_LIBS` in server.env); assets cache key
+  `m4-assets-v6`. m4 40166546587 (S3 1–9) failed before any check: no `fe-out-*` cache and no `fe-jars-*` artifact —
+  the public repo has no caches/artifacts at all; m4 40166548012 (iceberg) cancelled. Dispatched fe 40166741833 and
+  be 40166743137 (cold BE). No patch changed.
+
 ## Patch series (on tag 4.1.4)
 
 | Patch | Content | State |
@@ -301,6 +309,16 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   Marked the release question as answered. No CI run, no patch changed.
 
 ## Next steps
+
+> **In progress 2026-10-25 (cloud session):** `stack.sh` / `m4.yml` take the new asset layout (dev builds: own
+> `flight-plugins-<ver>-<commit>.tar.zst` + `flight-server-libs-<ver>-<commit>.tar.zst`; assets cache `m4-assets-v6`).
+> **The public repo starts with no Actions caches, artifacts or ccache** (run history begins 2026-10-25): m4 40166546587
+> stopped at "no FE output". Rebuild dispatched: fe 40166741833, be 40166743137 (cold, no ccache: several chained parts,
+> hours). **Next session:** when `ci-status` / the runs API shows `be` done (and `fe`), request
+> `m4 checks=1,2,3,4,5,6,7,8,9 server=arrow-flight-server-1.0.0-4eaab052deaf-linux.jar` and
+> `m4 checks=1,11 store=iceberg server=…` in one push, then `m4 checks=1,3,4,10 store=lakefs server=…` in a later push
+> (the m4 concurrency group keeps one pending run only); if all PASS make it the default of `m4.yml` / `stack.sh`.
+> If a BE part fails, read its log before re-dispatching (never re-run for the same reason without a fix).
 
 > **New server build `server-1.0.0-4eaab052deaf`** (2026-10-25, local coordinator; built by the server repo CI from main 4eaab05 = int7 + hadoopfs timeout defaults 3 s / 10 s + dependency security upgrades (Jackson 2.21, Netty 4.2.19, Parquet codecs, Hive libthrift, upstream-sync items) + a fresh, much smaller runtime libs set): assets `arrow-flight-server-1.0.0-4eaab052deaf-linux.jar`, `flight-plugins-1.0.0-4eaab052deaf.tar.zst`, `flight-server-libs-1.0.0-4eaab052deaf.tar.zst` (replaces flight-server-libs.tar.zst for this build), START-NOTES.md (sums in SHA256SUMS). Not stand-verified yet: run your full suite once against it (keep int7 as the fallback default until it is green); report regressions under Open questions.
 
