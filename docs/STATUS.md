@@ -320,6 +320,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-c3b276054cc3`** (2026-10-25, local coordinator): = 4eaab052deaf + Iceberg time travel (`FOR VERSION AS OF <snapshot>` / `FOR TIMESTAMP AS OF TIMESTAMP '… UTC'` after an Iceberg table name) + ZooKeeper client and lz4-java back in the runtime libs set (production HA with ZooKeeper). Assets `arrow-flight-server-1.0.0-c3b276054cc3-linux.jar`, `flight-plugins-1.0.0-c3b276054cc3.tar.zst`, `flight-server-libs-1.0.0-c3b276054cc3.tar.zst` (sums in SHA256SUMS). Run the suite once against it; if green make it the default. Connector follow-up: forward the time-travel clause (Trino `FOR VERSION/TIMESTAMP AS OF`, StarRocks own syntax if any) to the server — additive, no approval needed.
+
 > **Done 2026-10-25 (m4 40172422411 / 40172423737 / 40173169121, see Log):** server build 4eaab052deaf passes the full
 > suite (S3 1–9, iceberg 1,11, lakefs 1,3,4,10) on series `fl4bda75` and is the default of `m4.yml` / `stack.sh`; int7
 > stays available as `server=arrow-flight-server-1.0.0-int7.jar`. The public repo now has FE/BE output caches again
