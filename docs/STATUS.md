@@ -337,6 +337,14 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-20b887839edf`** (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` attached to this repo's assets release). = c3b276054cc3 + **Iceberg time travel** (`FOR VERSION AS OF` /
+> `FOR TIMESTAMP AS OF`; c3b276054cc3 did **not** contain it — that earlier note was wrong, which is why the forwarded
+> clause was rejected) + fix for parameterized prepared statements with `duckDbStatementCacheSize` 0/1 + Hive metastore
+> Kerberos client + local catalog roots under a non-local `fs.defaultFS`. Run the suite once on it, retry the
+> time-travel item, and make it the CI default if green. Server bugs → the server repo's Next steps via the coordinator.
+
+
 > **Done 2026-10-25 (see Log):** server c3b276054cc3 passes the suite (S3 1–9, iceberg 1,11, lakefs 1,3,4,10) and is the
 > m4 default. The connector forwards the time-travel clause (series `fl536298`, m4 check 12), but **the server rejects
 > it** (Open questions); check 12 goes green once a server build accepts `"schema"."table" FOR VERSION/TIMESTAMP AS OF …`.
