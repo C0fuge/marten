@@ -50,8 +50,10 @@ assets)
         # m4-assets is a draft release: the tag endpoint does not see it, so look it up in the release list.
         rel=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name=="m4-assets") | .id' | head -1)
         [ -n "$rel" ] || { echo "release m4-assets not found" >&2; exit 1; }
-        gh api "repos/$GITHUB_REPOSITORY/releases/$rel/assets?per_page=100" --jq '.[] | "\(.id) \(.name)"' |
-        while read -r id name; do
+        # an asset whose upload never finished (state "starter", e.g. int2 after the repo re-creation) answers 404
+        gh api "repos/$GITHUB_REPOSITORY/releases/$rel/assets?per_page=100" --jq '.[] | "\(.id) \(.state) \(.name)"' |
+        while read -r id state name; do
+            [ "$state" = uploaded ] || { echo "skip $name (upload state $state)"; continue; }
             echo "download $name"
             gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "$A/$name"
         done
