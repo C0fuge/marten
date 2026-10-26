@@ -468,3 +468,28 @@ FE/BE outputs rebuilt in the re-created public repo (fe 40166741833, be 40166743
 | 40173169121 | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
 
 No regression against int7. Still listed: the Iceberg warehouse directory as schema `_iceberg` (Open questions).
+
+
+## 2026-10-26, CI: server build 60e888bc26ec (`duckDbThreads` default 4) — series `4a9848e-fl536298`: **not made the default (check 6 intermittent)**
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40255396864 | 60e888bc26ec | s3 | 1–9 | all PASS except check 6 5/6 (25 + 52 + 21 + 46 + 26 + 5/6 + 2 + 14 + 6); check 4 28 s (29 s on 20b887839edf) |
+| 40255398491 | 60e888bc26ec | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40259166769 | 60e888bc26ec | s3 | 6 | 5/6, same item (15.1 s) |
+| 40259168469 | 20b887839edf | s3 | 6 | setup failed (MinIO: quay.io pull failed, fallback dropped a PutObject) |
+| 40262586606 | 60e888bc26ec | s3 | 6 | 6/6 (flight2 stopped: 10.9 s) |
+| 40262584557 | 20b887839edf | s3 | 6 | 6/6 (11.0 s) |
+
+The failing item is "flight2 stopped before the query: succeeds via backup locations": `GetFlightInfo` times out on both
+catalog URIs (`TIMED_OUT … waiting_for_connection`, 5 s each, 15 s total). In passing runs the same item also spends one
+5 s timeout (10.9–12.5 s) before the second URI answers. flight1's log at the failure (40259166769): Hazelcast suspects
+flight2 ~10 s after the stop, promotes 135 backups, and a `PutIfAbsentOperation` on the `server-registry` map was
+retried 9 times from 02:31:59 to 02:32:08 (SEVERE `NormalResponse already responseReceived`). On 20b887839edf the item passed in every one of
+~20 runs since 2026-10-21 (the two earlier failures, 39840237517 / 39841545485, were the P2 connector bug, fixed).
+Working assumption: with 4 DuckDB threads per server on the 4-vCPU runner (two servers + allin1), flight1 is slower to
+accept a new connection during member loss, so the FE's second attempt also misses its 5 s deadline. Not settled:
+whether the FE's catalog connection should sit on flight2 at that point (the first attempt goes to the stopped server).
+Harness: check 6 now writes the fe.log failover lines and flight1's WARN/SEVERE/member lines into the notes when the
+item fails (the run artifacts are not reachable from the cloud sessions).
+
