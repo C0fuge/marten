@@ -541,3 +541,17 @@ after the start, the same stall as on 60e888bc26ec), then flight2's connect prob
 the connected flight1 succeeded (15.4 s total, correct rows). Before `fldb9219` this sequence failed the query. So the
 server change in 7fbe2d75827c does not remove the ~10 s stall in this case (a server note, Open questions in STATUS); the
 connector handles it. **7fbe2d75827c is the m4 default from 2026-10-26 07:30 UTC.**
+
+## 2026-10-26, CI: server 4d707e2aedfc as the m4 default — series `4a9848e-fldb9219`
+
+Server 4d707e2aedfc = 7fbe2d75827c + DuckDB retries S3 connect errors for ~6 s. Assets cache `m4-assets-v11`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40294023782 | 4d707e2aedfc | s3 | 1–9 | setup failed before the checks (quay.io pull failed, the fallback MinIO dropped a PutObject: `ClientDisconnected`); `stack.sh minio` now retries each PUT up to 3 times |
+| 40294026200 | 4d707e2aedfc | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40301602799 | 4d707e2aedfc | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 4 29 s; check 6 "flight2 stopped": 10.9 s, no FE failover |
+| 40301606304 | 4d707e2aedfc | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+
+TPC-H timings unchanged (q01–q22 0.2–1.3 s). CI does not exercise the new S3 retry (MinIO on the runner never refuses
+connections). **4d707e2aedfc is the m4 default from 2026-10-26 10:00 UTC.**
