@@ -364,6 +364,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-7fbe2d75827c`** (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release) = 60e888bc26ec + planning no longer waits for the cluster to settle after
+> a node left (fixes the intermittent GetFlightInfo TIMED_OUT with a stopped member) + `s3a://`/`s3n://` catalog roots +
+> the deployment's HDFS short-circuit setting is kept. Run the suite once on it and make it the CI default if green.
+
+
 > **Done 2026-10-26 04:45 UTC (see Log):** check 6 on server 60e888bc26ec failed because flight1 itself failed
 > GetFlightInfo as unreachable for ~10 s during Hazelcast member loss and the FE tried each URI only once; series
 > `fldb9219` retries the connected URI once (unit-tested; no CI run hit the window afterwards). 60e888bc26ec is the m4
