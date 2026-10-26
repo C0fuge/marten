@@ -522,3 +522,22 @@ during member loss), so it stays a server note too.
 `fl536298`, m4 40255398491 — the FE change only touches failure paths). The fix itself is covered by the unit test only: none
 of the runs after it hit the member-loss window. If check 6 fails again, the notes now carry the fe.log failover lines and
 the query's UTC window.
+
+## 2026-10-26, CI: server 7fbe2d75827c as the m4 default — series `4a9848e-fldb9219`
+
+Server 7fbe2d75827c = 60e888bc26ec + planning no longer waits for the cluster to settle after a node left + `s3a://` /
+`s3n://` catalog roots + HDFS short-circuit setting kept. Assets cache `m4-assets-v10`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40281342490 | 7fbe2d75827c | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 4 21 s; check 6 "flight2 stopped": 15.4 s |
+| 40281344356 | 7fbe2d75827c | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40284404496 | 7fbe2d75827c | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40284406938 | 7fbe2d75827c | s3 | 6 | 6/6 ("flight2 stopped": 10.9 s, no FE failover) |
+
+**First CI hit of the member-loss window since the `fldb9219` fix, and the fix worked.** In 40281342490 the query after
+stopping flight2 ran 06:47:31–06:47:47 UTC: fe.log shows flight1's GetFlightInfo failing UNAVAILABLE at 06:47:41.6 (~10 s
+after the start, the same stall as on 60e888bc26ec), then flight2's connect probe TIMED_OUT at 06:47:46.6, then the retry of
+the connected flight1 succeeded (15.4 s total, correct rows). Before `fldb9219` this sequence failed the query. So the
+server change in 7fbe2d75827c does not remove the ~10 s stall in this case (a server note, Open questions in STATUS); the
+connector handles it. **7fbe2d75827c is the m4 default from 2026-10-26 07:30 UTC.**
