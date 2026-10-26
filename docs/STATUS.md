@@ -342,6 +342,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-60e888bc26ec`** (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release) = 20b887839edf + **`duckDbThreads` default 4** (was 1 in code; maintainer
+> decision after the perf campaign: SF10 ~1.8x, SF1 ~1.3x faster, small queries unchanged). No protocol change. Run the
+> suite once on it and make it the CI default if green; note timings if they change noticeably.
+
+
 > **Done 2026-10-26 (m4 40245888043 / 40245889746 / 40248225183, see Log):** server 20b887839edf passes the full suite
 > (S3 1–9 198/198, iceberg 1,11,12 incl. **time travel 10/10**, lakefs 1,3,4,10) on series `fl536298` and is the m4
 > default (`m4.yml`, `stack.sh`; assets cache `m4-assets-v8`). Nothing open on the connector side.
