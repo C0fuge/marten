@@ -369,6 +369,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-4d707e2aedfc`** (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release) = 7fbe2d75827c + DuckDB retries S3 connect errors for ~6 s (the stand saw
+> every complete-mode query fail with "Could not establish connection" on S3 at `duckDbThreads=8`). Run the suite once
+> on it and make it the CI default if green.
+
+
 > **Done 2026-10-26 07:30 UTC (see Log):** server 7fbe2d75827c passes the full suite on series `fldb9219` (S3 1–9 m4
 > 40281342490, iceberg 1,11,12 40281344356, lakefs 1,3,4,10 40284404496, check 6 40284406938) and is the m4 default
 > (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v10`). Check 6 in 40281342490 hit the member-loss window again
