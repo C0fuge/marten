@@ -806,6 +806,16 @@ def check6(conn, args, res):
         got = [tuple(norm(v) for v in x) for x in r] if ok else r
         res.add("flight2 stopped before the query: succeeds via backup locations", ok and got == exp,
                 f"{secs:.1f}s got={got}")
+        if not ok:
+            # the run artifact is not reachable from every session: keep the relevant log lines in the results
+            fe = subprocess.run(["docker", "exec", "sr", "sh", "-c",
+                                 "tail -n 400 /data/deploy/starrocks/fe/log/fe.log | grep -i 'flight' | tail -n 12"],
+                                capture_output=True, text=True)
+            res.notes.append("fe.log 'flight' lines after the stop: " + " / ".join(fe.stdout.splitlines())[:1500])
+            f1 = subprocess.run(["docker", "logs", "--since", "60s", "flight1"], capture_output=True, text=True)
+            hits = [l for l in (f1.stdout + f1.stderr).splitlines() if re.search(r"WARN|ERROR|Exception|member", l)]
+            res.notes.append(f"flight1 WARN/ERROR/member lines (last 60 s): {len(hits)}; "
+                             + " / ".join(hits[-8:])[:1500])
 
         stack("flight", args.assets, "flight2", "flight1,flight2")
         time.sleep(10)
