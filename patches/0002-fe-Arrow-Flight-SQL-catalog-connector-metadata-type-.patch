@@ -20,14 +20,14 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../connector/flight/FlightMetadata.java      | 475 +++++++++++++++++
  .../connector/flight/FlightProperties.java    | 352 +++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
- .../flight/FlightSqlMetadataClient.java       | 467 +++++++++++++++++
+ .../flight/FlightSqlMetadataClient.java       | 482 +++++++++++++++++
  .../connector/flight/FlightSqlRenderer.java   | 488 ++++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 257 +++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2394 insertions(+), 3 deletions(-)
+ 18 files changed, 2409 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -1317,10 +1317,10 @@ index 00000000..75bee134
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..ccd844ea
+index 00000000..f76082b2
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,482 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1538,6 +1538,8 @@ index 00000000..ccd844ea
 +    /**
 +     * Runs {@code call}; on an "unreachable" error it moves on to the next catalog URI (each URI at most once
 +     * per call). With user/password, UNAUTHENTICATED (expired session) leads to one new handshake.
++     * If every URI failed as unreachable but one of them was connected when its call failed (a server that is
++     * up but timed out while its cluster drops a lost member), that URI is tried once more.
 +     */
 +    private <T> T withFailover(String what, BiFunction<Conn, CallOption[], T> call) {
 +        int n = props.getUris().size();
@@ -1545,8 +1547,10 @@ index 00000000..ccd844ea
 +        Conn failed = null;
 +        int next = 0;
 +        boolean reauthenticated = false;
++        int connectedIndex = -1;
++        boolean retried = false;
 +        for (int attempt = 0; attempt < n; attempt++) {
-+            Conn c;
++            Conn c = null;
 +            try {
 +                c = current(failed, next);
 +            } catch (FlightRuntimeException e) {
@@ -1557,26 +1561,37 @@ index 00000000..ccd844ea
 +                LOG.warn("Flight {}: cannot connect to {} ({}), trying next location", what,
 +                        props.getUris().get(next), e.status().code());
 +                next = (next + 1) % n;
-+                continue;
 +            }
-+            try {
-+                return call.apply(c, options(c, unaryTimeoutMs()));
-+            } catch (FlightRuntimeException e) {
-+                last = e;
-+                failed = c;
-+                next = c.uriIndex;
-+                if (e.status().code() == FlightStatusCode.UNAUTHENTICATED && props.getUser() != null
-+                        && !reauthenticated) {
-+                    reauthenticated = true;
-+                    attempt--;
-+                    continue;
++            if (c != null) {
++                try {
++                    return call.apply(c, options(c, unaryTimeoutMs()));
++                } catch (FlightRuntimeException e) {
++                    last = e;
++                    failed = c;
++                    next = c.uriIndex;
++                    if (e.status().code() == FlightStatusCode.UNAUTHENTICATED && props.getUser() != null
++                            && !reauthenticated) {
++                        reauthenticated = true;
++                        attempt--;
++                        continue;
++                    }
++                    if (!isUnreachable(e)) {
++                        break;
++                    }
++                    LOG.warn("Flight {} failed on {} ({}), trying next location", what,
++                            props.getUris().get(c.uriIndex), e.status().code());
++                    if (connectedIndex < 0) {
++                        connectedIndex = c.uriIndex;
++                    }
++                    next = (c.uriIndex + 1) % n;
 +                }
-+                if (!isUnreachable(e)) {
-+                    break;
-+                }
-+                LOG.warn("Flight {} failed on {} ({}), trying next location", what,
-+                        props.getUris().get(c.uriIndex), e.status().code());
-+                next = (c.uriIndex + 1) % n;
++            }
++            if (attempt == n - 1 && connectedIndex >= 0 && !retried) {
++                retried = true;
++                attempt--;
++                next = connectedIndex;
++                LOG.warn("Flight {}: no location answered, retrying {} once", what,
++                        props.getUris().get(connectedIndex));
 +            }
 +        }
 +        throw new StarRocksConnectorException("Flight " + what + " failed: " + describe(last), last);

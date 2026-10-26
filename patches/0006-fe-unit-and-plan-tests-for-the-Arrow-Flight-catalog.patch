@@ -7,13 +7,13 @@ FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggrega
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
  .../flight/FlightPropertiesTest.java          | 117 ++++++
- .../flight/FlightSqlMetadataClientTest.java   | 107 ++++++
+ .../flight/FlightSqlMetadataClientTest.java   | 160 ++++++++
  .../flight/FlightSqlRendererTest.java         | 151 ++++++++
  .../flight/FlightTypeMapperTest.java          | 164 ++++++++
  .../flight/MockedFlightSqlMetadataClient.java | 132 +++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 ++++
  .../sql/plan/FlightScanPlanTest.java          | 352 ++++++++++++++++++
- 7 files changed, 1095 insertions(+)
+ 7 files changed, 1148 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -147,10 +147,10 @@ index 00000000..8bf29268
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
 new file mode 100644
-index 00000000..706f9cba
+index 00000000..31f867fc
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,160 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -167,6 +167,9 @@ index 00000000..706f9cba
 +package com.starrocks.connector.flight;
 +
 +import com.starrocks.connector.exception.StarRocksConnectorException;
++import org.apache.arrow.flight.CallStatus;
++import org.apache.arrow.flight.FlightDescriptor;
++import org.apache.arrow.flight.FlightInfo;
 +import org.apache.arrow.flight.FlightServer;
 +import org.apache.arrow.flight.Location;
 +import org.apache.arrow.flight.NoOpFlightProducer;
@@ -181,6 +184,7 @@ index 00000000..706f9cba
 +import java.net.ServerSocket;
 +import java.util.HashMap;
 +import java.util.Map;
++import java.util.concurrent.atomic.AtomicInteger;
 +
 +/**
 + * Connect timeout and URI failover of the metadata client against an in-process Flight server that implements
@@ -255,6 +259,55 @@ index 00000000..706f9cba
 +        try (FlightSqlMetadataClient client = new FlightSqlMetadataClient(
 +                props(serverUri + ",grpc://127.0.0.1:" + closedPort()))) {
 +            assertReachedServer(client);
++        }
++    }
++
++    /** Answers its first {@code unavailableCalls} GetFlightInfo calls with UNAVAILABLE, then UNIMPLEMENTED. */
++    private static final class FlakyProducer extends NoOpFlightProducer {
++        final AtomicInteger calls = new AtomicInteger();
++        final int unavailableCalls;
++
++        FlakyProducer(int unavailableCalls) {
++            this.unavailableCalls = unavailableCalls;
++        }
++
++        @Override
++        public FlightInfo getFlightInfo(CallContext context, FlightDescriptor descriptor) {
++            if (calls.incrementAndGet() <= unavailableCalls) {
++                throw CallStatus.UNAVAILABLE.withDescription("member lost").toRuntimeException();
++            }
++            throw CallStatus.UNIMPLEMENTED.toRuntimeException();
++        }
++    }
++
++    @Test
++    public void testConnectedUriIsRetriedOnceWhenNoLocationAnswers() throws Exception {
++        // the first server is up but fails its call as unavailable (cluster dropping a lost member), the second
++        // is down: the first one is asked once more instead of failing the call
++        FlakyProducer producer = new FlakyProducer(1);
++        try (FlightServer flaky = FlightServer.builder(allocator, Location.forGrpcInsecure("127.0.0.1", 0), producer)
++                .build().start();
++                FlightSqlMetadataClient client = new FlightSqlMetadataClient(
++                        props("grpc://127.0.0.1:" + flaky.getPort() + ",grpc://127.0.0.1:" + closedPort()))) {
++            StarRocksConnectorException e = Assertions.assertThrows(StarRocksConnectorException.class,
++                    client::listSchemas);
++            Assertions.assertTrue(e.getMessage().contains("UNIMPLEMENTED"), e.getMessage());
++            Assertions.assertEquals(2, producer.calls.get());
++            Assertions.assertEquals("grpc://127.0.0.1:" + flaky.getPort(), client.currentLocation());
++        }
++    }
++
++    @Test
++    public void testConnectedUriIsRetriedOnlyOnce() throws Exception {
++        FlakyProducer producer = new FlakyProducer(Integer.MAX_VALUE);
++        try (FlightServer flaky = FlightServer.builder(allocator, Location.forGrpcInsecure("127.0.0.1", 0), producer)
++                .build().start();
++                FlightSqlMetadataClient client = new FlightSqlMetadataClient(
++                        props("grpc://127.0.0.1:" + flaky.getPort() + ",grpc://127.0.0.1:" + closedPort()))) {
++            StarRocksConnectorException e = Assertions.assertThrows(StarRocksConnectorException.class,
++                    client::listSchemas);
++            Assertions.assertTrue(e.getMessage().contains("UNAVAILABLE"), e.getMessage());
++            Assertions.assertEquals(2, producer.calls.get());
 +        }
 +    }
 +}
