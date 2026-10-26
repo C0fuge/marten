@@ -1,18 +1,17 @@
-# M4 run 40255398491
+# M4 run 40259166769
 
-2026-10-26 01:52 UTC, series `4.1.4-4a9848e-fl536298`, server `arrow-flight-server-1.0.0-60e888bc26ec-linux.jar`, store `iceberg: s3://lake/parquet`, checks 1,11,12
+2026-10-26 02:32 UTC, series `4.1.4-4a9848e-fl536298`, server `arrow-flight-server-1.0.0-60e888bc26ec-linux.jar`, store `s3: s3://lake/parquet`, checks 6
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 6 s |
-| 11 | Iceberg: REST catalog tables, deletes, rename, appends | PASS | 22/22 | 56 s |
-| 12 | Iceberg time travel | PASS | 10/10 | 3 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 3 s |
+| 6 | failover (2 servers) | FAIL | 5/6 | 63 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
 - PASS `create catalog` 
 - PASS `SHOW CREATE CATALOG masks the token` flight CREATE EXTERNAL CATALOG `flight` PROPERTIES ("type"  =  "flight", "flight.token"  =  "******", "flight.uri"  =  "grpc://flight1:32010" )
-- PASS `SHOW DATABASES has tpch and types` got ['_iceberg', 'ice', 'information_schema', 'tpch', 'types']
+- PASS `SHOW DATABASES has tpch and types` got ['information_schema', 'tpch', 'types']
 - PASS `SHOW TABLES FROM flight.tpch` got ['customer', 'lineitem', 'nation', 'orders', 'part', 'partsupp', 'region', 'supplier']
 - PASS `SHOW TABLES FROM flight.types` got ['alltypes', 'alltypes_full']
 - PASS `DESC flight.tpch.customer` 
@@ -38,46 +37,18 @@
 - note: DESC flight.types.alltypes: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME
 - note: DESC flight.types.alltypes_full: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_blob VARBINARY, c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME, c_uuid VARCHAR(1073741824), c_interval VARCHAR(1073741824), c_list ARRAY<BIGINT>, c_struct struct<`a` int(11), `b` varchar(1073741824)>, c_map MAP<VARCHAR(1073741824),INT>
 
-## Check 11: Iceberg: REST catalog tables, deletes, rename, appends
+## Check 6: failover (2 servers)
 
-- PASS `SHOW DATABASES has tpch and ice` got ['_iceberg', 'ice', 'information_schema', 'tpch', 'types']
-- PASS `SHOW TABLES FROM flight.ice` got ['del', 'lineitem', 'orders', 'ren', 't']
-- PASS `DESC flight.ice.lineitem = DESC flight.tpch.lineitem` [('l_orderkey', 'BIGINT'), ('l_partkey', 'BIGINT'), ('l_suppkey', 'BIGINT'), ('l_linenumber', 'BIGINT')] vs [('l_orderkey', 'BIGINT'), ('l_partkey', 'BIGINT'), ('l_suppkey', 'BIGINT'), ('l_linenumber', 'BIGINT')]
-- PASS `DESC flight.ice.orders = DESC flight.tpch.orders` [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')] vs [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')]
-- PASS `flight.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
-- PASS `flight.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
-- PASS `q01 on flight.ice = reference` rows 4/4 1.69s
-- PASS `q04 on flight.ice = reference` rows 5/5 0.68s
-- PASS `q12 on flight.ice = reference` rows 2/2 0.70s
-- PASS `flight.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
-- PASS `flight.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
-- PASS `flight_c.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
-- PASS `flight_c.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
-- PASS `q01 on flight_c.ice = reference` rows 4/4 1.71s
-- PASS `q04 on flight_c.ice = reference` rows 5/5 0.73s
-- PASS `q12 on flight_c.ice = reference` rows 2/2 0.79s
-- PASS `flight_c.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
-- PASS `flight_c.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
-- PASS `ice.t before the append` got (1, 1)
-- PASS `an append (one snapshot, 1 file) is seen by later queries` got (3, 6) after 5.3 s, snapshot 7126249540395825617
-- PASS `no query saw a state other than before/after` seen [(1, 1), (3, 6)]
-- PASS `complete mode sees the append (views refresh every 60 s)` [(3, 6)] after 34.9 s
-- note: ice.del snapshot summary: {'spark.app.id': 'local-1792979422832', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3320', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6579', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792979422832', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
-- note: the dataDir listing also shows the warehouse directory as schema _iceberg: tables ['ice']
-- note: REMOTE SQL of count(*) on ice.del: SELECT count(*) AS "__flight_agg_0" FROM "ice"."del"
-
-## Check 12: Iceberg time travel
-
-- PASS `flight: FOR VERSION AS OF the snapshot before the append` got (3, 6), want (3, 6)
-- PASS `flight: FOR VERSION AS OF the snapshot after the append` got (4, 106), want (4, 106)
-- PASS `flight_c: FOR VERSION AS OF the snapshot before the append` got (3, 6), want (3, 6)
-- PASS `flight_c: FOR VERSION AS OF the snapshot after the append` got (4, 106), want (4, 106)
-- PASS `REMOTE SQL carries FOR VERSION AS OF` SELECT "id" FROM "ice"."t" FOR VERSION AS OF 7126249540395825617
-- PASS `two versions of one table in one query` got (3, 4)
-- PASS `FOR TIMESTAMP AS OF a time before the append (whole second, session zone +08:00)` 2026-10-26 09:52:09.000000 -> got (3, 6), want (3, 6)
-- PASS `FOR TIMESTAMP AS OF a time before the append (with a fraction, session zone +08:00)` 2026-10-26 09:52:08.578000 -> got (3, 6), want (3, 6)
-- PASS `FOR TIMESTAMP AS OF a later time sees the append` got (4, 106)
-- PASS `a version range is refused by the connector` ProgrammingError: (1064, 'Getting analyzing error. Detail message: Arrow Flight tables support only FOR VERSION AS OF <snapshot id> and FOR TIMESTAMP AS OF <datetime>.')
+- PASS `both servers up: full scan correct` 4.0s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
+- PASS `both servers up: 3x lineitem read correct` 2.6s got=[('18003645', '459236385', '476991627')]
+- **FAIL** `flight2 stopped before the query: succeeds via backup locations` 15.1s got=ProgrammingError: (1064, 'Flight GetFlightInfo failed: TIMED_OUT: CallOptions deadline exceeded after 4.999043239s. Name resolution delay 0.000000000 seconds. [closed=[], open=[[buffered_nanos=5004507041, waiting_for_connection]]]')
+- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 2.8s got=[('18003645', '459236385', '476991627')] exp=[('18003645', '459236385', '476991627')]
+- PASS `the kill overlapped the read (query ended after it; error or FailoverCount > 0)` ended 1.6s after the kill, success, FailoverCount=3
+- PASS `BE alive after failover tests` 
+- note: plan of the failover scan mentions 'flight' 0x
+- note: fe.log 'flight' lines after the stop: 	at com.starrocks.connector.flight.FlightSqlMetadataClient.withFailover(FlightSqlMetadataClient.java:228) ~[fe-core-4.1.4.jar:?] / 2026-10-26 02:32:13.147Z WARN (starrocks-mysql-nio-pool-0|127) [StmtExecutor.logOptimizerTraceOnGenerateExecPlanFailure():908] Generate exec plan failed. Planner profile: query_id=01a1760c-e138-7ef2-b824-5710c9ad003f, sql=SELECT count(*), sum(l_quantity), sum(length(l_comment)) FROM flight_fo.tpch.lineitem, err=StarRocksPlannerException: Flight GetFlightInfo failed: TIMED_OUT: CallOptions deadline exceeded after 4.999043239s. Name resolution delay 0.000000000 seconds. [closed=[], open=[[buffered_nanos=5004507041, waiting_for_connection]]], profile=Planner: / 2026-10-26 02:32:13.148Z WARN (starrocks-mysql-nio-pool-0|127) [StmtExecutor.generateExecPlan():875] Planner error: SELECT count(*), sum(l_quantity), sum(length(l_comment)) FROM flight_fo.tpch.lineitem / com.starrocks.sql.common.StarRocksPlannerException: Flight GetFlightInfo failed: TIMED_OUT: CallOptions deadline exceeded after 4.999043239s. Name resolution delay 0.000000000 seconds. [closed=[], open=[[buffered_nanos=5004507041, waiting_for_connection]]] / 	at com.starrocks.sql.plan.PlanFragmentBuilder$PhysicalPlanTranslator.visitPhysicalFlightScan(PlanFragmentBuilder.java:1587) ~[fe-core-4.1.4.jar:?] / 	at com.starrocks.sql.plan.PlanFragmentBuilder$PhysicalPlanTranslator.visitPhysicalFlightScan(PlanFragmentBuilder.java:480) ~[fe-core-4.1.4.jar:?] / 	at com.starrocks.sql.optimizer.operator.p
+- note: flight1 WARN/ERROR/member lines (last 60 s): 19; WARNING: [flight1]:5701 [dev] [5.7.0] This node does not have a connection to Member [flight2]:5701 - 09165151-7ba4-423a-a029-5f5ca70b53aa / WARNING: [flight1]:5701 [dev] [5.7.0] Suspecting Member [flight2]:5701 - 09165151-7ba4-423a-a029-5f5ca70b53aa because it has not sent any heartbeats since 2026-10-26 02:31:57.697. Now: 2026-10-26 02:32:08.076, heartbeat timeout: 10000 ms, suspicion level: 1.00 / INFO: [flight1]:5701 [dev] [5.7.0] Successfully promoted 135 backups on 1 members in 30 ms / SEVERE: [flight1]:5701 [dev] [5.7.0] NormalResponse already responseReceived for callback: Invocation{op=com.hazelcast.map.impl.operation.PutIfAbsentOperation{serviceName='hz:impl:mapService', identityHash=20418741, partitionId=90, replicaIndex=0, callId=1486, invocationTime=1792981928098 (2026-10-26 02:32:08.098), waitTimeout=-1, callTimeout=60000, tenantControl=com.hazelcast.spi.impl.tenantcontrol.NoopTenantControl@0, name=server-registry}, tryCount=250, tryPauseMillis=500, invokeCount=9, callTimeoutMillis=60000, firstInvocationTimeMs=1792981919231, firstInvocationTime='2026-10-26 02:31:59.231', lastHeartbeatMillis=0, lastHeartbeatTime='1970-01-01 00:00:00.000', targetAddress=[flight1]:5701, targetMember=Member [flight1]:5701 - a4a154cc-4a7a-4bae-b532-0d6405b28f5e this, memberListVersion=3, pendingResponse={VOID}, backupsAcksExpected=-1, backupsAcksReceived=0, connection=null}, current-response: HeapData{type=-8, hashCode=-308015631, partitionHash=-308015631, totalSize=16, dataSize=8, h
+- note: during: read time with both servers 2.6s; flight2 killed 1.2s into the query; query ended 1.6s after the kill
 
 ## Log masking
 
