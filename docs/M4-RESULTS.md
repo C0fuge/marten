@@ -493,3 +493,31 @@ whether the FE's catalog connection should sit on flight2 at that point (the fir
 Harness: check 6 now writes the fe.log failover lines and flight1's WARN/SEVERE/member lines into the notes when the
 item fails (the run artifacts are not reachable from the cloud sessions).
 
+
+**Follow-up 2026-10-26 04:00 UTC — cause and connector fix (series `4a9848e-fldb9219`).** The job log of 40259166769
+(readable through the GitHub API although the artifact is not) shows the final error is the FE's **connect probe**
+(`CallOptions deadline exceeded after 4.999 s … waiting_for_connection`, thrown from `withFailover` → `current()`), not
+a GetFlightInfo deadline (30 s). Reading: the catalog connection is on flight1 (URI 1); flight1's GetFlightInfo, started
+02:31:59 right after the stop, failed as unreachable after ~10 s while its Hazelcast cluster was still dropping flight2
+(the `server-registry` PutIfAbsent was retried from 02:31:59 to 02:32:08, flight2 suspected at 02:32:08); the FE then
+probed flight2 (stopped: 5 s timeout) and, with each URI tried once, failed at 02:32:13 (15.1 s = ~10 s + 5 s). The earlier
+reading (FE connection on flight2) was wrong. In passing runs the FE does not fail over at all (no `trying next location`
+line in fe.log: m4 40267917390, 40267918986); the extra ~5–7 s over the 3–4 s baseline is the BE's connect timeout on
+flight2's endpoint locations before their backups. Fix (0002 `withFailover`): when every URI failed as unreachable and
+one of them was connected when its call failed, that URI is retried once (FlightSqlMetadataClientTest: retried once /
+only once; FE 40265894284, 44/44). This is a transient server-side condition (a live server failing calls for ~10 s
+during member loss), so it stays a server note too.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40265277013 | 60e888bc26ec | s3 | 6 | 6/6 (flight2 stopped: 10.1 s; series `fl536298`) |
+| 40265278745 | 60e888bc26ec | s3 | 6 | 6/6 (11.3 s; series `fl536298`) |
+| 40267917390 | 60e888bc26ec | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6), series `fldb9219`; check 4 19 s |
+| 40267918986 | 60e888bc26ec | s3 | 6 | 6/6 (10.9 s), series `fldb9219` |
+| 40268961132 | 60e888bc26ec | s3 | 6 | 6/6 (10.0 s), series `fldb9219` |
+| 40268964021 | 60e888bc26ec | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5), series `fldb9219` |
+
+**60e888bc26ec is the m4 default from 2026-10-26 04:40 UTC** (full suite green on series `fldb9219`; iceberg 1,11,12 green on
+`fl536298`, m4 40255398491 — the FE change only touches failure paths). The fix itself is covered by the unit test only: none
+of the runs after it hit the member-loss window. If check 6 fails again, the notes now carry the fe.log failover lines and
+the query's UTC window.
