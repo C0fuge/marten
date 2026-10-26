@@ -1,19 +1,18 @@
-# M4 run 40268964021
+# M4 run 40270293499
 
-2026-10-26 04:35 UTC, series `4.1.4-4a9848e-fldb9219`, server `arrow-flight-server-1.0.0-60e888bc26ec-linux.jar`, store `lakefs: lakefs://m4lake/main/parquet`, checks 1,3,4,10
+2026-10-26 04:46 UTC, series `4.1.4-4a9848e-fldb9219`, server `arrow-flight-server-1.0.0-60e888bc26ec-linux.jar`, store `iceberg: s3://lake/parquet`, checks 1,11,12
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 4 s |
-| 3 | M4-TESTS §1–2 (EXPLAIN + results) | PASS | 21/21 | 10 s |
-| 4 | TPC-H SF1 q01–q22, topn default and 0 | PASS | 46/46 | 35 s |
-| 10 | lakeFS: commits between queries | PASS | 5/5 | 6 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 6 s |
+| 11 | Iceberg: REST catalog tables, deletes, rename, appends | PASS | 22/22 | 56 s |
+| 12 | Iceberg time travel | PASS | 10/10 | 3 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
 - PASS `create catalog` 
 - PASS `SHOW CREATE CATALOG masks the token` flight CREATE EXTERNAL CATALOG `flight` PROPERTIES ("type"  =  "flight", "flight.token"  =  "******", "flight.uri"  =  "grpc://flight1:32010" )
-- PASS `SHOW DATABASES has tpch and types` got ['information_schema', 'lfs', 'tpch', 'types']
+- PASS `SHOW DATABASES has tpch and types` got ['_iceberg', 'ice', 'information_schema', 'tpch', 'types']
 - PASS `SHOW TABLES FROM flight.tpch` got ['customer', 'lineitem', 'nation', 'orders', 'part', 'partsupp', 'region', 'supplier']
 - PASS `SHOW TABLES FROM flight.types` got ['alltypes', 'alltypes_full']
 - PASS `DESC flight.tpch.customer` 
@@ -39,94 +38,46 @@
 - note: DESC flight.types.alltypes: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME
 - note: DESC flight.types.alltypes_full: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_blob VARBINARY, c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME, c_uuid VARCHAR(1073741824), c_interval VARCHAR(1073741824), c_list ARRAY<BIGINT>, c_struct struct<`a` int(11), `b` varchar(1073741824)>, c_map MAP<VARCHAR(1073741824),INT>
 
-## Check 3: M4-TESTS §1–2 (EXPLAIN + results)
+## Check 11: Iceberg: REST catalog tables, deletes, rename, appends
 
-- PASS `1.1 SELECT l_orderkey, l_quantity FROM flight.tpch.lineitem WHERE l_shipdate >= DATE '1998-09-01' AND l_returnflag = 'R'` REMOTE SQL: SELECT "l_orderkey", "l_quantity", "l_returnflag", "l_shipdate" FROM "tpch"."lineitem" WHERE ("l_shipdate" >= DATE '1998-09-01') AND ("l_returnflag" = 'R') | rows 0 (0.40s)
-- PASS `1.2 SELECT * FROM flight.tpch.nation LIMIT 5` REMOTE SQL: SELECT "n_nationkey", "n_name", "n_regionkey", "n_comment" FROM "tpch"."nation" LIMIT 5 | rows 5 (0.06s)
-- PASS `1.3 SELECT * FROM flight.tpch.nation WHERE n_name LIKE 'A%' LIMIT 3` REMOTE SQL: SELECT "n_nationkey", "n_name", "n_regionkey", "n_comment" FROM "tpch"."nation" WHERE ("n_name" LIKE 'A%') LIMIT 3 | rows 2 (0.07s)
-- PASS `1.4 SELECT count(*) FROM flight.tpch.customer WHERE c_comment LIKE '%a\\_b%'` REMOTE SQL: SELECT "c_comment" FROM "tpch"."customer" | rows 1 (0.11s)
-- PASS `1.5 SELECT l_orderkey, l_quantity FROM flight.tpch.lineitem WHERE l_shipdate >= DATE '1998-09-01' AND l_returnflag = 'R'` REMOTE SQL: SELECT "l_orderkey", "l_quantity", "l_returnflag", "l_shipdate" FROM "tpch"."lineitem" | rows 0 (1.00s)
-- PASS `2.1 SELECT count(*) FROM flight.tpch.lineitem` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" | rows 1 (0.09s)
-- PASS `2.1 (complete) SELECT count(*) FROM flight_c.tpch.lineitem` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" | rows 1 (0.10s)
-- PASS `2.2 SELECT count(*) FROM flight.tpch.lineitem WHERE l_quantity > 45` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" WHERE ("l_quantity" > 45) | rows 1 (0.18s)
-- PASS `2.2 (complete) SELECT count(*) FROM flight_c.tpch.lineitem WHERE l_quantity > 45` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" WHERE ("l_quantity" > 45) | rows 1 (0.10s)
-- PASS `2.3 SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", min("l_shipdate") AS "__flight_agg_1", max("l_discount") AS "__flight_agg_2", count(*) AS "__flight_agg_3" FROM "tpch"."lineitem" GROUP BY "l_returnflag", "l_linestatus" | rows 4 (0.44s)
-- PASS `2.3 (complete) SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight_c.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", min("l_shipdate") AS "__flight_agg_1", max("l_discount") AS "__flight_agg_2", count(*) AS "__flight_agg_3" FROM "tpch"."lineitem" GROUP BY "l_returnflag", "l_linestatus" | rows 4 (0.41s)
-- PASS `2.4 SELECT DISTINCT n_regionkey FROM flight.tpch.nation` REMOTE SQL: SELECT "n_regionkey" FROM "tpch"."nation" GROUP BY "n_regionkey" | rows 5 (0.04s)
-- PASS `2.4 (complete) SELECT DISTINCT n_regionkey FROM flight_c.tpch.nation` REMOTE SQL: SELECT "n_regionkey" FROM "tpch"."nation" GROUP BY "n_regionkey" | rows 5 (0.05s)
-- PASS `2.5 SELECT avg(l_quantity) FROM flight.tpch.lineitem` REMOTE SQL: SELECT "l_quantity" FROM "tpch"."lineitem" | rows 1 (0.35s)
-- PASS `2.6 SELECT count(DISTINCT l_suppkey) FROM flight.tpch.lineitem` REMOTE SQL: SELECT "l_suppkey" FROM "tpch"."lineitem" | rows 1 (0.32s)
-- PASS `2.7 SELECT o_orderpriority, count(*) FROM flight.tpch.orders WHERE o_comment LIKE '%a\\_b%' GROUP BY 1` REMOTE SQL: SELECT "o_orderpriority", "o_comment" FROM "tpch"."orders" | rows 0 (0.42s)
-- PASS `2.8 SELECT count(*) FROM flight.tpch.nation WHERE n_nationkey < 0` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."nation" WHERE ("n_nationkey" < 0) | rows 1 (0.03s)
-- PASS `2.9 SELECT l_returnflag, count(*) c FROM flight.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000` REMOTE SQL: SELECT "l_returnflag", count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" GROUP BY "l_returnflag" | rows 3 (0.11s)
-- PASS `2.9 (complete) SELECT l_returnflag, count(*) c FROM flight_c.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000` REMOTE SQL: SELECT "l_returnflag", count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" GROUP BY "l_returnflag" | rows 3 (0.12s)
-- PASS `2.10 SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_quantity", "l_discount", "l_returnflag", "l_linestatus", "l_shipdate" FROM "tpch"."lineitem" | rows 4 (0.87s)
-- PASS `2.11 (flight.pushdown.aggregate=false) SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight_noagg.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_quantity", "l_discount", "l_returnflag", "l_linestatus", "l_shipdate" FROM "tpch"."lineitem" | rows 4 (1.00s)
+- PASS `SHOW DATABASES has tpch and ice` got ['_iceberg', 'ice', 'information_schema', 'tpch', 'types']
+- PASS `SHOW TABLES FROM flight.ice` got ['del', 'lineitem', 'orders', 'ren', 't']
+- PASS `DESC flight.ice.lineitem = DESC flight.tpch.lineitem` [('l_orderkey', 'BIGINT'), ('l_partkey', 'BIGINT'), ('l_suppkey', 'BIGINT'), ('l_linenumber', 'BIGINT')] vs [('l_orderkey', 'BIGINT'), ('l_partkey', 'BIGINT'), ('l_suppkey', 'BIGINT'), ('l_linenumber', 'BIGINT')]
+- PASS `DESC flight.ice.orders = DESC flight.tpch.orders` [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')] vs [('o_orderkey', 'BIGINT'), ('o_custkey', 'BIGINT'), ('o_orderstatus', 'VARCHAR(1073741824)'), ('o_totalprice', 'DECIMAL(15,2)')]
+- PASS `flight.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
+- PASS `flight.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
+- PASS `q01 on flight.ice = reference` rows 4/4 1.53s
+- PASS `q04 on flight.ice = reference` rows 5/5 0.69s
+- PASS `q12 on flight.ice = reference` rows 2/2 0.79s
+- PASS `flight.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
+- PASS `flight.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
+- PASS `flight_c.ice.lineitem aggregates = parquet` [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')] vs [('6001215', '153078795', '229577310901.2', '1998-12-01', '1500000')]
+- PASS `flight_c.ice.orders aggregates = parquet` [('1500000', '226829306447.46', '1992-01-01', '99996')] vs [('1500000', '226829306447.46', '1992-01-01', '99996')]
+- PASS `q01 on flight_c.ice = reference` rows 4/4 1.59s
+- PASS `q04 on flight_c.ice = reference` rows 5/5 0.71s
+- PASS `q12 on flight_c.ice = reference` rows 2/2 0.77s
+- PASS `flight_c.ice.del: position deletes applied` got (900, 450000), deleted ids visible 0
+- PASS `flight_c.ice.ren: column renamed after the first append` got [(1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e')], filter [(2,)]
+- PASS `ice.t before the append` got (1, 1)
+- PASS `an append (one snapshot, 1 file) is seen by later queries` got (3, 6) after 5.2 s, snapshot 1270578194137158424
+- PASS `no query saw a state other than before/after` seen [(1, 1), (3, 6)]
+- PASS `complete mode sees the append (views refresh every 60 s)` [(3, 6)] after 34.8 s
+- note: ice.del snapshot summary: {'spark.app.id': 'local-1792989855757', 'added-position-delete-files': '2', 'added-delete-files': '2', 'added-files-size': '3322', 'added-position-deletes': '100', 'changed-partition-count': '1', 'total-records': '1000', 'total-files-size': '6581', 'total-data-files': '2', 'total-delete-files': '2', 'total-position-deletes': '100', 'total-equality-deletes': '0', 'engine-version': '3.5.6', 'app-id': 'local-1792989855757', 'engine-name': 'spark', 'iceberg-version': 'Apache Iceberg 1.9.2 (commit 071d5606bc6199a0be9b3f274ec7fbf111d88821)', 'operation': 'delete'}
+- note: the dataDir listing also shows the warehouse directory as schema _iceberg: tables ['ice']
+- note: REMOTE SQL of count(*) on ice.del: SELECT count(*) AS "__flight_agg_0" FROM "ice"."del"
 
-## Check 4: TPC-H SF1 q01–q22, topn default and 0
+## Check 12: Iceberg time travel
 
-- PASS `q05 EXPLAIN COSTS: row counts of all 6 Flight scans` tpch.region=5, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.lineitem=6001215, tpch.orders=227651
-- PASS `q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max` orders=[227651], band 150000..320000 (scale 1)
-- PASS `q01 topn=default` rows 4/4 1.56s
-- PASS `q02 topn=default` rows 100/100 0.33s
-- PASS `q03 topn=default` rows 10/10 0.87s
-- PASS `q04 topn=default` rows 5/5 0.58s
-- PASS `q05 topn=default` rows 5/5 1.08s
-- PASS `q06 topn=default` rows 1/1 0.39s
-- PASS `q07 topn=default` rows 4/4 1.00s
-- PASS `q08 topn=default` rows 2/2 1.27s
-- PASS `q09 topn=default` rows 175/175 1.42s
-- PASS `q10 topn=default` rows 20/20 1.06s
-- PASS `q11 topn=default` rows 1048/1048 0.34s
-- PASS `q12 topn=default` rows 2/2 0.50s
-- PASS `q13 topn=default` rows 42/42 0.64s
-- PASS `q14 topn=default` rows 1/1 0.56s
-- PASS `q15 topn=default` rows 1/1 0.58s
-- PASS `q16 topn=default` rows 18314/18314 0.23s
-- PASS `q17 topn=default` rows 1/1 0.79s
-- PASS `q18 topn=default` rows 57/57 1.08s
-- PASS `q19 topn=default` rows 1/1 0.71s
-- PASS `q20 topn=default` rows 186/186 0.59s
-- PASS `q21 topn=default` rows 100/100 1.37s
-- PASS `q22 topn=default` rows 7/7 0.25s
-- PASS `q01 topn=0` rows 4/4 1.50s
-- PASS `q02 topn=0` rows 100/100 0.30s
-- PASS `q03 topn=0` rows 10/10 0.87s
-- PASS `q04 topn=0` rows 5/5 0.55s
-- PASS `q05 topn=0` rows 5/5 1.32s
-- PASS `q06 topn=0` rows 1/1 0.35s
-- PASS `q07 topn=0` rows 4/4 0.98s
-- PASS `q08 topn=0` rows 2/2 1.29s
-- PASS `q09 topn=0` rows 175/175 1.46s
-- PASS `q10 topn=0` rows 20/20 1.03s
-- PASS `q11 topn=0` rows 1048/1048 0.24s
-- PASS `q12 topn=0` rows 2/2 0.50s
-- PASS `q13 topn=0` rows 42/42 0.55s
-- PASS `q14 topn=0` rows 1/1 0.43s
-- PASS `q15 topn=0` rows 1/1 0.56s
-- PASS `q16 topn=0` rows 18314/18314 0.21s
-- PASS `q17 topn=0` rows 1/1 0.77s
-- PASS `q18 topn=0` rows 57/57 1.15s
-- PASS `q19 topn=0` rows 1/1 0.64s
-- PASS `q20 topn=0` rows 186/186 0.57s
-- PASS `q21 topn=0` rows 100/100 1.25s
-- PASS `q22 topn=0` rows 7/7 0.16s
-- note: q05 scans: tpch.region=5, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.lineitem=6001215, tpch.orders=227651
-- note: q05 plan outline: PLAN FRAGMENT 0 / 28:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 28 / 25:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 25 / 22:HASH JOIN / |----21:EXCHANGE / 17:HASH JOIN / |----16:EXCHANGE / 13:HASH JOIN / |----12:EXCHANGE / 9:HASH JOIN / |----8:EXCHANGE / 6:EXCHANGE / PLAN FRAGMENT 3 / EXCHANGE ID: 21 / TABLE: tpch.region / PLAN FRAGMENT 4 / EXCHANGE ID: 16 / TABLE: tpch.nation / PLAN FRAGMENT 5 / EXCHANGE ID: 12 / TABLE: tpch.supplier / PLAN FRAGMENT 6 / EXCHANGE ID: 08 / TABLE: tpch.customer / PLAN FRAGMENT 7 / EXCHANGE ID: 06 / 4:HASH JOIN / |----3:EXCHANGE / TABLE: tpch.lineitem / PLAN FRAGMENT 8 / EXCHANGE ID: 03 / TABLE: tpch.orders
-- note: q08 scans: tpch.lineitem=6001215, tpch.region=5, tpch.nation=25, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.part=200000, tpch.orders=455301
-- note: q08 plan outline: PLAN FRAGMENT 0 / 36:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 36 / 32:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 32 / 29:HASH JOIN / |----28:EXCHANGE / 24:HASH JOIN / |----23:EXCHANGE / 20:HASH JOIN / |----19:EXCHANGE / 16:HASH JOIN / |----15:EXCHANGE / 12:HASH JOIN / |----11:EXCHANGE / 8:HASH JOIN / |----7:EXCHANGE / 3:HASH JOIN / |----2:EXCHANGE / TABLE: tpch.lineitem / PLAN FRAGMENT 3 / EXCHANGE ID: 28 / TABLE: tpch.region / PLAN FRAGMENT 4 / EXCHANGE ID: 23 / TABLE: tpch.nation / PLAN FRAGMENT 5 / EXCHANGE ID: 19 / TABLE: tpch.nation / PLAN FRAGMENT 6 / EXCHANGE ID: 15 / TABLE: tpch.supplier / PLAN FRAGMENT 7 / EXCHANGE ID: 11 / TABLE: tpch.customer / PLAN FRAGMENT 8 / EXCHANGE ID: 07 / TABLE: tpch.part / PLAN FRAGMENT 9 / EXCHANGE ID: 02 / TABLE: tpch.orders
-- note: q09 scans: tpch.nation=25, tpch.supplier=10000, tpch.part=50000, tpch.partsupp=800000, tpch.orders=1500000, tpch.lineitem=6001215
-- note: q09 plan outline: PLAN FRAGMENT 0 / 28:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 28 / 25:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 25 / 22:HASH JOIN / |----21:EXCHANGE / 18:HASH JOIN / |----17:EXCHANGE / 14:HASH JOIN / |----13:EXCHANGE / 9:HASH JOIN / |----8:EXCHANGE / 6:EXCHANGE / PLAN FRAGMENT 3 / EXCHANGE ID: 21 / TABLE: tpch.nation / PLAN FRAGMENT 4 / EXCHANGE ID: 17 / TABLE: tpch.supplier / PLAN FRAGMENT 5 / EXCHANGE ID: 13 / TABLE: tpch.part / PLAN FRAGMENT 6 / EXCHANGE ID: 08 / TABLE: tpch.partsupp / PLAN FRAGMENT 7 / EXCHANGE ID: 06 / 4:HASH JOIN / |----3:EXCHANGE / 1:EXCHANGE / PLAN FRAGMENT 8 / EXCHANGE ID: 03 / TABLE: tpch.orders / PLAN FRAGMENT 9 / EXCHANGE ID: 01 / TABLE: tpch.lineitem
-- note: timings flight (s): q01/default=1.56, q02/default=0.33, q03/default=0.87, q04/default=0.58, q05/default=1.08, q06/default=0.39, q07/default=1.00, q08/default=1.27, q09/default=1.42, q10/default=1.06, q11/default=0.34, q12/default=0.50, q13/default=0.64, q14/default=0.56, q15/default=0.58, q16/default=0.23, q17/default=0.79, q18/default=1.08, q19/default=0.71, q20/default=0.59, q21/default=1.37, q22/default=0.25, q01/0=1.50, q02/0=0.30, q03/0=0.87, q04/0=0.55, q05/0=1.32, q06/0=0.35, q07/0=0.98, q08/0=1.29, q09/0=1.46, q10/0=1.03, q11/0=0.24, q12/0=0.50, q13/0=0.55, q14/0=0.43, q15/0=0.56, q16/0=0.21, q17/0=0.77, q18/0=1.15, q19/0=0.64, q20/0=0.57, q21/0=1.25, q22/0=0.16
-
-## Check 10: lakeFS: commits between queries
-
-- PASS `lfs.t at the setup commit` got (1, 1), head 0a91f62de6ce
-- PASS `a commit with 2 files is seen after the commit` got (7, 28) after 1.1 s, commit a736cee24449
-- PASS `no query saw half of the commit` seen [(1, 1), (7, 28)]
-- PASS `a commit deleting a file is seen` got (6, 27) after 1.1 s, commit 96be8814fec3
-- PASS `tpch through lakeFS after the commits` [(6001215,)]
-- note: with part-1 staged (uncommitted) a query returns (1, 1) (not visible)
+- PASS `flight: FOR VERSION AS OF the snapshot before the append` got (3, 6), want (3, 6)
+- PASS `flight: FOR VERSION AS OF the snapshot after the append` got (4, 106), want (4, 106)
+- PASS `flight_c: FOR VERSION AS OF the snapshot before the append` got (3, 6), want (3, 6)
+- PASS `flight_c: FOR VERSION AS OF the snapshot after the append` got (4, 106), want (4, 106)
+- PASS `REMOTE SQL carries FOR VERSION AS OF` SELECT "id" FROM "ice"."t" FOR VERSION AS OF 1270578194137158424
+- PASS `two versions of one table in one query` got (3, 4)
+- PASS `FOR TIMESTAMP AS OF a time before the append (whole second, session zone +08:00)` 2026-10-26 12:46:00.000000 -> got (3, 6), want (3, 6)
+- PASS `FOR TIMESTAMP AS OF a time before the append (with a fraction, session zone +08:00)` 2026-10-26 12:45:59.510000 -> got (3, 6), want (3, 6)
+- PASS `FOR TIMESTAMP AS OF a later time sees the append` got (4, 106)
+- PASS `a version range is refused by the connector` ProgrammingError: (1064, 'Getting analyzing error. Detail message: Arrow Flight tables support only FOR VERSION AS OF <snapshot id> and FOR TIMESTAMP AS OF <datetime>.')
 
 ## Log masking
 
