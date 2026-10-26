@@ -1,0 +1,60 @@
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_clerk LIKE 'Clerk#00000000%'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_comment LIKE '%special requests%'` rows 1
+- PASS `SELECT count(*) FROM flight.tpch.orders WHERE o_comment IS NULL` rows 1
+- PASS `SELECT o_orderstatus, count(*), sum(o_totalprice), min(o_orderdate), max(o_orderdate) FROM flight.tpch.orders GROUP BY o_orderstatus ORDER BY o_orderstatus` rows 3
+- PASS `SELECT l_returnflag, l_linestatus, count(*), sum(l_quantity), sum(l_extendedprice), min(l_shipdate), max(l_shipdate), avg(l_discount) FROM flight.tpch.lineitem GROUP BY l_returnflag, l_linestatus ORDE` rows 4
+- PASS `SELECT o_orderkey, o_totalprice, o_orderdate FROM flight.tpch.orders ORDER BY o_totalprice DESC, o_orderkey LIMIT 5` rows 5
+- PASS `SELECT l_orderkey, l_linenumber, l_extendedprice FROM flight.tpch.lineitem ORDER BY l_extendedprice DESC, l_orderkey, l_linenumber LIMIT 5` rows 5
+- PASS `SELECT n_name, count(*), sum(o_totalprice) FROM flight.tpch.orders JOIN flight.tpch.customer ON o_custkey = c_custkey JOIN flight.tpch.nation ON c_nationkey = n_nationkey WHERE o_orderdate >= DATE '19` rows 5
+- PASS `SELECT count(*), sum(l_extendedprice) FROM flight.tpch.lineitem JOIN flight.tpch.orders ON l_orderkey = o_orderkey WHERE o_orderdate = DATE '1995-03-15'` rows 1
+
+## Check 6: failover (2 servers)
+
+- PASS `both servers up: full scan correct` 2.8s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
+- PASS `both servers up: 3x lineitem read correct` 2.0s got=[('18003645', '459236385', '476991627')]
+- PASS `flight2 stopped before the query: succeeds via backup locations` 15.4s got=[('6001215', '153078795', '158997209')]
+- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 2.0s got=[('18003645', '459236385', '476991627')] exp=[('18003645', '459236385', '476991627')]
+- PASS `the kill overlapped the read (query ended after it; error or FailoverCount > 0)` ended 0.6s after the kill, success, FailoverCount=3
+- PASS `BE alive after failover tests` 
+- note: plan of the failover scan mentions 'flight' 0x
+- note: query after the stop ran 06:47:31–06:47:47 UTC; fe.log failover lines: 2026-10-26 06:47:41.608Z WARN (starrocks-mysql-nio-pool-1|153) [FlightSqlMetadataClient.withFailover():258] Flight GetFlightInfo failed on grpc://flight1:32010 (UNAVAILABLE), trying next location / 2026-10-26 06:47:46.617Z WARN (starrocks-mysql-nio-pool-1|153) [FlightSqlMetadataClient.withFailover():238] Flight GetFlightInfo: cannot connect to grpc://flight2:32010 (TIMED_OUT), trying next location
+- note: during: read time with both servers 2.0s; flight2 killed 1.4s into the query; query ended 0.6s after the kill
+
+## Check 7: KILL QUERY during a long scan
+
+- PASS `KILL QUERY stops the scan within ~1 s` 0.01s after KILL: OperationalError: (1317, 'killed manually: KILL QUERY 33554443')
+- PASS `next query works` [(25,)]
+- note: flight1 log lines with 'cancel' after the KILL: 25; [flight-server-default-executor-2] INFO pro.surpin.data.arrowflight.server.adapters.DuckDbAdapter - qid=a2b95ea8-1 node=flight1 backpressure=cancelled waited=23.2us / [flight-server-default-executor-2] INFO pro.surpin.data.arrowflight.server.adapters.FlightSqlProducer - qid=a2b95ea8-1 node=flight1 thread=flight-server-default-executor-2 execution=failed server=grpc+tcp://flight1:32010 elapsedMs=32
+
+## Check 8: token and TLS
+
+- PASS `token server, right token` ok [(25,)]
+- PASS `token server, wrong token fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAUTHENTICATED: Missing or wrong access token\nFlightRuntimeException: Missing or wrong access token')
+- PASS `token server, no token fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAUTHENTICATED: Missing or wrong access token\nFlightRuntimeException: Missing or wrong access token')
+- PASS `token server, basic auth user:<token>` ok [(25,)]
+- PASS `SHOW CREATE CATALOG masks the password` f_basic CREATE EXTERNAL CATALOG `f_basic`
+PROPERTIES ("flight.password"  =  "******",
+"type"  =  "flight",
+"flight.uri"  =  "grpc://flight1:32010",
+"flight.user"  =  "m4"
+)
+- PASS `query profile of a f_tok scan has the Flight scan` 16942 chars
+- PASS `query profile of a f_tok scan: token not in it` 
+- PASS `query profile of a f_basic scan has the Flight scan` 16948 chars
+- PASS `query profile of a f_basic scan: token not in it` 
+- PASS `TLS, trusted CA file` ok [(25,)]
+- PASS `TLS, wrong host name fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline$TailContext#0]\nFlightRuntimeException: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline
+- PASS `TLS, untrusted certificate fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline$TailContext#0]\nFlightRuntimeException: io exception\nChannel Pipeline: [SslHandler#0, ProtocolNegotiators$ClientTlsHandler#0, WriteBufferingAndExceptionHandler#0, DefaultChannelPipeline
+- PASS `TLS, flight.tls.verify=false` ok [(25,)]
+- PASS `plain client against the TLS server fails` ProgrammingError: (1064, 'Flight GetDbSchemas failed: UNAVAILABLE: Network closed for unknown reason\nFlightRuntimeException: Network closed for unknown reason')
+
+## Check 9: memory limit
+
+- PASS `big aggregation under query_mem_limit=100MB fails cleanly` 0.9s ProgrammingError: (1064, 'Memory of Query01a176f7-b124-76c9-b231-2d3a2865f1c3 exceed limit. Pipeline Backend: 127.0.0.1, fragment: 01a176f7-b124-76c9-b231-2d3a2865f1c6 Used: 106462888, Limit: 104857600. Mem usage has exceed the limit of single query, You can change the limit by set session variable query_mem_limit.: BE:10001')
+- PASS `BE alive afterwards` 
+- PASS `next query works` [(25,)]
+- PASS `q18 same rows with flight.exchange_buffer_mb=16 and 0` rows 57/57
+- PASS `q18 local exchange peak with the cap <= without (when the uncapped peak exceeds 16 MB)` flight (16 MB/driver): exchange peak 32.1 MB, query peak/node 270.2 MB; exchange_buffer_mb=0: exchange peak 51.8 MB, query peak/node 236.4 MB; cpus 4
+- PASS `q18 local exchange peak <= 16 MB x cpus (+16 MB)` flight (16 MB/driver): exchange peak 32.1 MB, query peak/node 270.2 MB; exchange_buffer_mb=0: exchange peak 51.8 MB, query peak/node 236.4 MB; cpus 4
+- note: q18 pre-aggregation modes: force_streaming; aggregation pushed
+
