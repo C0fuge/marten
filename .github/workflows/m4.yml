@@ -14,7 +14,7 @@ on:
         default: ""
       server:
         description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, int4b = int4 + cluster fixes, int6 = + Iceberg/Hive catalogs, int7 = int6b + stand fixes, arrow-flight-server-1.0.0-<commit>-linux.jar = server repo CI builds (default: 20b887839edf = c3b276054cc3 + working Iceberg time travel; c3b276054cc3 = 4eaab052deaf + ZooKeeper libs))"
-        default: "arrow-flight-server-1.0.0-4d707e2aedfc-linux.jar"
+        default: "arrow-flight-server-1.0.0-57d252b1437f-linux.jar"
       store:
         description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet), lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+) or iceberg (s3 + Iceberg REST catalog, schema ice; int6+)"
         default: "s3"

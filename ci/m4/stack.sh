@@ -31,7 +31,7 @@ M4_STATE=${M4_STATE:-$HOME/.m4-state}
 SR_HOME=/data/deploy/starrocks
 SR_IMAGE=docker.io/starrocks/allin1-ubuntu:4.1.4
 JDK_IMAGE=docker.io/library/eclipse-temurin:21-jre
-M4_SERVER_JAR=${M4_SERVER_JAR:-arrow-flight-server-1.0.0-4d707e2aedfc-linux.jar}
+M4_SERVER_JAR=${M4_SERVER_JAR:-arrow-flight-server-1.0.0-57d252b1437f-linux.jar}
 # docker.io/minio/minio no longer exists (2026-10-21: "pull access denied"); first image that pulls wins.
 # Format: image|args (args empty = the image's own entrypoint/cmd serves /data, as bitnami does).
 LAKEFS_IMAGE=docker.io/treeverse/lakefs:1.38.0

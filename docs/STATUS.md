@@ -372,9 +372,21 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   PASS (check 6 10.9 s, no FE failover), 40301606304 (lakefs 1,3,4,10) PASS. `m4.yml`, `stack.sh`, M4-CI, M4-RESULTS
   updated. No patch change.
 
+- 2026-10-26 10:40–11:25 UTC (cloud session): **server 57d252b1437f is the m4 default.** Assets cache `m4-assets-v12`.
+  Series `fldb9219`: m4 40309379575 (S3 1–9) all PASS (check 6 10.7 s, no FE failover), 40309382938 (iceberg 1,11,12)
+  PASS, 40312075792 (lakefs 1,3,4,10) PASS, 40312078753 (check 6 repeat) PASS but hit the member-loss stall again (flight1
+  GetFlightInfo UNAVAILABLE ~10 s after the stop, retry OK, 16.3 s; Open questions). `m4.yml`, `stack.sh`, M4-CI,
+  M4-RESULTS updated. No patch change.
+
 ## Next steps
 
-> **New server build `server-1.0.0-57d252b1437f`** (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
+> **Done 2026-10-26 11:20 UTC (see Log):** server 57d252b1437f passes the full suite on series `fldb9219` (S3 1–9 m4
+> 40309379575, iceberg 1,11,12 40309382938, lakefs 1,3,4,10 40312075792, check 6 repeat 40312078753) and is the m4
+> default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v12`). CI cannot reproduce the stand's 8 concurrent
+> partial-mode scans on 3 nodes; that part of the fix needs the stand. **No open CI work**: sessions stop early until
+> the maintainer adds an item or a new server build arrives.
+
+> ~~**New server build `server-1.0.0-57d252b1437f`**~~ (done, see above) (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
 > `SHA256SUMS` in this repo's assets release) = 4d707e2aedfc + one outbound byte budget shared by all Flight streams
 > (the stand saw CANCELLED streams and a dead node under 8 concurrent partial-mode scans on a 3-node cluster). Run the
 > suite once on it (failover and concurrent-scan items especially) and make it the CI default if green.
@@ -503,6 +515,11 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
+- **Server 57d252b1437f (2026-10-26), for the server repo (no decision needed):** the ~10 s member-loss stall is
+  unchanged: in m4 40312078753 flight1 answered GetFlightInfo UNAVAILABLE at 11:12:05.9 UTC, ~10 s after flight2 was
+  stopped (query 11:11:55–11:12:11, rescued by the connector's retry). Logs in artifact `m4-40312078753` (7 days). The
+  shared outbound byte budget (8 concurrent partial-mode scans on 3 nodes) is not reproducible in CI; please confirm it
+  on the stand.
 - **Server 7fbe2d75827c (2026-10-26), for the server repo (no decision needed):** the ~10 s stall is still there with
   a stopped member: in m4 40281342490 flight1 failed GetFlightInfo as UNAVAILABLE ~10 s after flight2 was stopped
   (06:47:31 → 06:47:41.6 UTC; fe.log). The connector's retry of the connected URI made the query succeed (15.4 s); the

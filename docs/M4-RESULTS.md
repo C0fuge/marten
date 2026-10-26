@@ -555,3 +555,19 @@ Server 4d707e2aedfc = 7fbe2d75827c + DuckDB retries S3 connect errors for ~6 s. 
 
 TPC-H timings unchanged (q01–q22 0.2–1.3 s). CI does not exercise the new S3 retry (MinIO on the runner never refuses
 connections). **4d707e2aedfc is the m4 default from 2026-10-26 10:00 UTC.**
+
+## 2026-10-26, CI: server 57d252b1437f as the m4 default — series `4a9848e-fldb9219`
+
+Server 57d252b1437f = 4d707e2aedfc + one outbound byte budget shared by all Flight streams. Assets cache `m4-assets-v12`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40309379575 | 57d252b1437f | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 4 29 s; check 6 "flight2 stopped": 10.7 s, no FE failover; "flight2 killed during the read": FailoverCount=3, correct rows |
+| 40309382938 | 57d252b1437f | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40312075792 | 57d252b1437f | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40312078753 | 57d252b1437f | s3 | 1, 6 | PASS (25/25, 6/6); "flight2 stopped": 16.3 s — flight1 GetFlightInfo UNAVAILABLE ~10 s after the stop (11:12:05.9), flight2 probe TIMED_OUT, the `fldb9219` retry of flight1 succeeded |
+
+TPC-H timings unchanged (q01–q22 0.1–1.1 s). The member-loss stall of ~10 s on the surviving server is still there on
+this build (second hit in 4 check-6 runs since 7fbe2d75827c); the connector handles it. CI runs one Flight server per
+query path and never 8 concurrent partial-mode scans on 3 nodes, so the new shared byte budget is exercised only by the
+ordinary scans (no regression). **57d252b1437f is the m4 default from 2026-10-26 11:20 UTC.**
