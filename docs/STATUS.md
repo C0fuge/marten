@@ -374,6 +374,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-57d252b1437f`** (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release) = 4d707e2aedfc + one outbound byte budget shared by all Flight streams
+> (the stand saw CANCELLED streams and a dead node under 8 concurrent partial-mode scans on a 3-node cluster). Run the
+> suite once on it (failover and concurrent-scan items especially) and make it the CI default if green.
+
+
 > **Done 2026-10-26 10:00 UTC (see Log):** server 4d707e2aedfc passes the full suite on series `fldb9219` (S3 1–9 m4
 > 40301602799, iceberg 1,11,12 40294026200, lakefs 1,3,4,10 40301606304) and is the m4 default (`m4.yml`, `stack.sh`,
 > M4-CI; assets cache `m4-assets-v11`). **No open CI work**: sessions stop early until the maintainer adds an item or a
