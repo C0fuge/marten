@@ -1,3 +1,6 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
 # At most two m4 requests per push: the m4 concurrency group keeps one running and one pending run (a third cancels the second).
+m4 checks=1,2,3,4,5,6,7,8,9 server=arrow-flight-server-1.0.0-7fbe2d75827c-linux.jar
+m4 checks=1,11,12 store=iceberg server=arrow-flight-server-1.0.0-7fbe2d75827c-linux.jar
+report
