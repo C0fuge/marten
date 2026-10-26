@@ -1,11 +1,11 @@
-# M4 run 40262586606
+# M4 run 40265277013
 
-2026-10-26 03:18 UTC, series `4.1.4-4a9848e-fl536298`, server `arrow-flight-server-1.0.0-60e888bc26ec-linux.jar`, store `s3: s3://lake/parquet`, checks 6
+2026-10-26 03:46 UTC, series `4.1.4-4a9848e-fl536298`, server `arrow-flight-server-1.0.0-60e888bc26ec-linux.jar`, store `s3: s3://lake/parquet`, checks 6
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
-| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 4 s |
-| 6 | failover (2 servers) | PASS | 6/6 | 59 s |
+| 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 3 s |
+| 6 | failover (2 servers) | PASS | 6/6 | 50 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
@@ -39,14 +39,14 @@
 
 ## Check 6: failover (2 servers)
 
-- PASS `both servers up: full scan correct` 4.1s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
-- PASS `both servers up: 3x lineitem read correct` 2.7s got=[('18003645', '459236385', '476991627')]
-- PASS `flight2 stopped before the query: succeeds via backup locations` 10.9s got=[('6001215', '153078795', '158997209')]
-- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 2.8s got=[('18003645', '459236385', '476991627')] exp=[('18003645', '459236385', '476991627')]
-- PASS `the kill overlapped the read (query ended after it; error or FailoverCount > 0)` ended 1.7s after the kill, success, FailoverCount=3
+- PASS `both servers up: full scan correct` 3.0s got=[('6001215', '153078795', '158997209')] exp=[('6001215', '153078795', '158997209')]
+- PASS `both servers up: 3x lineitem read correct` 2.2s got=[('18003645', '459236385', '476991627')]
+- PASS `flight2 stopped before the query: succeeds via backup locations` 10.1s got=[('6001215', '153078795', '158997209')]
+- PASS `flight2 killed during the read: no wrong/duplicate rows` query succeeded in 2.1s got=[('18003645', '459236385', '476991627')] exp=[('18003645', '459236385', '476991627')]
+- PASS `the kill overlapped the read (query ended after it; error or FailoverCount > 0)` ended 0.7s after the kill, success, FailoverCount=3
 - PASS `BE alive after failover tests` 
 - note: plan of the failover scan mentions 'flight' 0x
-- note: during: read time with both servers 2.7s; flight2 killed 1.2s into the query; query ended 1.7s after the kill
+- note: during: read time with both servers 2.2s; flight2 killed 1.4s into the query; query ended 0.7s after the kill
 
 ## Log masking
 
