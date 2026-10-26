@@ -1204,7 +1204,7 @@ def check11(conn, args, res):
 # ---------------------------------------------------------------- check 12: Iceberg time travel
 
 def check12(conn, args, res):
-    """Iceberg time travel (m4 input store=iceberg, server c3b276054cc3+): FOR VERSION / TIMESTAMP AS OF on ice.t,
+    """Iceberg time travel (m4 input store=iceberg, server 20b887839edf+): FOR VERSION / TIMESTAMP AS OF on ice.t,
     forwarded by the connector after the table name. One append to ice.t; every item queries the snapshot before or
     after it, in both result modes."""
     env = store_env()

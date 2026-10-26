@@ -81,7 +81,7 @@ EXPLAIN SELECT count(*) FROM flight.<schema>.<table>;   -- shows the REMOTE SQL 
 All catalog properties: `docs/PLAN.md` §2.1. Session switches: `flight_filter_pushdown`, `flight_aggregate_pushdown`
 (both default `true`). The token and password are masked in `SHOW CREATE CATALOG`, logs and profiles.
 
-Time travel (tables the server keeps versions of, e.g. Iceberg tables of our server from build c3b276054cc3 on):
+Time travel (tables the server keeps versions of, e.g. Iceberg tables of our server from build 20b887839edf on):
 `SELECT … FROM flight.<schema>.<table> FOR VERSION AS OF <snapshot id>` or `… FOR TIMESTAMP AS OF '<datetime>'`
 (the datetime is read in the session time zone and sent to the server in UTC); the clause is forwarded after the
 table name in the REMOTE SQL. Ranges (`FOR VERSION BETWEEN …`) are refused; a server without time travel answers
