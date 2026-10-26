@@ -516,6 +516,7 @@ during member loss), so it stays a server note too.
 | 40267918986 | 60e888bc26ec | s3 | 6 | 6/6 (10.9 s), series `fldb9219` |
 | 40268961132 | 60e888bc26ec | s3 | 6 | 6/6 (10.0 s), series `fldb9219` |
 | 40268964021 | 60e888bc26ec | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5), series `fldb9219` |
+| 40270293499 | 60e888bc26ec | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10), series `fldb9219` |
 
 **60e888bc26ec is the m4 default from 2026-10-26 04:40 UTC** (full suite green on series `fldb9219`; iceberg 1,11,12 green on
 `fl536298`, m4 40255398491 — the FE change only touches failure paths). The fix itself is covered by the unit test only: none

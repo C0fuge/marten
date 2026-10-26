@@ -358,6 +358,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   lakefs 1,3,4,10 40268964021 PASS → **60e888bc26ec is the m4 default** (`m4.yml`, `stack.sh`, M4-CI). m4.py check 6 now
   always notes the query's UTC window and fe.log `trying next location` lines (none in passing runs: the ~5–7 s extra there
   is the BE's connect timeout on flight2's endpoints). Details `docs/M4-RESULTS.md`.
+- 2026-10-26 04:40–05:20 UTC (cloud session): optional item done: m4 40270293499 (`store=iceberg`, checks 1,11,12) on
+  series `fldb9219` / server 60e888bc26ec all PASS (25/25, 22/22, 10/10) → full suite green on `fldb9219`. No patch change;
+  no open CI work left.
 
 ## Next steps
 
@@ -365,8 +368,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > GetFlightInfo as unreachable for ~10 s during Hazelcast member loss and the FE tried each URI only once; series
 > `fldb9219` retries the connected URI once (unit-tested; no CI run hit the window afterwards). 60e888bc26ec is the m4
 > default; full suite green (iceberg on `fl536298`). Nothing open on the connector side. If check 6 fails again, read the
-> fe.log failover lines in the run's notes before changing anything. Optional, when a session has nothing else:
-> `m4 checks=1,11,12 store=iceberg` once on `fldb9219` (not needed for the default switch).
+> fe.log failover lines in the run's notes before changing anything. The optional iceberg run on `fldb9219` is done
+> (m4 40270293499, 1,11,12 all PASS), so the full suite is green on series `fldb9219` / server 60e888bc26ec.
+> **No open CI work**: sessions stop early until the maintainer adds an item or a new server build arrives.
 
 > ~~**New server build `server-1.0.0-60e888bc26ec`**~~ (2026-10-26, local coordinator; jar, plugins tar, libs tar + merged
 > `SHA256SUMS` in this repo's assets release) = 20b887839edf + **`duckDbThreads` default 4** (was 1 in code; maintainer
