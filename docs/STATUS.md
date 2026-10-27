@@ -389,10 +389,22 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   PASS, 40458185120 (check 6 repeat) PASS but hit the member-loss stall (flight1 GetFlightInfo UNAVAILABLE ~10 s after the
   stop, retry OK, 15.2 s; Open questions). TPC-H check 4 sums: S3 25.6 s, lakeFS 34.2 s — inside the runners' spread, so
   the per-query gain is not visible in CI. `m4.yml`, `stack.sh`, M4-CI, M4-RESULTS updated. No patch change.
+- 2026-10-27 07:40–08:20 UTC (cloud session): **server 45fc0a9e6e02 is the m4 default.** Assets cache `m4-assets-v15`.
+  Series `fldb9219`: m4 40468685156 (S3 1–9) all PASS, 40468687485 (iceberg 1,11,12) PASS, 40470149119 (lakefs 1,3,4,10)
+  PASS, 40470151963 (check 6 repeat) PASS but hit the member-loss stall (flight1 GetFlightInfo UNAVAILABLE ~10 s after the
+  stop, retry OK, 16.4 s). TPC-H check 4 sums: S3 18.7 s, lakeFS 24.7 s (775100bf923f: 25.6 / 34.2 s) — lowest so far,
+  at the edge of the runners' spread. `m4.yml`, `stack.sh`, M4-CI, M4-RESULTS updated. No patch change.
 
 ## Next steps
 
-> **New server build `server-1.0.0-45fc0a9e6e02`** (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
+> **Done 2026-10-27 08:15 UTC (see Log):** server 45fc0a9e6e02 passes the full suite on series `fldb9219` (S3 1–9 m4
+> 40468685156, iceberg 1,11,12 40468687485, lakefs 1,3,4,10 40470149119, check 6 repeat 40470151963) and is the m4
+> default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v15`). TPC-H check 4 sums are the lowest so far (S3
+> 18.7 s, lakeFS 24.7 s) but at the edge of the runners' noise; the stand has to confirm. Check 6 repeat hit the
+> member-loss stall again (retry OK). Candidate for the presentation build. **No open CI work**: sessions stop early
+> until the maintainer adds an item or a new server build arrives.
+
+> ~~**New server build `server-1.0.0-45fc0a9e6e02`**~~ (done, see above) (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
 > `SHA256SUMS` in this repo's assets release) = 27f583adccd7 + per-query overhead cuts (stage 2 item 15: describe once per views
 > snapshot, parse check once per node, partial-mode sample-file cache, executionPath log line written asynchronously). Needs
 > the DuckDB 1.5.6 extension set (server repo `ci-assets`). Candidate for the presentation build: run the suite once on it
@@ -562,6 +574,10 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
+- **Server 45fc0a9e6e02 (2026-10-27), for the server repo (no decision needed):** the ~10 s member-loss stall is still
+  there: in m4 40470151963 flight1 answered GetFlightInfo UNAVAILABLE at 08:06:41.6 UTC, ~10 s into the query after
+  flight2 was stopped (query 08:06:31–08:06:47, rescued by the connector's retry; 4th hit in the last 8 check-6 runs).
+  Logs in artifact `m4-40470151963` (7 days).
 - **Server 775100bf923f (2026-10-27), for the server repo (no decision needed):** the ~10 s member-loss stall is still
   there: in m4 40458185120 flight1 answered GetFlightInfo UNAVAILABLE at 06:06:32.3 UTC, ~10 s into the query after
   flight2 was stopped (query 06:06:22–06:06:38, rescued by the connector's retry; 3rd hit in the last 6 check-6 runs).
