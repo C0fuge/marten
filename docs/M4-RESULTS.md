@@ -623,3 +623,19 @@ Timings (sum of the 44 TPC-H query times of check 4): S3 18.7 s (775100bf923f 25
 S3 times 0.13–0.81 s (before 0.16–1.21 s). Both the lowest sums so far but still at the edge of the shared runners' spread
 (S3 20.0–27.4 s, lakeFS 25.1–35.0 s); the stand has to confirm the per-query gain. **45fc0a9e6e02 is the m4 default from
 2026-10-27 08:15 UTC.**
+
+## 2026-10-27, CI: server 4e77c6bda59a as the m4 default — series `4a9848e-fldb9219`
+
+Server 4e77c6bda59a = the server repo build after 45fc0a9e6e02 (assets added 2026-10-27 20:47 UTC; no change note in this
+repo). Same DuckDB 1.5.6 extension set. Assets cache `m4-assets-v16`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40588875084 | 4e77c6bda59a | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 6 "flight2 stopped": 16.2 s — member-loss stall hit (flight1 GetFlightInfo UNAVAILABLE at 21:48:39 UTC, ~10 s into the query; retry OK); "flight2 killed during the read": FailoverCount=3, correct rows |
+| 40588877746 | 4e77c6bda59a | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40590969944 | 4e77c6bda59a | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40590972986 | 4e77c6bda59a | s3 | 1, 6 | PASS (25/25, 6/6); "flight2 stopped": 10.9 s, no FE failover (stall not hit) |
+
+Timings (sum of the 44 TPC-H query times of check 4): S3 24.5 s (45fc0a9e6e02 18.7 s), lakeFS 30.8 s (24.7 s); per-query
+S3 times 0.13–1.14 s. Inside the shared runners' spread (S3 18.7–27.4 s, lakeFS 24.7–35.0 s), so no measurable change in
+CI. **4e77c6bda59a is the m4 default from 2026-10-27 22:10 UTC.**
