@@ -70,8 +70,14 @@ assets)
     case "$tag" in
     int1|int2) duckdb=1.4.1 plugins= ;;
     int*) duckdb=1.4.5 plugins=$tag-plugins.tar.zst ;;
-    *) duckdb=1.4.5 plugins=flight-plugins-$ver-$tag.tar.zst libs=flight-server-libs-$ver-$tag.tar.zst ;;
+    *) duckdb=1.5.6 plugins=flight-plugins-$ver-$tag.tar.zst libs=flight-server-libs-$ver-$tag.tar.zst ;;
     esac
+    # server repo builds up to 57d252b1437f embed DuckDB 1.4.5; from 27f583adccd7 on 1.5.6 (the server checks the
+    # extension versions at startup). M4_DUCKDB overrides it for a later build with another DuckDB.
+    case "$tag" in
+    4eaab052deaf|c3b276054cc3|20b887839edf|60e888bc26ec|7fbe2d75827c|4d707e2aedfc|57d252b1437f) duckdb=1.4.5 ;;
+    esac
+    duckdb=${M4_DUCKDB:-$duckdb}
     # a rebuilt jar of the same build (int4b = int4 + cluster fixes) has no plugins asset of its own: use the base's
     if [ -n "$plugins" ] && [ ! -s "$A/$plugins" ] && [[ "$tag" =~ ^(int[0-9]+)[a-z]$ ]]; then
         plugins=${BASH_REMATCH[1]}-plugins.tar.zst
