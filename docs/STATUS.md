@@ -380,6 +380,15 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-27f583adccd7`** (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release) = 57d252b1437f + **DuckDB 1.5.6** (was 1.4.5; upstream comparison: about half of
+> the small-query latency gap) + HDFS Kerberos ticket cache from a keytab + cluster crashed-member wait documented. **It needs
+> the DuckDB 1.5.6 extension set** (the server checks extension versions at startup): `duckdb-extensions-v1.5.6.tar.zst`
+> (httpfs, iceberg, avro, hadoopfs `51b7220-afc3`, layout `extensions/v1.5.6/linux_amd64/`) and
+> `hadoopfs-v1.5.6-afc3.duckdb_extension` are in the server repo's `ci-assets` release (sha256 in its SHA256SUMS); official
+> httpfs/iceberg/avro 1.5.6 builds also work. Run the suite once on it (note small-query timings) and make it the CI default if green.
+
+
 > **Done 2026-10-26 11:20 UTC (see Log):** server 57d252b1437f passes the full suite on series `fldb9219` (S3 1–9 m4
 > 40309379575, iceberg 1,11,12 40309382938, lakefs 1,3,4,10 40312075792, check 6 repeat 40312078753) and is the m4
 > default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v12`). CI cannot reproduce the stand's 8 concurrent
