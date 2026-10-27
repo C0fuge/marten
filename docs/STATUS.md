@@ -377,10 +377,24 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   PASS, 40312075792 (lakefs 1,3,4,10) PASS, 40312078753 (check 6 repeat) PASS but hit the member-loss stall again (flight1
   GetFlightInfo UNAVAILABLE ~10 s after the stop, retry OK, 16.3 s; Open questions). `m4.yml`, `stack.sh`, M4-CI,
   M4-RESULTS updated. No patch change.
+- 2026-10-27 04:35–05:15 UTC (cloud session): **server 27f583adccd7 (DuckDB 1.5.6) is the m4 default.** `stack.sh assets`
+  picks DuckDB 1.5.6 extensions (httpfs, iceberg, avro from extensions.duckdb.org) for server repo builds after
+  57d252b1437f, 1.4.5 for the listed older ones (`M4_DUCKDB` overrides). Assets cache `m4-assets-v13`. Series `fldb9219`:
+  m4 40450698707 (S3 1–9) all PASS, 40450700544 (iceberg 1,11,12) PASS, 40452023921 (lakefs 1,3,4,10) PASS, 40452025889
+  (check 6 repeat) PASS (10.7 s, member-loss stall not hit). TPC-H check 4 sums: S3 21.3 s (was 27.1), lakeFS 35.0 s
+  (was 25.2) — both inside the runners' earlier spread (S3 20.0–27.4, lakeFS 25.1–33.9), so no measurable change in CI.
+  `m4.yml`, `stack.sh`, M4-CI, M4-RESULTS updated. No patch change.
 
 ## Next steps
 
-> **New server build `server-1.0.0-27f583adccd7`** (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
+> **Done 2026-10-27 05:10 UTC (see Log):** server 27f583adccd7 (DuckDB 1.5.6) passes the full suite on series
+> `fldb9219` (S3 1–9 m4 40450698707, iceberg 1,11,12 40450700544, lakefs 1,3,4,10 40452023921, check 6 repeat 40452025889)
+> and is the m4 default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v13`). CI timings stay within the runners'
+> noise (Log); the small-query gain needs the stand to confirm. **No open CI work**: sessions stop early until the
+> maintainer adds an item or a new server build arrives. A later server build with another DuckDB version: set its
+> version in `stack.sh assets` (or `M4_DUCKDB`).
+
+> ~~**New server build `server-1.0.0-27f583adccd7`**~~ (done, see above) (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
 > `SHA256SUMS` in this repo's assets release) = 57d252b1437f + **DuckDB 1.5.6** (was 1.4.5; upstream comparison: about half of
 > the small-query latency gap) + HDFS Kerberos ticket cache from a keytab + cluster crashed-member wait documented. **It needs
 > the DuckDB 1.5.6 extension set** (the server checks extension versions at startup): `duckdb-extensions-v1.5.6.tar.zst`

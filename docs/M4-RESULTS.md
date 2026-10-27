@@ -571,3 +571,21 @@ TPC-H timings unchanged (q01–q22 0.1–1.1 s). The member-loss stall of ~10 s 
 this build (second hit in 4 check-6 runs since 7fbe2d75827c); the connector handles it. CI runs one Flight server per
 query path and never 8 concurrent partial-mode scans on 3 nodes, so the new shared byte budget is exercised only by the
 ordinary scans (no regression). **57d252b1437f is the m4 default from 2026-10-26 11:20 UTC.**
+
+## 2026-10-27, CI: server 27f583adccd7 (DuckDB 1.5.6) as the m4 default — series `4a9848e-fldb9219`
+
+Server 27f583adccd7 = 57d252b1437f + DuckDB 1.5.6 (was 1.4.5) + HDFS Kerberos ticket cache from a keytab. `stack.sh
+assets` now fetches the v1.5.6 httpfs/iceberg/avro extensions for it (official builds from extensions.duckdb.org).
+Assets cache `m4-assets-v13`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40450698707 | 27f583adccd7 | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 4 22 s; check 6 "flight2 stopped": 10.8 s, no FE failover; "flight2 killed during the read": FailoverCount=3, correct rows |
+| 40450700544 | 27f583adccd7 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40452023921 | 27f583adccd7 | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40452025889 | 27f583adccd7 | s3 | 1, 6 | PASS (25/25, 6/6); "flight2 stopped": 10.7 s, no FE failover (member-loss stall not hit) |
+
+Timings (sum of the 44 TPC-H query times of check 4): S3 21.3 s (57d252b1437f 27.1 s; earlier S3 runs 20.0–27.4 s),
+lakeFS 35.0 s (57d252b1437f 25.2 s; earlier lakeFS runs 25.1–33.9 s). Both lie within the spread of the shared runners,
+so CI shows neither the small-query gain nor a regression; per-query S3 times 0.13–1.00 s (before 0.18–1.29 s).
+**27f583adccd7 is the m4 default from 2026-10-27 05:10 UTC.**
