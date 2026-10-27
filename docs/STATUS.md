@@ -392,6 +392,13 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-45fc0a9e6e02`** (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release) = 27f583adccd7 + per-query overhead cuts (stage 2 item 15: describe once per views
+> snapshot, parse check once per node, partial-mode sample-file cache, executionPath log line written asynchronously). Needs
+> the DuckDB 1.5.6 extension set (server repo `ci-assets`). Candidate for the presentation build: run the suite once on it
+> (note small-query timings) and make it the CI default if green.
+
+
 > **Done 2026-10-27 06:15 UTC (see Log):** server 775100bf923f passes the full suite on series `fldb9219` (S3 1–9 m4
 > 40456836388, iceberg 1,11,12 40456838963, lakefs 1,3,4,10 40458183269, check 6 repeat 40458185120) and is the m4
 > default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v14`). Small-query timings in CI stay within the runners'
