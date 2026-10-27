@@ -589,3 +589,19 @@ Timings (sum of the 44 TPC-H query times of check 4): S3 21.3 s (57d252b1437f 27
 lakeFS 35.0 s (57d252b1437f 25.2 s; earlier lakeFS runs 25.1–33.9 s). Both lie within the spread of the shared runners,
 so CI shows neither the small-query gain nor a regression; per-query S3 times 0.13–1.00 s (before 0.18–1.29 s).
 **27f583adccd7 is the m4 default from 2026-10-27 05:10 UTC.**
+
+## 2026-10-27, CI: server 775100bf923f as the m4 default — series `4a9848e-fldb9219`
+
+Server 775100bf923f = 27f583adccd7 + complete mode describes a query once per catalog-views snapshot (per-query
+overhead, server stage 2 item 15 step 1). Same DuckDB 1.5.6 extension set. Assets cache `m4-assets-v14`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40456836388 | 775100bf923f | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 6 "flight2 stopped": 11.3 s, no FE failover; "flight2 killed during the read": FailoverCount=3, correct rows |
+| 40456838963 | 775100bf923f | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40458183269 | 775100bf923f | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40458185120 | 775100bf923f | s3 | 1, 6 | PASS (25/25, 6/6); "flight2 stopped": 15.2 s — member-loss stall hit again (flight1 GetFlightInfo UNAVAILABLE at 06:06:32.3 UTC, ~10 s into the query; flight2 probe TIMED_OUT; connector retry of flight1 OK) |
+
+Timings (sum of the 44 TPC-H query times of check 4): S3 25.6 s (27f583adccd7 21.3 s), lakeFS 34.2 s (35.0 s); per-query
+S3 times 0.16–1.21 s. Within the shared runners' spread (S3 20.0–27.4 s, lakeFS 25.1–35.0 s); CI does not resolve the
+per-query gain, the stand has to measure it. **775100bf923f is the m4 default from 2026-10-27 06:15 UTC.**

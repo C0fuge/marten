@@ -384,10 +384,21 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   (check 6 repeat) PASS (10.7 s, member-loss stall not hit). TPC-H check 4 sums: S3 21.3 s (was 27.1), lakeFS 35.0 s
   (was 25.2) — both inside the runners' earlier spread (S3 20.0–27.4, lakeFS 25.1–33.9), so no measurable change in CI.
   `m4.yml`, `stack.sh`, M4-CI, M4-RESULTS updated. No patch change.
+- 2026-10-27 05:40–06:20 UTC (cloud session): **server 775100bf923f is the m4 default.** Assets cache `m4-assets-v14`.
+  Series `fldb9219`: m4 40456836388 (S3 1–9) all PASS, 40456838963 (iceberg 1,11,12) PASS, 40458183269 (lakefs 1,3,4,10)
+  PASS, 40458185120 (check 6 repeat) PASS but hit the member-loss stall (flight1 GetFlightInfo UNAVAILABLE ~10 s after the
+  stop, retry OK, 15.2 s; Open questions). TPC-H check 4 sums: S3 25.6 s, lakeFS 34.2 s — inside the runners' spread, so
+  the per-query gain is not visible in CI. `m4.yml`, `stack.sh`, M4-CI, M4-RESULTS updated. No patch change.
 
 ## Next steps
 
-> **New server build `server-1.0.0-775100bf923f`** (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
+> **Done 2026-10-27 06:15 UTC (see Log):** server 775100bf923f passes the full suite on series `fldb9219` (S3 1–9 m4
+> 40456836388, iceberg 1,11,12 40456838963, lakefs 1,3,4,10 40458183269, check 6 repeat 40458185120) and is the m4
+> default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v14`). Small-query timings in CI stay within the runners'
+> noise; the per-query gain needs the stand. **No open CI work**: sessions stop early until the maintainer adds an item
+> or a new server build arrives.
+
+> ~~**New server build `server-1.0.0-775100bf923f`**~~ (done, see above) (2026-10-27, local coordinator; jar, plugins tar, libs tar + merged
 > `SHA256SUMS` in this repo's assets release) = 27f583adccd7 + complete mode describes a query once per catalog-views snapshot
 > (per-query overhead, stage 2 item 15 step 1). Needs the DuckDB 1.5.6 extension set (server repo `ci-assets`). Run the suite
 > once on it (note small-query timings) and make it the CI default if green.
@@ -544,6 +555,10 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
+- **Server 775100bf923f (2026-10-27), for the server repo (no decision needed):** the ~10 s member-loss stall is still
+  there: in m4 40458185120 flight1 answered GetFlightInfo UNAVAILABLE at 06:06:32.3 UTC, ~10 s into the query after
+  flight2 was stopped (query 06:06:22–06:06:38, rescued by the connector's retry; 3rd hit in the last 6 check-6 runs).
+  Logs in artifact `m4-40458185120` (7 days).
 - **Server 57d252b1437f (2026-10-26), for the server repo (no decision needed):** the ~10 s member-loss stall is
   unchanged: in m4 40312078753 flight1 answered GetFlightInfo UNAVAILABLE at 11:12:05.9 UTC, ~10 s after flight2 was
   stopped (query 11:11:55–11:12:11, rescued by the connector's retry). Logs in artifact `m4-40312078753` (7 days). The
