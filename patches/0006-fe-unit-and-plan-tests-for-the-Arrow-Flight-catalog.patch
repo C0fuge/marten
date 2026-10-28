@@ -6,14 +6,14 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 117 ++++++
+ .../flight/FlightPropertiesTest.java          | 138 +++++++
  .../flight/FlightSqlMetadataClientTest.java   | 160 ++++++++
  .../flight/FlightSqlRendererTest.java         | 151 ++++++++
  .../flight/FlightTypeMapperTest.java          | 164 ++++++++
  .../flight/MockedFlightSqlMetadataClient.java | 132 +++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 ++++
  .../sql/plan/FlightScanPlanTest.java          | 352 ++++++++++++++++++
- 7 files changed, 1148 insertions(+)
+ 7 files changed, 1169 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -24,10 +24,10 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
 
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
-index 00000000..8bf29268
+index 00000000..01fe1874
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,138 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,6 +86,27 @@ index 00000000..8bf29268
 +                .getExchangeBufferMb());
 +        Assertions.assertEquals(ImmutableMap.of("x-flight-result-mode", "partial", "x-flight-location-failover", "1"),
 +                p.getCallHeaders());
++        Assertions.assertEquals("none", p.getCompression());
++        Assertions.assertEquals(p.getCallHeaders(), p.getScanCallHeaders());
++    }
++
++    @Test
++    public void testCompression() {
++        for (String[] c : new String[][] {{"zstd", "zstd"}, {" LZ4", "lz4"}}) {
++            FlightProperties p = props("flight.uri", "grpc://h1:8815", "flight.compression", c[0]);
++            String value = c[1];
++            Assertions.assertEquals(value, p.getCompression());
++            // only the BE scan asks; the FE's metadata calls stay uncompressed
++            Assertions.assertFalse(p.getCallHeaders().containsKey("arrow-compression"));
++            Assertions.assertEquals(ImmutableMap.of("x-flight-result-mode", "partial", "x-flight-location-failover",
++                    "1", "arrow-compression", value), p.getScanCallHeaders());
++        }
++        Assertions.assertEquals("none", props("flight.uri", "grpc://h1:8815", "flight.compression", "none")
++                .getCompression());
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.compression", "gzip"));
++        Assertions.assertThrows(StarRocksConnectorException.class,
++                () -> props("flight.uri", "grpc://h:1", "flight.header.arrow-compression", "zstd"));
 +    }
 +
 +    @Test

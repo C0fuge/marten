@@ -13,8 +13,8 @@ generated at test time (root certs + override hostname, hostname mismatch, untru
 tls_verify=false, plain client against a TLS server).
 ---
  be/test/CMakeLists.txt                      |    3 +
- be/test/connector/flight_connector_test.cpp | 1008 +++++++++++++++++++
- 2 files changed, 1011 insertions(+)
+ be/test/connector/flight_connector_test.cpp | 1048 +++++++++++++++++++
+ 2 files changed, 1051 insertions(+)
  create mode 100644 be/test/connector/flight_connector_test.cpp
 
 diff --git a/be/test/CMakeLists.txt b/be/test/CMakeLists.txt
@@ -30,10 +30,10 @@ index 4e533869..67b2a33a 100644
 +ADD_BE_TEST(connector/flight_connector_test)
 diff --git a/be/test/connector/flight_connector_test.cpp b/be/test/connector/flight_connector_test.cpp
 new file mode 100644
-index 00000000..37c8b351
+index 00000000..0d185405
 --- /dev/null
 +++ b/be/test/connector/flight_connector_test.cpp
-@@ -0,0 +1,1008 @@
+@@ -0,0 +1,1048 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,9 +58,11 @@ index 00000000..37c8b351
 +#include <arrow/flight/server.h>
 +#include <arrow/flight/server_auth.h>
 +#include <arrow/flight/server_middleware.h>
++#include <arrow/ipc/options.h>
 +#include <arrow/record_batch.h>
 +#include <arrow/type.h>
 +#include <arrow/util/base64.h>
++#include <arrow/util/compression.h>
 +#include <gtest/gtest.h>
 +#include <netinet/in.h>
 +#include <openssl/ec.h>
@@ -235,24 +237,35 @@ index 00000000..37c8b351
 +
 +// Tickets: "types" (every mapped type, row 1 all NULL), "ints:<rows>:<batches>" (c0 = 0, 1, ...),
 +// "block" (one batch of 3 rows, then the stream stalls), "error" (DoGet fails with a server error).
++// "arrow-compression: zstd|lz4" in the call headers compresses the IPC bodies, as the Flight server does.
 +class TestFlightServer final : public fl::FlightServerBase {
 +public:
 +    arrow::Status DoGet(const fl::ServerCallContext& context, const fl::Ticket& request,
 +                        std::unique_ptr<fl::FlightDataStream>* stream) override {
 +        std::string auth;
++        std::string compression;
 +        for (const auto& [k, v] : context.incoming_headers()) {
 +            if (k == "authorization") {
 +                auth = std::string(v);
++            } else if (k == "arrow-compression") {
++                compression = std::string(v);
 +            }
 +        }
 +        if (auth != std::string("Bearer ") + kToken) {
 +            return fl::MakeFlightError(fl::FlightStatusCode::Unauthenticated, "bad credentials");
 +        }
 +        num_do_get++;
++        auto ipc = arrow::ipc::IpcWriteOptions::Defaults();
++        if (compression == "zstd" || compression == "lz4") {
++            ARROW_ASSIGN_OR_RAISE(ipc.codec, arrow::util::Codec::Create(compression == "zstd"
++                                                                                ? arrow::Compression::ZSTD
++                                                                                : arrow::Compression::LZ4_FRAME));
++            num_compressed++;
++        }
 +        const std::string& t = request.ticket;
 +        if (t == "types") {
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({types_batch()}));
-+            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
 +            return arrow::Status::OK();
 +        }
 +        if (t == "u64") {
@@ -262,17 +275,17 @@ index 00000000..37c8b351
 +            EXPECT_TRUE(b.AppendNull().ok());
 +            auto batch = arrow::RecordBatch::Make(arrow::schema({arrow::field("c", arrow::uint64())}), 3, {finish(&b)});
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({batch}));
-+            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
 +            return arrow::Status::OK();
 +        }
 +        if (t == "converted") {
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({converted_batch()}));
-+            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
 +            return arrow::Status::OK();
 +        }
 +        if (t == "pre_epoch") {
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({pre_epoch_batch()}));
-+            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
 +            return arrow::Status::OK();
 +        }
 +        if (t.rfind("ints:", 0) == 0) {
@@ -283,12 +296,12 @@ index 00000000..37c8b351
 +                list.push_back(int_batch(i * rows, rows));
 +            }
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make(list));
-+            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
 +            return arrow::Status::OK();
 +        }
 +        if (t == "block") {
 +            auto reader = std::make_shared<BlockingReader>(int_batch(0, 3), &release);
-+            *stream = std::make_unique<fl::RecordBatchStream>(reader);
++            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
 +            return arrow::Status::OK();
 +        }
 +        return arrow::Status::Invalid("no such ticket");
@@ -420,6 +433,7 @@ index 00000000..37c8b351
 +    }
 +
 +    std::atomic<int> num_do_get{0};
++    std::atomic<int> num_compressed{0};
 +    std::atomic<bool> release{false};
 +};
 +
@@ -794,6 +808,32 @@ index 00000000..37c8b351
 +    }
 +    EXPECT_EQ((std::vector<size_t>{1000, 1000, 500, 1000, 1000, 500}), sizes);
 +    EXPECT_EQ(int64_t(4999) * 5000 / 2, sum);
++}
++
++// flight.compression: the FE adds "arrow-compression" to the scan's call headers; Arrow's IPC reader decodes the
++// compressed bodies (StarRocks' Arrow is built with ZSTD and LZ4)
++TEST_F(FlightConnectorTest, ReadsCompressedStreams) {
++    for (const std::string compression : {"zstd", "lz4"}) {
++        create_state(int_slots(), 1000);
++        _tnode.flight_scan_node.call_headers["arrow-compression"] = compression;
++        int before = _server->num_compressed.load();
++        auto source = create_source("ints:2500:2");
++        ASSERT_OK(source->open(_state));
++        std::vector<ChunkPtr> chunks;
++        ASSERT_OK(read_all(source.get(), &chunks));
++        source->close(_state);
++        int64_t rows = 0;
++        int64_t sum = 0;
++        for (const auto& c : chunks) {
++            rows += c->num_rows();
++            for (size_t i = 0; i < c->num_rows(); i++) {
++                sum += c->get_column_by_slot_id(0)->get(i).get_int32();
++            }
++        }
++        EXPECT_EQ(5000, rows) << compression;
++        EXPECT_EQ(int64_t(4999) * 5000 / 2, sum) << compression;
++        EXPECT_EQ(before + 1, _server->num_compressed.load()) << compression;
++    }
 +}
 +
 +TEST_F(FlightConnectorTest, FailsOverFromRefusedLocation) {

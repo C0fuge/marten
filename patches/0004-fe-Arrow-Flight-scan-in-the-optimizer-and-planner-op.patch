@@ -38,7 +38,7 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 new file mode 100644
-index 00000000..d46aefb5
+index 00000000..d10e2751
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 @@ -0,0 +1,313 @@
@@ -337,7 +337,7 @@ index 00000000..d46aefb5
 +            if (props.getTlsOverrideHostname() != null) {
 +                node.setTls_override_hostname(props.getTlsOverrideHostname());
 +            }
-+            node.setCall_headers(new HashMap<>(props.getCallHeaders()));
++            node.setCall_headers(new HashMap<>(props.getScanCallHeaders()));
 +            node.setConnect_timeout_ms(props.getConnectTimeoutMs());
 +            node.setKeepalive_ms(props.getKeepaliveMs());
 +            node.setRpc_timeout_ms(props.getRpcTimeoutMs());
