@@ -26,6 +26,8 @@ import pymysql
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 M4 = os.path.join(REPO, "tests", "m4")
 FLIGHT_URI = os.environ.get("M4_FLIGHT_URI", "grpc://flight1:32010")
+# flight.compression of every catalog the checks create (m4 input `compression`; check 13 sets its own)
+COMPRESSION = os.environ.get("M4_COMPRESSION", "none") or "none"
 
 
 # ---------------------------------------------------------------- connections
@@ -477,6 +479,8 @@ def make_catalogs(conn, args):
     base = [f'"type" = "flight"', f'"flight.uri" = "{FLIGHT_URI}"']
     if args.token:
         base.append(f'"flight.token" = "{args.token}"')
+    if COMPRESSION != "none":
+        base.append(f'"flight.compression" = "{COMPRESSION}"')
     for name, extra in (("flight", []), ("flight_c", ['"flight.result_mode" = "complete"']),
                         ("flight_noagg", ['"flight.pushdown.aggregate" = "false"'])):
         sr(conn, f"DROP CATALOG IF EXISTS {name}")
@@ -727,6 +731,8 @@ def flight_restart(args, servers=("flight1",), env=None):
 
 def catalog(conn, name, uri=None, **props):
     p = {"type": "flight", "flight.uri": uri or FLIGHT_URI}
+    if COMPRESSION != "none":
+        p["flight.compression"] = COMPRESSION
     p.update({k.replace("__", "."): v for k, v in props.items()})
     sr(conn, f"DROP CATALOG IF EXISTS {name}")
     sr(conn, f"CREATE EXTERNAL CATALOG {name} PROPERTIES (" +
@@ -1274,12 +1280,122 @@ def check12(conn, args, res):
 
 # ---------------------------------------------------------------- main
 
+# ---------------------------------------------------------------- check 13: result compression (flight.compression)
+
+# a wide lineitem read without aggregate pushdown: ~6M rows of comment, price, date go over the wire
+SCAN13_Q = ("SELECT count(*), sum(length(l_comment)), sum(l_extendedprice), max(l_shipdate), min(l_shipmode) "
+            "FROM {c}.tpch.lineitem")
+NETEM = os.environ.get("M4_NETEM", "delay 10ms rate 1gbit")
+
+
+def sr_host_veth():
+    """Host side of the sr container's interface: its egress is everything sr receives (the Flight streams)."""
+    idx = subprocess.run(["docker", "exec", "sr", "cat", "/sys/class/net/eth0/iflink"], capture_output=True,
+                         text=True, check=True).stdout.strip()
+    for line in subprocess.run(["ip", "-o", "link"], capture_output=True, text=True, check=True).stdout.splitlines():
+        num, name = line.split(":")[0:2]
+        if num.strip() == idx:
+            return name.strip().split("@")[0]
+    raise RuntimeError(f"no host interface with index {idx}")
+
+
+def veth_tx_bytes(veth):
+    return int(open(f"/sys/class/net/{veth}/statistics/tx_bytes").read())
+
+
+def check13(conn, args, res):
+    """flight.compression (opt-in, server cadd1aca9c23+): answers equal with none / lz4 / zstd (TPC-H q01–q22,
+    types tables, a wide lineitem read), zstd and lz4 really shrink the stream (bytes into the sr container), and a
+    slow-link comparison with `tc netem` on sr's host interface (informational MB/s)."""
+    modes = ("none", "lz4", "zstd")
+    for m in modes:
+        catalog(conn, f"flight_z{m}", flight__compression=m, **({"flight__token": args.token} if args.token else {}))
+    # TPC-H on both compressed catalogs against the reference (check 4's comparison)
+    for m in ("lz4", "zstd"):
+        sub = Result(13, "")
+        a = argparse.Namespace(**vars(args))
+        a.catalog, a.ref_catalog = f"flight_z{m}", ""
+        check4(conn, a, sub)
+        for name, ok, det in sub.items:
+            if name.startswith("q") and "EXPLAIN" not in name:
+                res.items.append((f"{m} {name}", ok, det))
+        nfail = sum(1 for i in sub.items if not i[1])
+        print(f"  TPC-H with {m}: {len(sub.items) - nfail}/{len(sub.items)}", flush=True)
+    # every types table, all columns: compressed catalogs return what the uncompressed one returns
+    tables = [r[0] for r in sr(conn, "SHOW TABLES FROM flight_znone.types")]
+    for t in tables:
+        def one(t=t):
+            base = sorted(repr(r) for r in sr(conn, f"SELECT * FROM flight_znone.types.{t}"))
+            for m in ("lz4", "zstd"):
+                got = sorted(repr(r) for r in sr(conn, f"SELECT * FROM flight_z{m}.types.{t}"))
+                res.add(f"types.{t} {m} = none", got == base, f"rows {len(got)}/{len(base)}")
+        guarded(res, f"types.{t}", one)
+
+    veth = sr_host_veth()
+    sr(conn, "SET flight_aggregate_pushdown = false")
+    sr(conn, "SET enable_profile = true")
+    measured = {}
+
+    def run(m, link):
+        best = None
+        for i in range(2):
+            b0, t0 = veth_tx_bytes(veth), time.time()
+            rows = sr(conn, SCAN13_Q.format(c=f"flight_z{m}"))
+            secs, wire = time.time() - t0, veth_tx_bytes(veth) - b0
+            qid = sr(conn, "SELECT last_query_id()")[0][0]
+            if best is None or secs < best[0]:
+                best = (secs, wire, qid, rows)
+        p, _ = query_profile(conn, best[2], args.out, f"check13-{link}-{m}")
+        decoded = sum(byte_values(p, "BytesRead"))
+        measured[(link, m)] = (best[0], best[1], decoded, [tuple(norm(v) for v in r) for r in best[3]])
+
+    try:
+        for m in modes:
+            guarded(res, f"scan {m} plain link", lambda m=m: run(m, "plain"))
+        tc = ["sudo", "tc", "qdisc", "add", "dev", veth, "root", "netem", "limit", "100000", *NETEM.split()]
+        p = subprocess.run(tc, capture_output=True, text=True)
+        if p.returncode:
+            # sch_netem may be in the kernel's extra modules package on the runner
+            subprocess.run(f"sudo apt-get install -y -q linux-modules-extra-$(uname -r) && sudo modprobe sch_netem",
+                           shell=True, capture_output=True)
+            p = subprocess.run(tc, capture_output=True, text=True)
+        res.add(f"tc netem on {veth}", p.returncode == 0, (p.stderr or "")[-300:])
+        if p.returncode == 0:
+            try:
+                for m in modes:
+                    guarded(res, f"scan {m} netem", lambda m=m: run(m, "netem"))
+            finally:
+                subprocess.run(["sudo", "tc", "qdisc", "del", "dev", veth, "root"], capture_output=True)
+    finally:
+        sr(conn, "SET enable_profile = false")
+        sr(conn, "SET flight_aggregate_pushdown = true")
+    exp = [tuple(norm(v) for v in r) for r in
+           args.duck.execute(SCAN13_Q.format(c="x").replace("x.tpch.", "tpch.")).fetchall()] if args.duck else None
+    for (link, m), (secs, wire, decoded, rows) in sorted(measured.items()):
+        if exp is not None:
+            res.add(f"scan {m} {link} = DuckDB", rows == exp, "" if rows == exp else f"sr={rows} duck={exp}")
+        res.notes.append(f"{link} link ({'' if link == 'plain' else NETEM}) {m}: {secs:.2f} s, {wire / 1e6:.1f} MB "
+                         f"into sr, {decoded / 1e6:.1f} MB decoded (BytesRead), "
+                         f"{decoded / 1e6 / secs:.0f} MB/s decoded, {wire / 1e6 / secs:.0f} MB/s on the wire")
+    for link in ("plain", "netem"):
+        off = measured.get((link, "none"))
+        for m in ("lz4", "zstd"):
+            got = measured.get((link, m))
+            if off and got:
+                # the stream really is compressed: clearly fewer bytes reach sr (lineitem text compresses > 2x)
+                res.add(f"{m} {link}: bytes into sr < 0.8 x none", got[1] < 0.8 * off[1],
+                        f"{got[1] / 1e6:.1f} MB vs {off[1] / 1e6:.1f} MB")
+    for m in modes:
+        sr(conn, f"DROP CATALOG IF EXISTS flight_z{m}")
+
+
 TITLES = {1: "catalog, SHOW, DESC, masking", 2: "types tables, every column", 3: "M4-TESTS §1–2 (EXPLAIN + results)",
           4: "TPC-H SF1 q01–q22, topn default and 0", 5: "sr-cases on SF1", 6: "failover (2 servers)",
           7: "KILL QUERY during a long scan", 8: "token and TLS", 9: "memory limit",
-          10: "lakeFS: commits between queries", 11: "Iceberg: REST catalog tables, deletes, rename, appends", 12: "Iceberg time travel"}
+          10: "lakeFS: commits between queries", 11: "Iceberg: REST catalog tables, deletes, rename, appends", 12: "Iceberg time travel",
+          13: "result compression (flight.compression none / lz4 / zstd)"}
 FUNCS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8, 9: check9, 10: check10,
-         11: check11, 12: check12}
+         11: check11, 12: check12, 13: check13}
 
 
 def main():
@@ -1336,7 +1452,7 @@ def main():
     run = os.environ.get("GITHUB_RUN_ID", "local")
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "

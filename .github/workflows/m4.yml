@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       checks:
-        description: "comma-separated check numbers of docs/M4-CI.md §4 (implemented: 1-11; 6-9 restart the Flight server; 10 needs store=lakefs, 11 store=iceberg)"
+        description: "comma-separated check numbers of docs/M4-CI.md §4 (implemented: 1-13; 6-9 restart the Flight server; 10 needs store=lakefs, 11/12 store=iceberg; 13 = result compression incl. a tc netem slow link)"
         default: "1,2,3,4,5"
       ref_catalog:
         description: "check 4 also compares every query with this catalog (m4.py --ref-catalog; flight_c exists after check 3)"
@@ -18,6 +18,9 @@ on:
       store:
         description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet), lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+) or iceberg (s3 + Iceberg REST catalog, schema ice; int6+)"
         default: "s3"
+      compression:
+        description: "flight.compression of every catalog the checks create: none, lz4 or zstd (server cadd1aca9c23+; check 13 compares all three itself)"
+        default: "none"
 
 concurrency:
   group: m4
@@ -40,6 +43,7 @@ jobs:
         run: |
           [[ "$M4_SERVER_JAR" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
           case "${{ inputs.store }}" in s3|lakefs|iceberg) ;; *) echo "::error::store must be s3, lakefs or iceberg"; exit 1 ;; esac
+          case "${{ inputs.compression }}" in none|lz4|zstd) ;; *) echo "::error::compression must be none, lz4 or zstd"; exit 1 ;; esac
       - name: Free disk
         timeout-minutes: 5
         continue-on-error: true
@@ -125,6 +129,7 @@ jobs:
         env:
           CHECKS: ${{ inputs.checks }}
           REF_CATALOG: ${{ inputs.ref_catalog }}
+          M4_COMPRESSION: ${{ inputs.compression }}
           SERIES: 4.1.4-${{ steps.hash.outputs.commit_hash }}
         run: |
           # Catalog token: a random dummy value (the server runs open for checks 1-5); it must never show up in

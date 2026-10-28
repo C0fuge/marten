@@ -91,3 +91,9 @@ Memory: Flight scans are fast, so a join's probe-side rows can arrive long befor
 local exchange behind each Flight scan is capped at `flight.exchange_buffer_mb` (default 16 MB) per driver instead
 of StarRocks' 128 MB. Large joins/aggregations still need memory like on any other catalog: TPC-H SF10 q18 is at the
 edge of a BE with `mem_limit = 4G`; give the BE more memory or `SET enable_spill = true` for such queries.
+
+Slow network between BE and Flight servers: `"flight.compression" = "zstd"` (or `"lz4"`; default `none`) asks the
+server (build cadd1aca9c23 or later) to compress the scan's result streams (`arrow-compression` call header); the BE
+decodes them. It costs CPU on both sides, so turn it on only where the link, not the server, limits scans (M4 check 13
+measures both). The FE's metadata and statistics calls never ask for it. A server that does not know the header sends
+uncompressed streams, which the BE reads as before.

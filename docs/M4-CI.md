@@ -100,6 +100,7 @@ from `tests/m4/starrocks/`. Clients via `mysql -h127.0.0.1 -P9030 -uroot`.
 | 9 | memory: big scan under a small `query_mem_limit` | clean error, BE stays up |
 | 10 | lakeFS (`store=lakefs` only, P3): `lfs.t` before / with a staged file / after a 2-file commit / after a delete commit; tpch through lakeFS | each commit seen by the next queries (≤ 60 s), never half a commit; staged-file visibility recorded as a note |
 | 11 | Iceberg (`store=iceberg` only, P5): schema `ice` from an Iceberg REST catalog next to the parquet schemas; `lineitem`/`orders` (pyiceberg, several snapshots) vs the parquet tables and q01/q04/q12 vs `reference/sf1` in both result modes; `del` with Spark position deletes; `ren` with a column renamed between two appends; an append to `t` between two queries | equal to parquet / reference; deletes applied; rename read by field id; append seen by partial mode within 90 s and by complete mode after the 60 s view refresh, never another state |
+| 13 | result compression (`flight.compression`, server cadd1aca9c23+): catalogs with none / lz4 / zstd; TPC-H q01–q22 on lz4 and zstd vs `reference/sf1`; every types table equal to the uncompressed catalog; a wide lineitem read (no aggregate pushdown) on a plain link and with `tc netem delay 10ms rate 1gbit` on sr's host-side veth (`M4_NETEM` overrides) | equal answers; lz4/zstd < 0.8 × the bytes into sr of none; MB/s (decoded and on the wire) per mode recorded as notes, not a gate |
 | – | timings (informational only, shared runner): TPC-H per query, recorded by check 4 | recorded, not a gate |
 
 Write the results of every run to `docs/M4-RESULTS.md` (date, run id, series, pass/fail per check, failures with
@@ -163,3 +164,8 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
 - Check 1 also compares each `DESC` exactly (order, names, types) with the PLAN §2.2 mapping (`plan_type` in
   m4.py, mirroring FlightTypeMapper with `flight.nested_types=native`, `flight.converted_types=convert`) of the Arrow schema the server returns in
   GetTables(include_schema).
+- Input `compression` (`none` default, `lz4`, `zstd`; 2026-10-28): every catalog the checks create gets
+  `flight.compression` (env `M4_COMPRESSION`), so `m4 checks=1,2,3,4,5,6,7,8,9 compression=zstd` runs the suite on
+  one setting. Check 13 compares the three modes itself (equality, bytes into the sr container from the host veth
+  counters, `sudo tc qdisc … netem` on that veth for the slow link; if `tc` cannot load netem it installs
+  `linux-modules-extra-$(uname -r)` once, else the item fails and only the plain-link figures are reported).

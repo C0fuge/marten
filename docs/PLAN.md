@@ -218,6 +218,7 @@ Lessons from the Trino plugin v10 (`~/Projects/trino-arrow-flight-connector` 6ee
 | `flight.pushdown.filter` / `.limit` / `.count` | true | per-feature kill switches (also session variables, see 2.6) |
 | `flight.metadata_cache_ttl_s` / `flight.stats_cache_ttl_s` | 60 / 600 | table-list and schema cache; row-count and column min/max cache |
 | `flight.exchange_buffer_mb` | 16 | memory per driver of the BE local exchange behind a Flight scan (StarRocks default 128 MB per driver; 0 keeps it). A fast endpoint stream otherwise fills dop × 128 MB while the join build sides are not ready (TPC-H q18 SF10 at BE 4G, STATUS A-4; added 2026-10-22) |
+| `flight.compression` | none | `none`, `lz4` or `zstd`: the BE scan asks the server for compressed result streams (call header `arrow-compression`, server cadd1aca9c23+; Arrow C++ in the BE decodes them). FE metadata/statistics calls never ask (Arrow Java without codecs); `flight.header.arrow-compression` is refused. For slow BE↔server links only (maintainer decision 2026-10-28; added 2026-10-28) |
 | `flight.column_stats` | `true` | per-table `SELECT min(c), max(c), …` (numeric/date columns that are filterable, ≤ 100 per table; answered from Parquet footers by our servers) gives the CBO column min/max and a range NDV; loaded in the background like row counts (added 2026-10-22, STATUS P2) |
 
 ### 2.2 FE files (new package `FE/connector/flight/`)
