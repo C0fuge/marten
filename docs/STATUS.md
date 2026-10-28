@@ -403,6 +403,15 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-cadd1aca9c23`** (2026-10-28, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release). Since 7562a5bdb7b9 (so it also covers what 4e77c6bda59a brought): opt-in result
+> stream compression ZSTD/LZ4 (stage 3 item 20; the client asks via call header or Flight SQL session option `arrow-compression`;
+> buffers compressed in parallel, `flightCompressionThreads`; no default or wire change for clients that do not ask), opt-in S3
+> read cache `arrowflight.s3.cacheMegabytes`, size-aware `duckDbThreads` default (cores/4, between 2 and 8; was 4), Iceberg time
+> travel planned in partial mode, position deletes grouped. Needs the DuckDB 1.5.6 extension set (server repo `ci-assets`). Run
+> the suite once on it (note timings) and make it the CI default if green.
+
+
 > **Done 2026-10-27 22:10 UTC (see Log):** server 4e77c6bda59a (server repo build after 45fc0a9e6e02, in `m4-assets` since
 > 20:47 UTC without a STATUS note — please add one line on what it changes) passes the full suite on series `fldb9219`
 > (S3 1–9 m4 40588875084, iceberg 1,11,12 40588877746, lakefs 1,3,4,10 40590969944, check 6 repeat 40590972986) and is
