@@ -1,6 +1,6 @@
-# M4 run 40692970168
+# M4 run 40692973807
 
-2026-10-28 13:07 UTC, series `4.1.4-4a9848e-flf41597`, server `arrow-flight-server-1.0.0-cadd1aca9c23-linux.jar`, store `s3: s3://lake/parquet`, compression `zstd`, checks 1,2
+2026-10-28 13:11 UTC, series `4.1.4-4a9848e-flf41597`, server `arrow-flight-server-1.0.0-cadd1aca9c23-linux.jar`, store `s3: s3://lake/parquet`, compression `lz4`, checks 1,2
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
@@ -10,8 +10,8 @@
 ## Check 1: catalog, SHOW, DESC, masking
 
 - PASS `create catalog` 
-- PASS `SHOW CREATE CATALOG masks the token` flight CREATE EXTERNAL CATALOG `flight` PROPERTIES ("type"  =  "flight", "flight.compression"  =  "zstd", "flight.token"  =  "******", "flight.uri"  =  "grpc://flight1:32010" )
-- PASS `SHOW CREATE CATALOG has flight.compression = zstd` 
+- PASS `SHOW CREATE CATALOG masks the token` flight CREATE EXTERNAL CATALOG `flight` PROPERTIES ("type"  =  "flight", "flight.compression"  =  "lz4", "flight.token"  =  "******", "flight.uri"  =  "grpc://flight1:32010" )
+- PASS `SHOW CREATE CATALOG has flight.compression = lz4` 
 - PASS `SHOW DATABASES has tpch and types` got ['information_schema', 'tpch', 'types']
 - PASS `SHOW TABLES FROM flight.tpch` got ['customer', 'lineitem', 'nation', 'orders', 'part', 'partsupp', 'region', 'supplier']
 - PASS `SHOW TABLES FROM flight.types` got ['alltypes', 'alltypes_full']
