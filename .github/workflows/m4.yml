@@ -28,7 +28,7 @@ concurrency:
 
 permissions:
   contents: write
-  actions: read
+  actions: write
 
 jobs:
   m4:
@@ -107,6 +107,18 @@ jobs:
         with:
           path: /home/runner/m4-assets
           key: m4-assets-v17
+      - name: Delete older m4 assets caches
+        # obsolete m4-assets-v* (~4 GB each) push the BE ccache out of the 10 GB cache budget
+        if: always() && steps.assets.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          keep=${{ steps.assets.outputs.cache-primary-key }}
+          if gh cache list --repo "$GITHUB_REPOSITORY" --key "$keep" --json key --jq '.[].key' | grep -qx "$keep"; then
+            gh cache list --repo "$GITHUB_REPOSITORY" --key m4-assets- --limit 100 --json id,key --jq '.[] | "\(.id) \(.key)"' |
+              while read -r id key; do [ "$key" = "$keep" ] || gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true; done
+          fi
       - name: Python
         run: |
           pip install --quiet duckdb==1.4.1 pymysql pytz boto3 pyarrow adbc-driver-flightsql
