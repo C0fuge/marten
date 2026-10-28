@@ -681,3 +681,20 @@ Wide lineitem scan (check 13; 352.7 MB decoded by the BE (`BytesRead`), bytes = 
 
 On the runner's local link compression costs time (codec CPU on 4 vCPU shared by server, BE and FE); on a 1 Gbit link
 with 10 ms delay lz4 is ~1.9× and zstd ~1.7× faster than none, at 48 % / 32 % of the bytes. Default stays `none`.
+
+## 2026-10-28, CI: server a9e43ca5e296 as the m4 default — series `4a9848e-flf41597`
+
+Server a9e43ca5e296 = cadd1aca9c23 + optional LDAP / JWT login modules (not in the m4 assets), opt-in Hive ORC / text
+tables, `duckDbThreads` at least 4 on S3/lakeFS, read cache held at its size + opt-in admission, opt-in load caps,
+zero-copy writes, distributed complete mode, size-aware DuckDB sizing (per-connection `memory_limit`). Assets cache
+`m4-assets-v18`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40694415405 | a9e43ca5e296 | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 6 "flight2 stopped": 15.6 s (member-loss stall hit: flight1 GetFlightInfo UNAVAILABLE ~10 s in, rescued by the connected-URI retry) |
+| 40694418153 | a9e43ca5e296 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 40696410403 | a9e43ca5e296 | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40696414078 | a9e43ca5e296 | s3 | 1, 6 | PASS (25/25, 6/6); "flight2 stopped": 15.6 s, stall hit again (UNAVAILABLE at 13:37:54, retry OK) |
+
+Timings (sum of the 44 TPC-H query times of check 4): S3 24.8 s (cadd1aca9c23 25.0 s), lakeFS 25.2 s (23.6 s) — inside
+the runners' spread. **a9e43ca5e296 is the m4 default from 2026-10-28 13:40 UTC.**
