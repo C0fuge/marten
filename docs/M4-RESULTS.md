@@ -639,3 +639,20 @@ repo). Same DuckDB 1.5.6 extension set. Assets cache `m4-assets-v16`.
 Timings (sum of the 44 TPC-H query times of check 4): S3 24.5 s (45fc0a9e6e02 18.7 s), lakeFS 30.8 s (24.7 s); per-query
 S3 times 0.13–1.14 s. Inside the shared runners' spread (S3 18.7–27.4 s, lakeFS 24.7–35.0 s), so no measurable change in
 CI. **4e77c6bda59a is the m4 default from 2026-10-27 22:10 UTC.**
+
+## 2026-10-28, CI: server cadd1aca9c23 as the m4 default — series `4a9848e-fldb9219`
+
+Server cadd1aca9c23 = 4e77c6bda59a + opt-in result stream compression ZSTD/LZ4 (only for clients that ask; our BE does not),
+opt-in S3 read cache, size-aware `duckDbThreads` default (cores/4, 2–8; the 4-vCPU runner gets 2, was 4), Iceberg time
+travel planned in partial mode, position deletes grouped. Same DuckDB 1.5.6 extension set. Assets cache `m4-assets-v17`.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 40616536538 | cadd1aca9c23 | s3 | 1–9 | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 6 "flight2 stopped": 11.2 s (member-loss stall not hit); "flight2 killed during the read": FailoverCount=3, correct rows |
+| 40616538747 | cadd1aca9c23 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10 incl. time travel, now planned in partial mode) |
+| 40619524251 | cadd1aca9c23 | lakefs | 1, 3, 4, 10 | PASS (25/25, 21/21, 46/46, 5/5) |
+| 40619526598 | cadd1aca9c23 | s3 | 1, 6 | PASS (25/25, 6/6); "flight2 stopped": 10.7 s (stall not hit); kill during the read: FailoverCount=3 |
+
+Timings (sum of the 44 TPC-H query times of check 4): S3 25.0 s (4e77c6bda59a 24.5 s), lakeFS 23.6 s (30.8 s, lowest so
+far); per-query S3 times 0.14–1.25 s, lakeFS 0.12–1.00 s. Inside the shared runners' spread (S3 18.7–27.4 s, lakeFS
+24.7–35.0 s), so no measurable change in CI. **cadd1aca9c23 is the m4 default from 2026-10-28 02:35 UTC.**
