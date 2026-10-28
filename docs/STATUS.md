@@ -423,6 +423,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   (build + test since 10:04) still running cold; nothing to check yet. Compression item (3) done: `m4.yml` step "Delete
   older m4 assets caches" (after restore/save; deletes every `m4-assets-*` key except the current one once that exists;
   `continue-on-error`; job permission `actions: write`). `m4-assets-v16` goes with the next m4 run. No patch change.
+- 2026-10-28 11:41–11:50 UTC (cloud session): BE 40668967450 (part 1, Build BE since 10:05) and be-ut 40668971169 still
+  running cold; m4 cannot run before the BE output of `flf41597` exists, so nothing dispatched. Server a9e43ca5e296 assets
+  (jar, plugins, libs, auth) confirmed in `m4-assets`; Next steps note on the order. m4.py / stack.sh syntax OK. No patch change.
 
 ## Next steps
 
@@ -437,6 +440,13 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > size-aware DuckDB sizing (item 19b: `duckDbThreads` cores/4 between 2 and 16, a per-connection `memory_limit` from host
 > cores + memory by default, `duckDbMemoryLimit=none` restores DuckDB's default). Same DuckDB 1.5.6 extension set. Run the
 > suite once on it (note timings) and make it the CI default if green.
+>
+> **Blocked until BE 40668967450 is green (checked 2026-10-28 11:45 UTC):** m4 overlays the BE output of the current series
+> (`flf41597`), which only exists once that cold BE build finishes; a9e43ca5e296 jar, plugins and libs are in `m4-assets`
+> (checked). Order once BE + be-ut are green: first the compression item below on cadd1aca9c23 (it is already the default),
+> then this suite with `server=arrow-flight-server-1.0.0-a9e43ca5e296-linux.jar` (S3 1–9 + iceberg 1,11,12, then lakefs
+> 1,3,4,10 + check 6, as before) and, if green, bump the default (`m4.yml`, `stack.sh`, M4-CI) and the assets key to
+> `m4-assets-v18`.
 
 
 > **Open, 2026-10-28 10:50 UTC: finish the compression item.** (1) Check BE (both still running at 10:50; started 10:03) 40668967450 and be-ut 40668971169 (series
