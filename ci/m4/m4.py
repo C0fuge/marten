@@ -159,6 +159,8 @@ def check1(conn, args, res):
     props = [f'"type" = "flight"', f'"flight.uri" = "{FLIGHT_URI}"']
     if args.token:
         props.append(f'"flight.token" = "{args.token}"')
+    if COMPRESSION != "none":
+        props.append(f'"flight.compression" = "{COMPRESSION}"')
     sr(conn, "CREATE EXTERNAL CATALOG flight PROPERTIES (" + ", ".join(props) + ")")
     res.add("create catalog", True)
 
@@ -166,6 +168,9 @@ def check1(conn, args, res):
         txt = " ".join(str(c) for r in sr(conn, "SHOW CREATE CATALOG flight") for c in r)
         leaked = bool(args.token) and args.token in txt
         res.add("SHOW CREATE CATALOG masks the token", not leaked, txt.replace("\n", " ")[:400])
+        if COMPRESSION != "none":
+            res.add(f"SHOW CREATE CATALOG has flight.compression = {COMPRESSION}",
+                    re.search(r'"flight\.compression"\s*=\s*"' + COMPRESSION + '"', txt) is not None)
     guarded(res, "SHOW CREATE CATALOG", show_create)
 
     dbs = [r[0] for r in sr(conn, "SHOW DATABASES FROM flight")]
