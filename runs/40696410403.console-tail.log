@@ -1,0 +1,60 @@
+- PASS `q02 topn=default` rows 100/100 0.35s
+- PASS `q03 topn=default` rows 10/10 0.64s
+- PASS `q04 topn=default` rows 5/5 0.43s
+- PASS `q05 topn=default` rows 5/5 0.77s
+- PASS `q06 topn=default` rows 1/1 0.30s
+- PASS `q07 topn=default` rows 4/4 0.76s
+- PASS `q08 topn=default` rows 2/2 0.97s
+- PASS `q09 topn=default` rows 175/175 1.05s
+- PASS `q10 topn=default` rows 20/20 0.81s
+- PASS `q11 topn=default` rows 1048/1048 0.26s
+- PASS `q12 topn=default` rows 2/2 0.51s
+- PASS `q13 topn=default` rows 42/42 0.43s
+- PASS `q14 topn=default` rows 1/1 0.35s
+- PASS `q15 topn=default` rows 1/1 0.41s
+- PASS `q16 topn=default` rows 18314/18314 0.20s
+- PASS `q17 topn=default` rows 1/1 0.55s
+- PASS `q18 topn=default` rows 57/57 0.88s
+- PASS `q19 topn=default` rows 1/1 0.55s
+- PASS `q20 topn=default` rows 186/186 0.53s
+- PASS `q21 topn=default` rows 100/100 1.09s
+- PASS `q22 topn=default` rows 7/7 0.16s
+- PASS `q01 topn=0` rows 4/4 0.85s
+- PASS `q02 topn=0` rows 100/100 0.17s
+- PASS `q03 topn=0` rows 10/10 0.63s
+- PASS `q04 topn=0` rows 5/5 0.40s
+- PASS `q05 topn=0` rows 5/5 0.76s
+- PASS `q06 topn=0` rows 1/1 0.27s
+- PASS `q07 topn=0` rows 4/4 0.71s
+- PASS `q08 topn=0` rows 2/2 0.98s
+- PASS `q09 topn=0` rows 175/175 1.04s
+- PASS `q10 topn=0` rows 20/20 0.75s
+- PASS `q11 topn=0` rows 1048/1048 0.21s
+- PASS `q12 topn=0` rows 2/2 0.45s
+- PASS `q13 topn=0` rows 42/42 0.43s
+- PASS `q14 topn=0` rows 1/1 0.35s
+- PASS `q15 topn=0` rows 1/1 0.49s
+- PASS `q16 topn=0` rows 18314/18314 0.19s
+- PASS `q17 topn=0` rows 1/1 0.55s
+- PASS `q18 topn=0` rows 57/57 0.91s
+- PASS `q19 topn=0` rows 1/1 0.60s
+- PASS `q20 topn=0` rows 186/186 0.51s
+- PASS `q21 topn=0` rows 100/100 0.95s
+- PASS `q22 topn=0` rows 7/7 0.12s
+- note: q05 scans: tpch.region=5, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.lineitem=6001215, tpch.orders=227651
+- note: q05 plan outline: PLAN FRAGMENT 0 / 28:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 28 / 25:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 25 / 22:HASH JOIN / |----21:EXCHANGE / 17:HASH JOIN / |----16:EXCHANGE / 13:HASH JOIN / |----12:EXCHANGE / 9:HASH JOIN / |----8:EXCHANGE / 6:EXCHANGE / PLAN FRAGMENT 3 / EXCHANGE ID: 21 / TABLE: tpch.region / PLAN FRAGMENT 4 / EXCHANGE ID: 16 / TABLE: tpch.nation / PLAN FRAGMENT 5 / EXCHANGE ID: 12 / TABLE: tpch.supplier / PLAN FRAGMENT 6 / EXCHANGE ID: 08 / TABLE: tpch.customer / PLAN FRAGMENT 7 / EXCHANGE ID: 06 / 4:HASH JOIN / |----3:EXCHANGE / TABLE: tpch.lineitem / PLAN FRAGMENT 8 / EXCHANGE ID: 03 / TABLE: tpch.orders
+- note: q08 scans: tpch.lineitem=6001215, tpch.region=5, tpch.nation=25, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.part=200000, tpch.orders=455301
+- note: q08 plan outline: PLAN FRAGMENT 0 / 36:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 36 / 32:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 32 / 29:HASH JOIN / |----28:EXCHANGE / 24:HASH JOIN / |----23:EXCHANGE / 20:HASH JOIN / |----19:EXCHANGE / 16:HASH JOIN / |----15:EXCHANGE / 12:HASH JOIN / |----11:EXCHANGE / 8:HASH JOIN / |----7:EXCHANGE / 3:HASH JOIN / |----2:EXCHANGE / TABLE: tpch.lineitem / PLAN FRAGMENT 3 / EXCHANGE ID: 28 / TABLE: tpch.region / PLAN FRAGMENT 4 / EXCHANGE ID: 23 / TABLE: tpch.nation / PLAN FRAGMENT 5 / EXCHANGE ID: 19 / TABLE: tpch.nation / PLAN FRAGMENT 6 / EXCHANGE ID: 15 / TABLE: tpch.supplier / PLAN FRAGMENT 7 / EXCHANGE ID: 11 / TABLE: tpch.customer / PLAN FRAGMENT 8 / EXCHANGE ID: 07 / TABLE: tpch.part / PLAN FRAGMENT 9 / EXCHANGE ID: 02 / TABLE: tpch.orders
+- note: q09 scans: tpch.nation=25, tpch.supplier=10000, tpch.part=50000, tpch.partsupp=800000, tpch.orders=1500000, tpch.lineitem=6001215
+- note: q09 plan outline: PLAN FRAGMENT 0 / 28:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 28 / 25:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 25 / 22:HASH JOIN / |----21:EXCHANGE / 18:HASH JOIN / |----17:EXCHANGE / 14:HASH JOIN / |----13:EXCHANGE / 9:HASH JOIN / |----8:EXCHANGE / 6:EXCHANGE / PLAN FRAGMENT 3 / EXCHANGE ID: 21 / TABLE: tpch.nation / PLAN FRAGMENT 4 / EXCHANGE ID: 17 / TABLE: tpch.supplier / PLAN FRAGMENT 5 / EXCHANGE ID: 13 / TABLE: tpch.part / PLAN FRAGMENT 6 / EXCHANGE ID: 08 / TABLE: tpch.partsupp / PLAN FRAGMENT 7 / EXCHANGE ID: 06 / 4:HASH JOIN / |----3:EXCHANGE / 1:EXCHANGE / PLAN FRAGMENT 8 / EXCHANGE ID: 03 / TABLE: tpch.orders / PLAN FRAGMENT 9 / EXCHANGE ID: 01 / TABLE: tpch.lineitem
+- note: timings flight (s): q01/default=0.88, q02/default=0.35, q03/default=0.64, q04/default=0.43, q05/default=0.77, q06/default=0.30, q07/default=0.76, q08/default=0.97, q09/default=1.05, q10/default=0.81, q11/default=0.26, q12/default=0.51, q13/default=0.43, q14/default=0.35, q15/default=0.41, q16/default=0.20, q17/default=0.55, q18/default=0.88, q19/default=0.55, q20/default=0.53, q21/default=1.09, q22/default=0.16, q01/0=0.85, q02/0=0.17, q03/0=0.63, q04/0=0.40, q05/0=0.76, q06/0=0.27, q07/0=0.71, q08/0=0.98, q09/0=1.04, q10/0=0.75, q11/0=0.21, q12/0=0.45, q13/0=0.43, q14/0=0.35, q15/0=0.49, q16/0=0.19, q17/0=0.55, q18/0=0.91, q19/0=0.60, q20/0=0.51, q21/0=0.95, q22/0=0.12
+
+## Check 10: lakeFS: commits between queries
+
+- PASS `lfs.t at the setup commit` got (1, 1), head 957c93d6c48a
+- PASS `a commit with 2 files is seen after the commit` got (7, 28) after 1.1 s, commit 68a70dce47fe
+- PASS `no query saw half of the commit` seen [(1, 1), (7, 28)]
+- PASS `a commit deleting a file is seen` got (6, 27) after 1.1 s, commit 9568d1779fd4
+- PASS `tpch through lakeFS after the commits` [(6001215,)]
+- note: with part-1 staged (uncommitted) a query returns (1, 1) (not visible)
+
