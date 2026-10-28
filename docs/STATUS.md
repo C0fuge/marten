@@ -426,6 +426,19 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **New server build `server-1.0.0-a9e43ca5e296`** (2026-10-28, local coordinator; jar, plugins tar, libs tar + merged
+> `SHA256SUMS` in this repo's assets release). Since cadd1aca9c23: LDAP / Active Directory login (`FLIGHT_AUTH_PROVIDER=ldap`,
+> opt-in LDAP groups into Ranger via `FLIGHT_LDAP_GROUP_SEARCH_BASE`) and OIDC / Knox JWT login (`FLIGHT_AUTH_PROVIDER=jwt`)
+> as optional modules (server release asset `flight-auth-...tar.zst`, not in these assets; need Flight TLS), opt-in Hive ORC
+> tables `hive.orcTables` and Hive text tables `hive.textTables` (default false), S3 small-query tail fix (`duckDbThreads`
+> default at least 4 on S3/lakeFS), S3/lakeFS read cache now held at its size in heap + opt-in admission
+> `arrowflight.s3.cacheAdmission=reuse`, opt-in caps `duckDbThreadsUnderLoad` / `duckDbProducingStreams` (default 0 = off),
+> opt-in zero-copy writes `flightZeroCopyWrites`, opt-in distributed complete mode `distributedComplete` (default false), and
+> size-aware DuckDB sizing (item 19b: `duckDbThreads` cores/4 between 2 and 16, a per-connection `memory_limit` from host
+> cores + memory by default, `duckDbMemoryLimit=none` restores DuckDB's default). Same DuckDB 1.5.6 extension set. Run the
+> suite once on it (note timings) and make it the CI default if green.
+
+
 > **Open, 2026-10-28 10:50 UTC: finish the compression item.** (1) Check BE (both still running at 10:50; started 10:03) 40668967450 and be-ut 40668971169 (series
 > `flf41597`; cold builds, no ccache). If be-ut fails, fix 0007/0003 from its report (a missing codec would show in
 > `ReadsCompressedStreams`). If BE fails for a reason unrelated to the patch (time budget of the chained parts), re-dispatch
