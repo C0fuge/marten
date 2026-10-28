@@ -1,0 +1,60 @@
+- PASS `zstd q07 topn=default` rows 4/4 0.75s
+- PASS `zstd q08 topn=default` rows 2/2 1.29s
+- PASS `zstd q09 topn=default` rows 175/175 1.50s
+- PASS `zstd q10 topn=default` rows 20/20 0.80s
+- PASS `zstd q11 topn=default` rows 1048/1048 0.26s
+- PASS `zstd q12 topn=default` rows 2/2 0.57s
+- PASS `zstd q13 topn=default` rows 42/42 0.71s
+- PASS `zstd q14 topn=default` rows 1/1 0.32s
+- PASS `zstd q15 topn=default` rows 1/1 0.35s
+- PASS `zstd q16 topn=default` rows 18314/18314 0.22s
+- PASS `zstd q17 topn=default` rows 1/1 0.92s
+- PASS `zstd q18 topn=default` rows 57/57 1.19s
+- PASS `zstd q19 topn=default` rows 1/1 0.59s
+- PASS `zstd q20 topn=default` rows 186/186 0.50s
+- PASS `zstd q21 topn=default` rows 100/100 1.31s
+- PASS `zstd q22 topn=default` rows 7/7 0.22s
+- PASS `zstd q01 topn=0` rows 4/4 1.29s
+- PASS `zstd q02 topn=0` rows 100/100 0.17s
+- PASS `zstd q03 topn=0` rows 10/10 0.74s
+- PASS `zstd q04 topn=0` rows 5/5 0.50s
+- PASS `zstd q05 topn=0` rows 5/5 1.02s
+- PASS `zstd q06 topn=0` rows 1/1 0.22s
+- PASS `zstd q07 topn=0` rows 4/4 0.73s
+- PASS `zstd q08 topn=0` rows 2/2 1.30s
+- PASS `zstd q09 topn=0` rows 175/175 1.55s
+- PASS `zstd q10 topn=0` rows 20/20 0.84s
+- PASS `zstd q11 topn=0` rows 1048/1048 0.24s
+- PASS `zstd q12 topn=0` rows 2/2 0.47s
+- PASS `zstd q13 topn=0` rows 42/42 0.72s
+- PASS `zstd q14 topn=0` rows 1/1 0.32s
+- PASS `zstd q15 topn=0` rows 1/1 0.38s
+- PASS `zstd q16 topn=0` rows 18314/18314 0.22s
+- PASS `zstd q17 topn=0` rows 1/1 0.83s
+- PASS `zstd q18 topn=0` rows 57/57 1.05s
+- PASS `zstd q19 topn=0` rows 1/1 0.48s
+- PASS `zstd q20 topn=0` rows 186/186 0.53s
+- PASS `zstd q21 topn=0` rows 100/100 1.75s
+- PASS `zstd q22 topn=0` rows 7/7 0.17s
+- PASS `types.alltypes lz4 = none` rows 5000/5000
+- PASS `types.alltypes zstd = none` rows 5000/5000
+- PASS `types.alltypes_full lz4 = none` rows 5000/5000
+- PASS `types.alltypes_full zstd = none` rows 5000/5000
+- PASS `tc netem on vethcab6000` 
+- PASS `scan lz4 netem = DuckDB` 
+- PASS `scan none netem = DuckDB` 
+- PASS `scan zstd netem = DuckDB` 
+- PASS `scan lz4 plain = DuckDB` 
+- PASS `scan none plain = DuckDB` 
+- PASS `scan zstd plain = DuckDB` 
+- PASS `lz4 plain: bytes into sr < 0.8 x none` 172.2 MB vs 356.5 MB
+- PASS `zstd plain: bytes into sr < 0.8 x none` 115.4 MB vs 356.5 MB
+- PASS `lz4 netem: bytes into sr < 0.8 x none` 172.2 MB vs 356.5 MB
+- PASS `zstd netem: bytes into sr < 0.8 x none` 115.4 MB vs 356.5 MB
+- note: netem link (delay 10ms rate 1gbit) lz4: 1.63 s, 172.2 MB into sr, 352.7 MB decoded (BytesRead), 217 MB/s decoded, 106 MB/s on the wire
+- note: netem link (delay 10ms rate 1gbit) none: 3.16 s, 356.5 MB into sr, 352.7 MB decoded (BytesRead), 112 MB/s decoded, 113 MB/s on the wire
+- note: netem link (delay 10ms rate 1gbit) zstd: 1.90 s, 115.4 MB into sr, 352.7 MB decoded (BytesRead), 185 MB/s decoded, 61 MB/s on the wire
+- note: plain link () lz4: 1.51 s, 172.2 MB into sr, 352.7 MB decoded (BytesRead), 233 MB/s decoded, 114 MB/s on the wire
+- note: plain link () none: 1.22 s, 356.5 MB into sr, 352.7 MB decoded (BytesRead), 290 MB/s decoded, 293 MB/s on the wire
+- note: plain link () zstd: 1.85 s, 115.4 MB into sr, 352.7 MB decoded (BytesRead), 191 MB/s decoded, 62 MB/s on the wire
+
