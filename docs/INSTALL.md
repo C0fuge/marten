@@ -95,5 +95,6 @@ edge of a BE with `mem_limit = 4G`; give the BE more memory or `SET enable_spill
 Slow network between BE and Flight servers: `"flight.compression" = "zstd"` (or `"lz4"`; default `none`) asks the
 server (build cadd1aca9c23 or later) to compress the scan's result streams (`arrow-compression` call header); the BE
 decodes them. It costs CPU on both sides, so turn it on only where the link, not the server, limits scans (M4 check 13
-measures both). The FE's metadata and statistics calls never ask for it. A server that does not know the header sends
+measures both: on a 1 Gbit link with 10 ms delay a wide scan ran ~1.9× faster with `lz4` and ~1.7× with `zstd`, at 48 % /
+32 % of the bytes; on a fast local link both were slower than `none`; `lz4` is the cheaper choice, `zstd` saves more bytes). The FE's metadata and statistics calls never ask for it. A server that does not know the header sends
 uncompressed streams, which the BE reads as before.

@@ -656,3 +656,28 @@ travel planned in partial mode, position deletes grouped. Same DuckDB 1.5.6 exte
 Timings (sum of the 44 TPC-H query times of check 4): S3 25.0 s (4e77c6bda59a 24.5 s), lakeFS 23.6 s (30.8 s, lowest so
 far); per-query S3 times 0.14–1.25 s, lakeFS 0.12–1.00 s. Inside the shared runners' spread (S3 18.7–27.4 s, lakeFS
 24.7–35.0 s), so no measurable change in CI. **cadd1aca9c23 is the m4 default from 2026-10-28 02:35 UTC.**
+
+## 2026-10-28, CI: result compression opt-in (`flight.compression`) — series `4a9848e-flf41597`, server cadd1aca9c23
+
+Series `flf41597` = `fldb9219` + catalog property `flight.compression` (`none` default | `lz4` | `zstd`; only the BE scan
+asks the server for `arrow-compression`). FE 40668964365 (45/45), BE 40668967450 and be-ut 40668971169 (22/22 incl.
+`ReadsCompressedStreams`; both cold builds, ~2.5 h).
+
+| Run | Store | Checks | Compression | Result |
+|---|---|---|---|---|
+| 40691003070 | s3 | 1, 13 | per catalog | PASS (25/25, 103/103): TPC-H q01–q22 × topn default/0 on lz4 and zstd catalogs = reference (88/88), types tables lz4/zstd = none (4/4), wide lineitem scan = DuckDB on all 6 link × codec runs, bytes-into-sr gate (< 0.8 × none) 4/4 |
+| 40691006599 | s3 | 1–9 | zstd | all PASS (25 + 52 + 21 + 46 + 26 + 6 + 2 + 14 + 6); check 4 sum 23 s. Harness gap found: check 1 created catalog `flight` without the input (so check 1 and check 2's main catalog ran uncompressed); fixed in m4.py (check 1 now applies it and checks SHOW CREATE CATALOG) |
+
+Wide lineitem scan (check 13; 352.7 MB decoded by the BE (`BytesRead`), bytes = sr host veth tx):
+
+| Link | Codec | Time | Bytes into sr | Decoded MB/s | Wire MB/s |
+|---|---|---|---|---|---|
+| plain | none | 1.22 s | 356.5 MB | 290 | 293 |
+| plain | lz4 | 1.51 s | 172.2 MB | 233 | 114 |
+| plain | zstd | 1.85 s | 115.4 MB | 191 | 62 |
+| netem 10 ms / 1 Gbit | none | 3.16 s | 356.5 MB | 112 | 113 |
+| netem 10 ms / 1 Gbit | lz4 | 1.63 s | 172.2 MB | 217 | 106 |
+| netem 10 ms / 1 Gbit | zstd | 1.90 s | 115.4 MB | 185 | 61 |
+
+On the runner's local link compression costs time (codec CPU on 4 vCPU shared by server, BE and FE); on a 1 Gbit link
+with 10 ms delay lz4 is ~1.9× and zstd ~1.7× faster than none, at 48 % / 32 % of the bytes. Default stays `none`.
