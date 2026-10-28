@@ -409,6 +409,12 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-10-28: yes to result compression as a connector opt-in.** Add a catalog property (off by default) that
+> asks the server for `arrow-compression: zstd|lz4` and decodes compressed IPC bodies; never on unless set. Test: answers
+> equal with and without (full suite on one setting), and a slow-link check in CI (`tc netem delay 10ms rate 1gbit` on the
+> runner's loopback or between containers) reporting MB/s with off / lz4 / zstd. The server side is in builds since
+> `cadd1aca9c23` (assets). Then continue with your own open items.
+
 > **Done 2026-10-28 02:35 UTC (see Log):** server cadd1aca9c23 passes the full suite on series `fldb9219` (S3 1–9 m4
 > 40616536538, iceberg 1,11,12 40616538747, lakefs 1,3,4,10 40619524251, check 6 repeat 40619526598) and is the m4
 > default (`m4.yml`, `stack.sh`, M4-CI; assets cache `m4-assets-v17`). CI timings stay within the runners' noise.
