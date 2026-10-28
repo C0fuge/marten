@@ -419,18 +419,21 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   link and under `tc netem delay 10ms rate 1gbit` on sr's host veth: bytes into sr, decoded MB/s; gate: lz4/zstd < 0.8 ×
   the bytes of none) and workflow input `compression` (all catalogs of a run). INSTALL, PLAN §2.1, M4-CI updated. Not yet
   run in CI.
+- 2026-10-28 10:39–10:50 UTC (cloud session): BE 40668967450 (part 1, Build BE since 10:05) and be-ut 40668971169
+  (build + test since 10:04) still running cold; nothing to check yet. Compression item (3) done: `m4.yml` step "Delete
+  older m4 assets caches" (after restore/save; deletes every `m4-assets-*` key except the current one once that exists;
+  `continue-on-error`; job permission `actions: write`). `m4-assets-v16` goes with the next m4 run. No patch change.
 
 ## Next steps
 
-> **Open, 2026-10-28 10:45 UTC: finish the compression item.** (1) Check BE 40668967450 and be-ut 40668971169 (series
+> **Open, 2026-10-28 10:50 UTC: finish the compression item.** (1) Check BE (both still running at 10:50; started 10:03) 40668967450 and be-ut 40668971169 (series
 > `flf41597`; cold builds, no ccache). If be-ut fails, fix 0007/0003 from its report (a missing codec would show in
 > `ReadsCompressedStreams`). If BE fails for a reason unrelated to the patch (time budget of the chained parts), re-dispatch
 > `be` once — its ccache is saved per part. (2) When both are green, dispatch `m4 checks=13` and
 > `m4 checks=1,2,3,4,5,6,7,8,9 compression=zstd` (server cadd1aca9c23 default); fix m4.py check 13 if the harness itself
 > fails (netem module, veth lookup, BytesRead parsing). Report the MB/s table (plain / netem × none / lz4 / zstd) in
-> M4-RESULTS and the milestone row. (3) Cache space: `m4-assets-v16` (3.8 GB) is obsolete since v17; with it gone
-> the BE ccache fits again — consider a step in m4.yml that deletes older `m4-assets-v*` keys (like be.yml's "Delete older
-> ccache entries").
+> M4-RESULTS and the milestone row. (3) ~~Cache space~~ done 10:50: m4.yml deletes older `m4-assets-*` keys; `m4-assets-v16` goes with the first m4
+> run of (2) — check its "Delete older m4 assets caches" step log once.
 >
 > **Maintainer, 2026-10-28: yes to result compression as a connector opt-in.** (implemented 2026-10-28, see Log; CI pending) Add a catalog property (off by default) that
 > asks the server for `arrow-compression: zstd|lz4` and decodes compressed IPC bodies; never on unless set. Test: answers
