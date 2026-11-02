@@ -118,6 +118,10 @@ jobs:
           [ -n "$avail" ] || { echo "::error::no path has its build outputs"; exit 1; }
       - name: Download m4 assets
         run: ci/m4/stack.sh assets "$WORK/m4-assets"
+      # duckdb 1.4.1 has no wheel for the runner's default Python (pip built it from source: 18 min in run 41447501206)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Python
         run: |
           pip install --quiet duckdb==1.4.1 pymysql boto3

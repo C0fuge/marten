@@ -457,6 +457,19 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > (one table per SF: correct answers, sum of warm medians, per-query table, memory; versions and commits of everything;
 > a short verdict where each path is faster and why). If the upstream native build cannot complete within the CI limits,
 > record how far it got and still publish ours vs the JDBC adapter. Then write "CONNECTOR COMPARE DONE" here and stop.
+>
+> **Progress (2026-11-02, cloud session; details `docs/CONNECTOR-COMPARE.md`):** harness done — `compare.yml` +
+> `ci/m4/compare.py` (DuckDB reference, 3 runs per query, FE/BE RSS sampling), `stack.sh` variants `SR_VARIANT=up|jdbc`,
+> `M4_SERVER_DEFAULTS=1`. Upstream builds: `up-fe` 41446749737 green (fork FE + `arrow-flight-starrocks-connector` +
+> shaded JDBC driver, artifact `up-fe-256a379552744d18`); `up-be` 41446753059 cold, chained, started 12:44 UTC (unattended;
+> re-dispatches itself after 4 parts). SF1 run 41447501206: ours 22/22 (warm sum 12.3 s), jdbc 3/22 (every DECIMAL
+> column "Datatype ... is not supported" in the 4.0 JDBC catalog). SF10 run 41451137029 (ours + jdbc, default + speed):
+> ours 22/22 (warm sums 79.98 s / 60.68 s), jdbc 3/22. **Remaining:** when `up-be` is green (artifact
+> `up-starrocks_be-*`, check STATUS-CI) run the final passes on one runner each:
+> `compare sf=1 paths=ours,up,jdbc profiles=default,speed` and `compare sf=10 paths=ours,up,jdbc profiles=default,speed`
+> (one m4-group run at a time; SF10 might need a split per profile if it gets near 6 h), then fill the Results /
+> Verdict of `docs/CONNECTOR-COMPARE.md` and write CONNECTOR COMPARE DONE. If `up-be` fails, fix only the CI side
+> (no changes to the fork's code) and record the failure there.
 
 
 > **Final server build `server-1.0.0-0e457de30f25` is in the assets** (= 1e7b43a4e0c7 + JWT fix: `FLIGHT_JWT_AUDIENCE` no longer
@@ -692,8 +705,21 @@ All parallel items P1–P5 are done (2026-10-23); until the stand reports on ite
 
 Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 default; checks 1, 6, 8 PASS on it (run
 39883591960). Checks 2–5, 7, 9 last ran on int4 (same build apart from the cluster fixes).
+- 2026-11-02 12:36–13:55 UTC (cloud session): **connector comparison started** (maintainer item). New CI: `ci/up/env.sh`
+  + `ci/up/prepare.sh` (pinned fork `4b3497def80e`, afs `6e264c10f403`, dev-env / allin1 4.0.17 digests), `up-fe.yml`,
+  `up-be.yml` / `up-be-part.yml` (own ccache prefix `ccache-up-`), `compare.yml` + `ci/m4/compare.py`; `stack.sh`:
+  `SR_VARIANT=ours|up|jdbc`, `SR_BE_MEM`, `M4_SERVER_DEFAULTS`, `M4_FLIGHT_MEM`, `M4_TPCH_DIR` (m4 defaults unchanged).
+  up-fe 41446749737 green (4 min); up-be 41446753059 cold build running since 12:44. compare SF1 41447501206 (ours 22/22
+  warm 12.30 s; jdbc 3/22, DECIMAL unsupported), SF10 41451137029 (ours 22/22 warm 79.98 s default / 60.68 s speed; jdbc
+  3/22). compare.yml now pins Python 3.12 (pip built duckdb from source, 18 min). `docs/CONNECTOR-COMPARE.md` interim.
+  No patch change.
 
 ## Open questions for the maintainer
+
+- **Connector comparison, JDBC adapter (2026-11-02, no decision needed unless you want it):** with its documented
+  properties the adapter answers only q12, q13, q16 of TPC-H (StarRocks 4.0.17 JDBC catalog: "Datatype of external table
+  column [...] is not supported" for every DECIMAL column). The comparison reports it as is. If you want a second jdbc
+  pass on a DOUBLE copy of the data (or a fixed driver build), say so.
 
 - **Server a9e43ca5e296 (2026-10-28), for the server repo (no decision needed):** the ~10 s member-loss stall is still
   there and was hit in both check-6 runs: flight1 answered GetFlightInfo UNAVAILABLE ~10 s after flight2 was stopped

@@ -5,7 +5,9 @@ Three StarRocks paths to the same Arrow Flight SQL server, on the same GitHub ru
 checked against DuckDB on the same parquet files (row count + checksum of the normalised rows; ordered queries also
 by order), peak resident memory of the FE and BE processes sampled every second.
 
-**State: harness and builds in progress — no results yet** (see `docs/STATUS.md` Log).
+**State (2026-11-02 13:50 UTC): interim — ours and jdbc measured at SF1 and SF10; the upstream native BE (`up-be`
+41446753059, cold) is still compiling, so `up` has no numbers yet.** The final tables come from one run per SF with all
+three paths (Next steps in `docs/STATUS.md`).
 
 ## Paths and versions
 
@@ -31,10 +33,29 @@ a second pass per path adds `-DresourceProfile=speed`. StarRocks: one allin1 con
   Flight server, StarRocks variant (`ci/m4/stack.sh starrocks` with `SR_VARIANT`), `ci/m4/compare.py run`.
   Results: artifact `compare-<run>`, branch `m4-results` `compare/<run>.md` + per-run JSON.
 
-## Results
+## Results (interim)
 
-(pending)
+Runs: SF1 41447501206 (default profile), SF10 41451137029 (default + speed); raw JSON and per-query tables on branch
+`m4-results`, `compare/<run>.md`. Warm sums count only the queries a path answered.
+
+| SF | run | path | correct | sum of warm medians (s) | sum of cold (s) | FE peak MB | BE peak MB |
+|---|---|---|---|---|---|---|---|
+| 1 | sf1-ours-default | ours | 22/22 | 12.30 | 16.36 | 570 | 685 |
+| 1 | sf1-jdbc-default | jdbc | 3/22 | 2.67 (q12, q13, q16 only) | 5.96 | 623 | 972 |
+| 10 | sf10-ours-default | ours | 22/22 | 79.98 | 87.69 | 690 | 3808 |
+| 10 | sf10-ours-speed | ours | 22/22 | 60.68 | 66.75 | 813 | 3313 |
+| 10 | sf10-jdbc-default | jdbc | 3/22 | 12.81 (q12, q13, q16 only) | 17.23 | 645 | 1533 |
+| 10 | sf10-jdbc-speed | jdbc | 3/22 | 11.85 (q12, q13, q16 only) | 15.18 | 761 | 1466 |
+
+Same three queries side by side at SF10 (warm median, s): q12 jdbc 4.63 / ours 2.09, q13 6.25 / 3.05, q16 1.94 / 0.63
+(default profile); the speed profile helps ours by ~24 % overall (79.98 → 60.68 s) and jdbc little.
+
+**JDBC adapter finding:** with its documented properties, StarRocks 4.0.17's JDBC catalog refuses every TPC-H table
+column of type DECIMAL at analysis ("Datatype of external table column [l_quantity] is not supported"), so 19 of 22
+queries fail (all but q12, q13, q16, which read no DECIMAL column). The driver presents itself to the PostgreSQL
+schema resolver (class name match); that resolver maps DECIMAL by the PostgreSQL type name `numeric`, which the Arrow
+Flight SQL JDBC metadata does not report — so this is a limitation of the adapter path, not of the harness.
 
 ## Verdict
 
-(pending)
+(pending the `up` numbers)
