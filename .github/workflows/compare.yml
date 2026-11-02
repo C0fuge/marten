@@ -120,7 +120,7 @@ jobs:
         run: ci/m4/stack.sh assets "$WORK/m4-assets"
       - name: Python
         run: |
-          pip install --quiet duckdb==1.4.1 pymysql pytz boto3 pyarrow
+          pip install --quiet duckdb==1.4.1 pymysql boto3
           echo "127.0.0.1 flight1 minio" | sudo tee -a /etc/hosts
       - name: TPC-H data
         run: |
