@@ -1,0 +1,308 @@
+{
+ "path": "up",
+ "label": "sf10-up-speed",
+ "version": "4.0-flight-up-4b3497d",
+ "catalog": {
+  "type": "flight",
+  "flight.uri": "grpc://flight1:32010"
+ },
+ "queries": {
+  "q01": {
+   "ok": true,
+   "times": [
+    3.129,
+    2.729,
+    2.473
+   ],
+   "cold": 3.129,
+   "warm_median": 2.601,
+   "fe_peak_mb": 612,
+   "be_peak_mb": 393,
+   "detail": ""
+  },
+  "q02": {
+   "ok": true,
+   "times": [
+    1.465,
+    0.897,
+    0.855
+   ],
+   "cold": 1.465,
+   "warm_median": 0.876,
+   "fe_peak_mb": 637,
+   "be_peak_mb": 522,
+   "detail": ""
+  },
+  "q03": {
+   "ok": true,
+   "times": [
+    5.631,
+    4.284,
+    4.106
+   ],
+   "cold": 5.631,
+   "warm_median": 4.195,
+   "fe_peak_mb": 668,
+   "be_peak_mb": 582,
+   "detail": ""
+  },
+  "q04": {
+   "ok": true,
+   "times": [
+    3.24,
+    2.217,
+    2.266
+   ],
+   "cold": 3.24,
+   "warm_median": 2.242,
+   "fe_peak_mb": 680,
+   "be_peak_mb": 539,
+   "detail": ""
+  },
+  "q05": {
+   "ok": true,
+   "times": [
+    5.553,
+    4.598,
+    4.718
+   ],
+   "cold": 5.553,
+   "warm_median": 4.658,
+   "fe_peak_mb": 704,
+   "be_peak_mb": 648,
+   "detail": ""
+  },
+  "q06": {
+   "ok": true,
+   "times": [
+    1.191,
+    1.009,
+    1.004
+   ],
+   "cold": 1.191,
+   "warm_median": 1.006,
+   "fe_peak_mb": 718,
+   "be_peak_mb": 539,
+   "detail": ""
+  },
+  "q07": {
+   "ok": true,
+   "times": [
+    5.464,
+    4.531,
+    4.523
+   ],
+   "cold": 5.464,
+   "warm_median": 4.527,
+   "fe_peak_mb": 739,
+   "be_peak_mb": 646,
+   "detail": ""
+  },
+  "q08": {
+   "ok": true,
+   "times": [
+    7.231,
+    5.48,
+    5.465
+   ],
+   "cold": 7.231,
+   "warm_median": 5.473,
+   "fe_peak_mb": 749,
+   "be_peak_mb": 635,
+   "detail": ""
+  },
+  "q09": {
+   "ok": true,
+   "times": [
+    8.313,
+    6.58,
+    6.394
+   ],
+   "cold": 8.313,
+   "warm_median": 6.487,
+   "fe_peak_mb": 760,
+   "be_peak_mb": 1219,
+   "detail": ""
+  },
+  "q10": {
+   "ok": true,
+   "times": [
+    4.981,
+    4.336,
+    4.491
+   ],
+   "cold": 4.981,
+   "warm_median": 4.413,
+   "fe_peak_mb": 757,
+   "be_peak_mb": 1469,
+   "detail": ""
+  },
+  "q11": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 1092,
+   "be_peak_mb": 951,
+   "detail": "ProgrammingError: (1064, 'Failed to plan Flight scan of partsupp: Flight server grpc://flight1:32010 request failed: Out of Memory Error: failed to allocate data of size 64.0 MiB (208.1 MiB/244.1 MiB used)')"
+  },
+  "q12": {
+   "ok": true,
+   "times": [
+    3.054,
+    2.028,
+    2.135
+   ],
+   "cold": 3.054,
+   "warm_median": 2.082,
+   "fe_peak_mb": 1112,
+   "be_peak_mb": 524,
+   "detail": ""
+  },
+  "q13": {
+   "ok": true,
+   "times": [
+    2.41,
+    2.315,
+    2.317
+   ],
+   "cold": 2.41,
+   "warm_median": 2.316,
+   "fe_peak_mb": 1112,
+   "be_peak_mb": 614,
+   "detail": ""
+  },
+  "q14": {
+   "ok": true,
+   "times": [
+    1.959,
+    1.181,
+    1.219
+   ],
+   "cold": 1.959,
+   "warm_median": 1.2,
+   "fe_peak_mb": 1093,
+   "be_peak_mb": 636,
+   "detail": ""
+  },
+  "q15": {
+   "ok": true,
+   "times": [
+    2.345,
+    2.362,
+    2.345
+   ],
+   "cold": 2.345,
+   "warm_median": 2.354,
+   "fe_peak_mb": 1118,
+   "be_peak_mb": 610,
+   "detail": ""
+  },
+  "q16": {
+   "ok": true,
+   "times": [
+    0.855,
+    0.638,
+    0.571
+   ],
+   "cold": 0.855,
+   "warm_median": 0.605,
+   "fe_peak_mb": 1125,
+   "be_peak_mb": 602,
+   "detail": ""
+  },
+  "q17": {
+   "ok": true,
+   "times": [
+    2.163,
+    1.085,
+    1.003
+   ],
+   "cold": 2.163,
+   "warm_median": 1.044,
+   "fe_peak_mb": 1121,
+   "be_peak_mb": 570,
+   "detail": ""
+  },
+  "q18": {
+   "ok": true,
+   "times": [
+    5.88,
+    5.292,
+    5.527
+   ],
+   "cold": 5.88,
+   "warm_median": 5.409,
+   "fe_peak_mb": 1127,
+   "be_peak_mb": 1516,
+   "detail": ""
+  },
+  "q19": {
+   "ok": true,
+   "times": [
+    2.983,
+    1.927,
+    1.965
+   ],
+   "cold": 2.983,
+   "warm_median": 1.946,
+   "fe_peak_mb": 1199,
+   "be_peak_mb": 847,
+   "detail": ""
+  },
+  "q20": {
+   "ok": true,
+   "times": [
+    2.375,
+    2.337,
+    2.283
+   ],
+   "cold": 2.375,
+   "warm_median": 2.31,
+   "fe_peak_mb": 1366,
+   "be_peak_mb": 586,
+   "detail": ""
+  },
+  "q21": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 1370,
+   "be_peak_mb": 570,
+   "detail": "ProgrammingError: (1064, 'Failed to plan Flight scan of lineitem: Flight server grpc://flight1:32010 request failed: Out of Memory Error: failed to allocate data of size 64.0 MiB (208.1 MiB/244.1 MiB used)')"
+  },
+  "q22": {
+   "ok": true,
+   "times": [
+    0.685,
+    0.579,
+    0.599
+   ],
+   "cold": 0.685,
+   "warm_median": 0.589,
+   "fe_peak_mb": 1186,
+   "be_peak_mb": 622,
+   "detail": ""
+  }
+ },
+ "started": "2026-11-02T15:32:56Z",
+ "tables": [
+  "customer",
+  "lineitem",
+  "nation",
+  "orders",
+  "part",
+  "partsupp",
+  "region",
+  "supplier"
+ ],
+ "setup_s": 0.57,
+ "fe_peak_mb": 1370,
+ "be_peak_mb": 1516,
+ "finished": "2026-11-02T15:36:30Z"
+}

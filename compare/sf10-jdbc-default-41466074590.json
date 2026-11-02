@@ -1,0 +1,278 @@
+{
+ "path": "jdbc",
+ "label": "sf10-jdbc-default",
+ "version": "4.0.17-818b93c",
+ "catalog": {
+  "type": "jdbc",
+  "user": "",
+  "password": "",
+  "jdbc_uri": "jdbc:arrow-flight-sql://flight1:32010/?useEncryption=0",
+  "driver_url": "file:///opt/flight-starrocks/driver.jar",
+  "driver_class": "pro.surpin.data.arrowflight.starrocks.jdbc.postgresql.FlightSqlPostgresqlDriver"
+ },
+ "queries": {
+  "q01": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 625,
+   "be_peak_mb": 385,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity] is not supported!.')"
+  },
+  "q02": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 625,
+   "be_peak_mb": 385,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [ps_supplycost] is not supported!.')"
+  },
+  "q03": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 636,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q04": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 639,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity, l_extendedprice, l_discount, l_tax] is not supported!.')"
+  },
+  "q05": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 640,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q06": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 640,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_discount] is not supported!.')"
+  },
+  "q07": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 642,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q08": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 643,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q09": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 646,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q10": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 647,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q11": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 647,
+   "be_peak_mb": 387,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [ps_supplycost] is not supported!.')"
+  },
+  "q12": {
+   "ok": true,
+   "times": [
+    8.115,
+    4.74,
+    4.774
+   ],
+   "cold": 8.115,
+   "warm_median": 4.757,
+   "fe_peak_mb": 658,
+   "be_peak_mb": 1327,
+   "detail": ""
+  },
+  "q13": {
+   "ok": true,
+   "times": [
+    6.318,
+    7.197,
+    6.899
+   ],
+   "cold": 6.318,
+   "warm_median": 7.048,
+   "fe_peak_mb": 681,
+   "be_peak_mb": 1378,
+   "detail": ""
+  },
+  "q14": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 681,
+   "be_peak_mb": 1261,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q15": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 675,
+   "be_peak_mb": 1164,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_extendedprice] is not supported!.')"
+  },
+  "q16": {
+   "ok": true,
+   "times": [
+    2.08,
+    1.979,
+    1.956
+   ],
+   "cold": 2.08,
+   "warm_median": 1.968,
+   "fe_peak_mb": 678,
+   "be_peak_mb": 1540,
+   "detail": ""
+  },
+  "q17": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 682,
+   "be_peak_mb": 1335,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity] is not supported!.')"
+  },
+  "q18": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 682,
+   "be_peak_mb": 1271,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity] is not supported!.')"
+  },
+  "q19": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 683,
+   "be_peak_mb": 1185,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity] is not supported!.')"
+  },
+  "q20": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 683,
+   "be_peak_mb": 1166,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity] is not supported!.')"
+  },
+  "q21": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 683,
+   "be_peak_mb": 1133,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [l_quantity, l_extendedprice, l_discount, l_tax] is not supported!.')"
+  },
+  "q22": {
+   "ok": false,
+   "times": [
+    null
+   ],
+   "cold": null,
+   "warm_median": null,
+   "fe_peak_mb": 684,
+   "be_peak_mb": 1133,
+   "detail": "ProgrammingError: (1064, 'Getting analyzing error. Detail message: Datatype of external table column [c_acctbal] is not supported!.')"
+  }
+ },
+ "started": "2026-11-02T15:26:35Z",
+ "tables": [
+  "customer",
+  "lineitem",
+  "nation",
+  "orders",
+  "part",
+  "partsupp",
+  "region",
+  "supplier"
+ ],
+ "setup_s": 0.38,
+ "fe_peak_mb": 684,
+ "be_peak_mb": 1540,
+ "finished": "2026-11-02T15:27:48Z"
+}
