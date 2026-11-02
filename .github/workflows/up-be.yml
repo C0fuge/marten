@@ -1,0 +1,67 @@
+# BE build of the UPSTREAM native Flight connector fork (connector comparison, docs/CONNECTOR-COMPARE.md).
+# Manual only (`up-be` in ci/dispatch.txt). Chained parts like be.yml; skipped when up-be-out-<hash> exists.
+name: up-be
+on:
+  workflow_dispatch:
+    inputs:
+      parts:
+        description: "maximum number of chained build jobs (1-4)"
+        default: "4"
+
+concurrency:
+  group: up-be
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+      skip: ${{ steps.lookup.outputs.cache-hit }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Input hash
+        id: hash
+        run: echo "hash=$(cat ci/up/env.sh ci/build-be.sh ci/ccache-g0.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Look for a cached build
+        id: lookup
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/sr-out
+          key: up-be-out-${{ steps.hash.outputs.hash }}
+          lookup-only: true
+  part1:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    uses: ./.github/workflows/up-be-part.yml
+    with: {part: 1, hash: "${{ needs.plan.outputs.hash }}"}
+  part2:
+    needs: [plan, part1]
+    if: ${{ !cancelled() && needs.part1.result == 'success' && needs.part1.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 2 }}
+    uses: ./.github/workflows/up-be-part.yml
+    with: {part: 2, hash: "${{ needs.plan.outputs.hash }}"}
+  part3:
+    needs: [plan, part2]
+    if: ${{ !cancelled() && needs.part2.result == 'success' && needs.part2.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 3 }}
+    uses: ./.github/workflows/up-be-part.yml
+    with: {part: 3, hash: "${{ needs.plan.outputs.hash }}"}
+  part4:
+    needs: [plan, part3]
+    if: ${{ !cancelled() && needs.part3.result == 'success' && needs.part3.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 4 }}
+    uses: ./.github/workflows/up-be-part.yml
+    with: {part: 4, hash: "${{ needs.plan.outputs.hash }}"}
+  redispatch:
+    needs: [plan, part4]
+    if: ${{ !cancelled() && needs.part4.result == 'success' && needs.part4.outputs.done != 'true' && fromJSON(inputs.parts || '4') >= 4 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the next run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run up-be.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"

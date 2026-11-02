@@ -1,0 +1,119 @@
+# Connector comparison (docs/CONNECTOR-COMPARE.md): FE of the UPSTREAM native Flight connector fork plus the
+# upstream JDBC adapter driver, both from the commits pinned in ci/up/env.sh. Manual only (`up-fe` in
+# ci/dispatch.txt). Output (cache up-fe-out-<hash>, artifact up-fe-<hash>):
+#   up-fe-lib.tar.zst  the fork's whole output/fe/lib + bin/start_fe.sh (replaces fe/lib of allin1 4.0.17)
+#   flight-starrocks-driver.jar  shaded JDBC driver (FlightSqlPostgresqlDriver) for stock 4.0 JDBC catalogs
+name: up-fe
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "rebuild even if an output for this input hash is cached"
+        type: boolean
+        default: false
+
+concurrency:
+  group: up-fe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Input hash
+        id: hash
+        run: echo "hash=$(cat ci/up/env.sh ci/build-fe.sh .github/workflows/up-fe.yml | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Look for a cached build
+        id: lookup
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/up-fe-out
+          key: up-fe-out-${{ steps.hash.outputs.hash }}
+          lookup-only: true
+      - name: Decide
+        id: decide
+        run: |
+          build=true
+          if [ "${{ steps.lookup.outputs.cache-hit }}" = "true" ] && [ "${{ inputs.force }}" != "true" ]; then build=false; fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+      - name: Runner setup
+        if: steps.decide.outputs.build == 'true'
+        run: ci/runner-setup.sh light
+      - name: Sources
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          ci/up/prepare.sh sr "$RUNNER_TEMP/src"
+          ci/up/prepare.sh afs "$RUNNER_TEMP/afs"
+      - name: Restore Maven repository
+        if: steps.decide.outputs.build == 'true'
+        id: m2
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/.m2/repository
+          key: up-m2-${{ steps.hash.outputs.hash }}
+          restore-keys: |
+            up-m2-
+            m2-
+      - name: Build the upstream connector jars and the FE
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          . ci/up/env.sh
+          docker pull --quiet "$DEV_IMAGE"
+          mkdir -p /home/runner/.m2/repository
+          # arrow-flight-starrocks-connector 1.0.0 (fe-core dependency of the fork) + its shaded JDBC driver
+          docker run --rm --init -v "$RUNNER_TEMP/afs:/afs" -v /home/runner/.m2:/root/.m2 -w /afs "$DEV_IMAGE" \
+            bash -c 'java -version 2>&1 | head -1; mvn -v | head -1;
+                     mvn -B -q -pl flight-starrocks -am install -DskipTests -Dcheckstyle.skip=true -Dspotbugs.skip=true'
+          docker run --rm --init --name sr-fe \
+            -v "$RUNNER_TEMP/src:/workspace" -v "$PWD/ci:/ci:ro" -v "$PWD/ci/up/env.sh:/ci/env.sh:ro" \
+            -v /home/runner/.m2:/root/.m2 \
+            -e JOBS="$(nproc)" -e STARROCKS_COMMIT_HASH="$STARROCKS_BASE_HASH" \
+            "$DEV_IMAGE" /ci/build-fe.sh
+          sudo chown -R "$(id -u):$(id -g)" /home/runner/.m2 "$RUNNER_TEMP/src" "$RUNNER_TEMP/afs" || true
+          du -sh /home/runner/.m2/repository
+      - name: Save Maven repository
+        if: always() && steps.decide.outputs.build == 'true' && steps.m2.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/.m2/repository
+          key: up-m2-${{ steps.hash.outputs.hash }}
+      - name: Package
+        if: steps.decide.outputs.build == 'true'
+        run: |
+          . ci/up/env.sh
+          out=/home/runner/up-fe-out; mkdir -p "$out"
+          tar -C "$RUNNER_TEMP/src/output/fe" -cf - lib bin/start_fe.sh | zstd -q -T0 -10 -o "$out/up-fe-lib.tar.zst"
+          cp "$RUNNER_TEMP"/afs/flight-starrocks/target/arrow-flight-starrocks-connector-1.0.0-starrocks-driver.jar \
+             "$out/flight-starrocks-driver.jar"
+          cd "$out"
+          {
+            echo "hash=${{ steps.hash.outputs.hash }}"
+            echo "upstream=$UP_REPO $UP_COMMIT"
+            echo "afs=$AFS_REPO $AFS_COMMIT"
+            echo "repo_commit=$GITHUB_SHA"
+            echo "run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "built=$(date -u +%FT%TZ)"
+            ls "$RUNNER_TEMP/src/output/fe/lib" | grep -E '^(starrocks-fe|fe-core|arrow-flight-starrocks)' | sed 's/^/lib: /'
+            sha256sum *.zst *.jar
+          } > up-fe-build-info.txt
+          cat up-fe-build-info.txt; ls -la
+      - name: Save FE output cache
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/up-fe-out
+          key: up-fe-out-${{ steps.hash.outputs.hash }}
+      - name: Upload
+        if: steps.decide.outputs.build == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: up-fe-${{ steps.hash.outputs.hash }}
+          path: /home/runner/up-fe-out/
+          compression-level: 0
+          retention-days: 14
