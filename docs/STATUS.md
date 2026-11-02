@@ -446,6 +446,17 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-03 00:45 - IMPROVEMENTS from the connector comparison (take them first, in order).**
+> 1. **`avg()` aggregate pushdown** (as `sum` + `count`, merged in the BE / FE like the other partial aggregates):
+>    q01 SF10 6.1 s vs upstream 2.7 s because ours streams the filtered `lineitem` into the BE. Test: q01 answer equal,
+>    EXPLAIN shows the aggregate in the remote SQL.
+> 2. **Join-key filter pushdown into the remote SQL**: when a runtime filter (IN set or min/max) for a scan of the Flight
+>    catalog is ready before the scan starts, add it to the pushed SQL (bounded IN list up to N keys, else a range).
+>    Upstream sends join bloom filters and wins q17 (1.1 vs 3.2 s) and q19 (2.0 vs 3.4 s) at SF10.
+> 3. Re-run `compare.yml` (ours vs up, SF1 + SF10, default + speed) against the newest kestrel pre-release in
+>    `m4-assets` and update `docs/CONNECTOR-COMPARE.md` (keep the old numbers as "before"). Then "IMPROVEMENTS DONE".
+
+
 > **Maintainer, 2026-11-02 - CONNECTOR COMPARISON (take it first; finish mode lifted for this item only).** Compare the
 > StarRocks paths to the same Flight server, on the same runner, TPC-H SF1 and SF10, answers checked (rows + checksum
 > against the in-process DuckDB reference the m4 workflow already uses), timings per query (cold + 2 warm, medians), FE/BE
