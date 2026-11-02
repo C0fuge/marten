@@ -52,10 +52,12 @@ Same three queries side by side at SF10 (warm median, s): q12 jdbc 4.63 / ours 2
 
 **JDBC adapter finding:** with its documented properties, StarRocks 4.0.17's JDBC catalog refuses every TPC-H table
 column of type DECIMAL at analysis ("Datatype of external table column [l_quantity] is not supported"), so 19 of 22
-queries fail (all but q12, q13, q16, which read no DECIMAL column). The driver presents itself to the PostgreSQL
-schema resolver (class name match); a likely cause (not verified in the StarRocks sources) is that the resolver maps
-DECIMAL by the PostgreSQL type name `numeric`, which the Arrow Flight SQL JDBC metadata does not report. Either way it
-is the adapter path's behaviour with its documented setup, not a harness error (the same tables pass for ours).
+queries fail (all but q12, q13, q16, which read no DECIMAL column). Cause (checked in the StarRocks 4.0.17 sources,
+`fe/fe-core/.../connector/jdbc/PostgresSchemaResolver.java`, `convertColumnType`): the driver presents itself to the
+PostgreSQL schema resolver (class name match), which maps only `java.sql.Types.NUMERIC` to DECIMAL; the Arrow Flight
+SQL JDBC metadata reports decimal128 columns as `Types.DECIMAL`, which falls to `default` → `UNKNOWN_TYPE`, and the
+analyzer refuses the column. It is the adapter path's behaviour with its documented setup (a fix belongs in the
+driver's metadata, reporting NUMERIC, or in the resolver), not a harness error (the same tables pass for ours).
 
 ## Verdict
 
