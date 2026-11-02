@@ -439,6 +439,26 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-02 - CONNECTOR COMPARISON (take it first; finish mode lifted for this item only).** Compare the
+> StarRocks paths to the same Flight server, on the same runner, TPC-H SF1 and SF10, answers checked (rows + checksum
+> against the in-process DuckDB reference the m4 workflow already uses), timings per query (cold + 2 warm, medians), FE/BE
+> peak memory:
+> - **ours**: this repo's native `flight` catalog on 4.1.4 (the default build of m4);
+> - **upstream native**: `VadimSurpin/starrocks` branch `feat/flight-connector` (30 commits on `branch-4.0`, last
+>   2026-10-23: FE catalog + BE C++ scanner, bloom-filter / LIKE / aggregate pushdown, table statistics). Build it with
+>   this repo's BE/FE workflows (dev-env image, chained <6 h jobs, ccache; the base differs, so the first build is cold -
+>   let it chain unattended). Use its documented catalog properties (read its fe-core flight catalog code / docs);
+> - **upstream JDBC adapter**: stock StarRocks 4.0 (official image) + the JDBC catalog with
+>   `pro.surpin.data.arrowflight.starrocks.jdbc.postgresql.FlightSqlPostgresqlDriver` built from
+>   `VadimSurpin/arrow-flight-server` branch `feat/starrocks-native-integration` module `flight-starrocks` (shaded jar,
+>   see its README: `driver_url`, `jdbc:arrow-flight-sql://` uri).
+> Server for all three: kestrel pre-release `server-1.0.0-f06b5834e76e` (in `m4-assets`), default settings, plus one
+> extra pass of each connector against the same server with `-DresourceProfile=speed`. Output: `docs/CONNECTOR-COMPARE.md`
+> (one table per SF: correct answers, sum of warm medians, per-query table, memory; versions and commits of everything;
+> a short verdict where each path is faster and why). If the upstream native build cannot complete within the CI limits,
+> record how far it got and still publish ours vs the JDBC adapter. Then write "CONNECTOR COMPARE DONE" here and stop.
+
+
 > **Final server build `server-1.0.0-0e457de30f25` is in the assets** (= 1e7b43a4e0c7 + JWT fix: `FLIGHT_JWT_AUDIENCE` no longer
 > fails at start with an NPE) (2026-10-29, local coordinator, finish mode; jar,
 > plugins tar, libs tar, `flight-auth-...tar.zst` (LDAP/JWT providers), lz4 codec jar + merged `SHA256SUMS`). Contains every
