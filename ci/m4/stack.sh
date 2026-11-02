@@ -154,7 +154,7 @@ minio)
     [ -n "$started" ] || { echo "no MinIO image worked" >&2; exit 1; }
     echo "MinIO: $started"
     # upload with boto3 (the mc image is gone as well)
-    MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD python3 - "$A/x/sf1/tpch" "$REPO_ROOT/tests/m4/data/types" <<'PY'
+    MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD python3 - "${M4_TPCH_DIR:-$A/x/sf1/tpch}" "$REPO_ROOT/tests/m4/data/types" <<'PY'
 import os, sys, time, boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -279,15 +279,18 @@ flight)
     docker rm -f "$NAME" >/dev/null 2>&1 || true
     for v in $(compgen -e | grep '^FLIGHT_' || true); do extra_env+=(-e "$v"); done
     [ -n "${FLIGHT_AUTH_PROVIDER:-}${FLIGHT_TLS_CERT:-}" ] || extra_env+=(-e FLIGHT_ALLOW_INSECURE=true)
-    docker run -d --name "$NAME" --hostname "$NAME" --network m4 --memory 4g -v "$A/x:/srv:ro" -w /tmp \
+    # M4_SERVER_DEFAULTS=1 (connector comparison): none of the m4 tuning flags below, the server's own defaults
+    tuning="-DioParallelism=4 -DduckDbMemoryLimit=1GB -DduckDbThreads=2 -DflightBackpressureThresholdBytes=16777216"
+    heap="-Xmx2g -XX:MaxDirectMemorySize=1g"
+    [ -z "${M4_SERVER_DEFAULTS:-}" ] || tuning= heap=
+    docker run -d --name "$NAME" --hostname "$NAME" --network m4 --memory "${M4_FLIGHT_MEM:-4g}" -v "$A/x:/srv:ro" -w /tmp \
         -e LANG=C.UTF-8 -e MALLOC_ARENA_MAX=4 \
         -e FLIGHT_S3_ACCESS_KEY="$MINIO_ROOT_USER" -e FLIGHT_S3_SECRET_KEY="$MINIO_ROOT_PASSWORD" "${extra_env[@]}" \
         "$JDK_IMAGE" java --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED \
         --add-opens java.base/java.nio=ALL-UNNAMED -Darrow.enable_unsafe_memory_access=true -DmetricsEnabled=false \
         -DdataDir=$M4_DATA_DIR -Ds3Endpoint=http://minio:9000 $M4_STORE_OPTS -DduckDbHttpfsExtension=$M4_HTTPFS \
         ${M4_PLUGINS_DIR:+-Darrowflight.plugins.dir=$M4_PLUGINS_DIR} \
-        -DioParallelism=4 -DduckDbMemoryLimit=1GB -DduckDbThreads=2 -DflightBackpressureThresholdBytes=16777216 \
-        ${FLIGHT_JAVA_OPTS:-} -Xmx2g -XX:MaxDirectMemorySize=1g \
+        $tuning ${FLIGHT_JAVA_OPTS:-} $heap \
         -cp "/srv/server.jar:${M4_LIBS:-/srv/libs}/*" pro.surpin.data.arrowflight.server.HadoopArrowFlightServer \
         --localhost "$NAME" --hosts "$HOSTS" >/dev/null
     [ -z "${M4_NO_WAIT:-}" ] || exit 0
@@ -306,21 +309,40 @@ wait)
     docker logs "$NAME" 2>&1 | tail -80; echo "flight server $NAME did not start" >&2; exit 1
     ;;
 starrocks)
-    FE_OUT=$2 BE_OUT=$3; net
+    # SR_VARIANT (connector comparison, docs/CONNECTOR-COMPARE.md): ours (default) = 4.1.4 + this series' FE jars and
+    # BE; up = allin1 4.0.17 with fe/lib + bin/start_fe.sh replaced by the upstream fork's (FE_OUT/up-fe-lib.tar.zst)
+    # and its BE; jdbc = stock allin1 4.0.17 + the upstream JDBC adapter driver (FE_OUT/flight-starrocks-driver.jar)
+    # on the FE classpath and at /opt/flight-starrocks/driver.jar (BE_OUT unused). SR_BE_MEM overrides mem_limit.
+    FE_OUT=$2 BE_OUT=${3:-}; net
+    variant=${SR_VARIANT:-ours}
+    [ "$variant" = ours ] || SR_IMAGE=$(. "$REPO_ROOT/ci/up/env.sh"; echo "$UP_SR_IMAGE")
     B=$(mktemp -d); mkdir -p "$B/fe-jars"
-    cp "$FE_OUT"/*.jar "$B/fe-jars/"
-    zstd -q -d "$BE_OUT/starrocks_be.zst" -o "$B/starrocks_be" && chmod 755 "$B/starrocks_be"
+    case "$variant" in
+    ours) cp "$FE_OUT"/*.jar "$B/fe-jars/" ;;
+    up) mkdir -p "$B/fe-up" && zstd -q -d -c "$FE_OUT/up-fe-lib.tar.zst" | tar -C "$B/fe-up" -xf - ;;
+    jdbc) cp "$FE_OUT/flight-starrocks-driver.jar" "$B/fe-jars/" ;;
+    *) echo "SR_VARIANT must be ours, up or jdbc" >&2; exit 2 ;;
+    esac
+    [ "$variant" = jdbc ] || { zstd -q -d "$BE_OUT/starrocks_be.zst" -o "$B/starrocks_be" && chmod 755 "$B/starrocks_be"; }
     cp "$REPO_ROOT/tests/m4/starrocks/fe.conf" "$REPO_ROOT/tests/m4/starrocks/be.conf" "$B/"
+    [ -z "${SR_BE_MEM:-}" ] || sed -i "s/^mem_limit = .*/mem_limit = $SR_BE_MEM/" "$B/be.conf"
     docker pull -q "$SR_IMAGE"
     # The paths of the allin1 image are assumed by docs/INSTALL.md §2a; fail loudly if they moved.
     docker run --rm --entrypoint sh "$SR_IMAGE" -c "ls $SR_HOME/fe/lib/starrocks-fe.jar $SR_HOME/be/lib/starrocks_be $SR_HOME/fe/conf/fe.conf $SR_HOME/be/conf/be.conf"
-    cat > "$B/Dockerfile" <<EOF
-FROM $SR_IMAGE
-COPY fe-jars/ $SR_HOME/fe/lib/
-COPY starrocks_be $SR_HOME/be/lib/starrocks_be
-COPY fe.conf $SR_HOME/fe/conf/fe.conf
-COPY be.conf $SR_HOME/be/conf/be.conf
-EOF
+    {
+        echo "FROM $SR_IMAGE"
+        case "$variant" in
+        ours) echo "COPY fe-jars/ $SR_HOME/fe/lib/" ;;
+        up) echo "RUN rm -rf $SR_HOME/fe/lib"
+            echo "COPY fe-up/lib/ $SR_HOME/fe/lib/"
+            echo "COPY fe-up/bin/start_fe.sh $SR_HOME/fe/bin/start_fe.sh" ;;
+        jdbc) echo "COPY fe-jars/flight-starrocks-driver.jar $SR_HOME/fe/lib/flight-starrocks-driver.jar"
+              echo "COPY fe-jars/flight-starrocks-driver.jar /opt/flight-starrocks/driver.jar" ;;
+        esac
+        [ "$variant" = jdbc ] || echo "COPY starrocks_be $SR_HOME/be/lib/starrocks_be"
+        echo "COPY fe.conf $SR_HOME/fe/conf/fe.conf"
+        echo "COPY be.conf $SR_HOME/be/conf/be.conf"
+    } > "$B/Dockerfile"
     docker build -q -t starrocks-m4 "$B"
     rm -rf "$B"
     docker run -d --name sr --network m4 -p 9030:9030 -p 8030:8030 -p 8040:8040 starrocks-m4 >/dev/null
