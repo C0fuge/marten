@@ -6,7 +6,7 @@ checked against DuckDB on the same parquet files (row count + checksum of the no
 by order), peak resident memory of the FE and BE processes sampled every second.
 
 
-**State (2026-11-03 07:50 UTC): join-key fix measured (SF10 41593206366), see "After the join-key fix"; first "after" pass (SF1 41580201961, SF10 41582285095) in "After the improvements".** Before (2026-11-02 15:45 UTC): Final runs: SF1 41466070831, SF10 41466074590 (all three paths, default
+**State (2026-11-03 09:55 UTC): IN list up to 50 000 keys measured (SF10 41606943229), see "After the larger IN list"; join-key fix (SF10 41593206366, SF1 41598906259) in "After the join-key fix"; first "after" pass (SF1 41580201961, SF10 41582285095) in "After the improvements".** Before (2026-11-02 15:45 UTC): Final runs: SF1 41466070831, SF10 41466074590 (all three paths, default
 and speed profile, one runner each, consecutive). Interim runs 41447501206 / 41451137029 (ours + jdbc only) agree with
 them within ~1 %.
 
@@ -34,6 +34,32 @@ a second pass per path adds `-DresourceProfile=speed`. StarRocks: one allin1 con
   Flight server, StarRocks variant (`ci/m4/stack.sh starrocks` with `SR_VARIANT`), `ci/m4/compare.py run`.
   Results: artifact `compare-<run>`, branch `m4-results` `compare/<run>.md` + per-run JSON.
 
+
+## After the larger IN list (series `4a9848e-fl1eb792`, 2026-11-03)
+
+Join-key IN list up to 50 000 keys (default and maximum of `flight.pushdown.join_keys`, was 10 000). SF10 run
+**41606943229** (ours vs up, default + speed, server `f06b5834e76e`; FE 41605517022, BE 41605520176, m4 41606940223
+checks 1–9 PASS). q19's lineitem scan now carries an IN list of ~21 600 `l_partkey` values (REMOTE SQL in the run JSON,
+183 kB of SQL).
+
+| run | correct | ours warm, common 20 (s) | up warm, common 20 (s) | ours / up | after join-key fix | 1st after | before |
+|---|---|---|---|---|---|---|---|
+| SF10 default | ours 22/22, up 20/22 | 94.91 (cold 105.57) | 82.69 (cold 100.15) | **1.15** | 1.14 | 1.22 | 1.18 |
+| SF10 speed | ours 22/22, up 20/22 | 73.38 (cold 79.79) | 79.03 (cold 96.06) | **0.93** | 0.97 | 0.99 | 0.95 |
+
+| q (SF10 default, warm s) | ours | up | ours / up | after join-key fix | before |
+|---|---|---|---|---|---|
+| q01 | 4.11 | 3.66 | 1.12 | 1.12 | 2.28 |
+| q12 | 2.72 | 2.85 | 0.95 | 1.02 | 0.89 |
+| q14 | 1.85 | 1.74 | 1.06 | 1.21 | 0.98 |
+| q17 | 1.50 | 1.67 | 0.90 | 1.04 | 2.82 |
+| q19 | 2.89 | 2.91 | **0.99** | 1.62 | 1.67 |
+
+All five queries the improvements were about (q01, q12, q14, q17, q19) are now at parity with up at SF10. The
+remaining default-profile gap is elsewhere and is a server-profile effect, not a pushdown one: ours with the server's
+default profile is much slower than ours with `speed` on the join-heavy queries (q03 7.94 vs 4.88 s, q04 5.50 vs 2.93,
+q05 8.97 vs 5.51, q07 7.55 vs 4.08, q08 10.40 vs 6.68), while up barely changes between the profiles (its scans are
+fewer / smaller per query). With `speed` ours is ahead overall (0.93).
 
 ## After the join-key fix (series `4a9848e-fla21c2a`, 2026-11-03)
 
