@@ -6,7 +6,7 @@ checked against DuckDB on the same parquet files (row count + checksum of the no
 by order), peak resident memory of the FE and BE processes sampled every second.
 
 
-**State (2026-11-03 05:55 UTC): "after" pass done (SF1 41580201961, SF10 41582285095), see "After the improvements".** Before (2026-11-02 15:45 UTC): Final runs: SF1 41466070831, SF10 41466074590 (all three paths, default
+**State (2026-11-03 07:50 UTC): join-key fix measured (SF10 41593206366), see "After the join-key fix"; first "after" pass (SF1 41580201961, SF10 41582285095) in "After the improvements".** Before (2026-11-02 15:45 UTC): Final runs: SF1 41466070831, SF10 41466074590 (all three paths, default
 and speed profile, one runner each, consecutive). Interim runs 41447501206 / 41451137029 (ours + jdbc only) agree with
 them within ~1 %.
 
@@ -34,6 +34,35 @@ a second pass per path adds `-DresourceProfile=speed`. StarRocks: one allin1 con
   Flight server, StarRocks variant (`ci/m4/stack.sh starrocks` with `SR_VARIANT`), `ci/m4/compare.py run`.
   Results: artifact `compare-<run>`, branch `m4-results` `compare/<run>.md` + per-run JSON.
 
+
+## After the join-key fix (series `4a9848e-fla21c2a`, 2026-11-03)
+
+`FlightJoinKeyPushdownRule` now runs the key query only when the source table is smaller than the target (cached row
+counts) and pushes a key range only when it leaves out ≥ 10 % of the target column's min/max (STATUS Log 2026-11-03
+06:40). SF10 run **41593206366** (ours vs up, default + speed, server `f06b5834e76e`; FE 41591877770, BE 41591880762,
+m4 41593203647 checks 1–9 PASS). This runner was again slower (up common-20 warm 56.2 → 81.0 s), so compare the
+ours / up ratio within the run.
+
+| run | correct | ours warm, common 20 (s) | up warm, common 20 (s) | ours / up | 1st after | before |
+|---|---|---|---|---|---|---|
+| SF10 default | ours 22/22, up 20/22 | 92.30 (cold 100.85) | 80.96 (cold 98.46) | **1.14** | 1.22 | 1.18 |
+| SF10 speed | ours 22/22, up 20/22 | 75.67 (cold 80.34) | 77.97 (cold 96.66) | **0.97** | 0.99 | 0.95 |
+
+Peak memory (MB, FE / BE): ours default 688 / 3295, speed 746 / 3726; up default 1182 / 2290, speed 1523 / 2236.
+
+| q (SF10 default, warm s) | ours | up | ours / up | 1st after ours / up | before ours / up |
+|---|---|---|---|---|---|
+| q01 | 4.49 | 4.01 | 1.12 | 1.03 | 2.28 |
+| q12 | 3.01 | 2.95 | **1.02** | 2.16 | 0.89 |
+| q14 | 2.04 | 1.68 | **1.21** | 2.12 | 0.98 |
+| q17 | 1.57 | 1.51 | 1.04 | 0.97 | 2.82 |
+| q19 | 4.63 | 2.85 | 1.62 | 1.67 | 1.67 |
+
+q12 is back to parity; q14 lost most of the regression (no key query any more by construction; the rest of the gap
+vs. before, 1.21 vs 0.98, is not explained yet — runner noise or the slower runner hitting the BE join; check in the
+next run's REMOTE SQL dump); q01 / q17 keep their gains. q19 is still the largest single gap
+(STATUS Next steps (b); `compare.py` now records the REMOTE SQL of q12/q14/q17/q19 for path ours in the run JSON and
+report). SF1 re-run: STATUS Log.
 
 ## After the improvements (series `4a9848e-flded1b0`, 2026-11-03)
 

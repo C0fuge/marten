@@ -1,6 +1,5 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
 # At most two m4 requests per push: the m4 concurrency group keeps one running and one pending run (a third cancels the second).
-# 2026-11-03 07:00: series fla21c2a (FE 41591877770, BE 41591880762): m4 S3 checks 1-9 (3: new 2.15 q14 shape), then compare SF10 ours vs up
-m4 checks=1,2,3,4,5,6,7,8,9
-compare sf=10 paths=ours,up profiles=default,speed
+# 2026-11-03 07:55: series fla21c2a (m4 41593203647 green, SF10 41593206366 done): compare SF1 ours vs up (with the new REMOTE SQL dump)
+compare sf=1 paths=ours,up profiles=default,speed
