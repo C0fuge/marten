@@ -468,16 +468,19 @@ CASES3 = [
     ("2.3", "SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM {c}.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2",
      ['GROUP BY "l_returnflag", "l_linestatus"', "__flight_agg_0"], [], "rows", []),
     ("2.4", "SELECT DISTINCT n_regionkey FROM {c}.tpch.nation", ['GROUP BY "n_regionkey"'], [], "rows", []),
-    ("2.5", "SELECT avg(l_quantity) FROM {c}.tpch.lineitem", [], ["__flight_agg", "avg("], "rows", []),
+    ("2.5", "SELECT avg(l_quantity) FROM {c}.tpch.lineitem", ['"__flight_agg_0"', 'count("l_quantity")'], ["avg("], "rows", []),
     ("2.6", "SELECT count(DISTINCT l_suppkey) FROM {c}.tpch.lineitem", [], ["__flight_agg"], "rows", []),
     ("2.7", "SELECT o_orderpriority, count(*) FROM {c}.tpch.orders WHERE o_comment LIKE " + LIKE_SR + " GROUP BY 1",
      [], ["__flight_agg"], "rows", []),
     ("2.8", "SELECT count(*) FROM {c}.tpch.nation WHERE n_nationkey < 0", [], [], "rows", []),
     ("2.9", "SELECT l_returnflag, count(*) c FROM {c}.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000", ["__flight_agg"], [], "rows", []),
+    # TPC-H q01 shape: avg() is pushed as a remote sum + count (connector comparison, 2026-11-03)
+    ("2.12", "SELECT l_returnflag, l_linestatus, sum(l_quantity), sum(l_extendedprice * (1 - l_discount)), avg(l_quantity), avg(l_extendedprice), avg(l_discount), count(*) FROM {c}.tpch.lineitem WHERE l_shipdate <= DATE '1998-09-02' GROUP BY 1, 2 ORDER BY 1, 2",
+     ['GROUP BY "l_returnflag", "l_linestatus"', 'count("l_discount")', "DATE '1998-09-02'"], ["avg("], "rows", []),
     ("2.10", "SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM {c}.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2",
      [], ["__flight_agg"], "rows", ["flight_aggregate_pushdown = false"]),
 ]
-BOTH_MODES = {"2.1", "2.2", "2.3", "2.4", "2.9"}
+BOTH_MODES = {"2.1", "2.2", "2.3", "2.4", "2.5", "2.9", "2.12"}
 
 
 def make_catalogs(conn, args):
