@@ -8,28 +8,28 @@ Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, FlightAggregat
 count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, statistics, EXPLAIN, FlightScanNode
 (remote SQL, endpoint scan ranges), session variables flight_filter_pushdown / flight_aggregate_pushdown.
 ---
- .../com/starrocks/planner/FlightScanNode.java | 313 ++++++++++++++++++
+ .../com/starrocks/planner/FlightScanNode.java | 313 +++++++++++++++
  .../com/starrocks/qe/SessionVariable.java     |  25 ++
- .../main/java/com/starrocks/sql/Explain.java  |  20 ++
+ .../main/java/com/starrocks/sql/Explain.java  |  20 +
  .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
  .../sql/optimizer/OptExpressionVisitor.java   |   4 +
  .../sql/optimizer/QueryOptimizer.java         |   3 +
  .../sql/optimizer/operator/OperatorType.java  |   2 +
  .../optimizer/operator/OperatorVisitor.java   |  10 +
- .../logical/LogicalFlightScanOperator.java    | 100 ++++++
+ .../logical/LogicalFlightScanOperator.java    | 100 +++++
  .../operator/pattern/MultiOpPattern.java      |   1 +
  .../physical/PhysicalFlightScanOperator.java  |  67 ++++
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
  .../sql/optimizer/rule/RuleType.java          |   2 +
- .../FlightScanImplementationRule.java         |  38 +++
- .../FlightAggregationPushdownRule.java        | 271 +++++++++++++++
+ .../FlightScanImplementationRule.java         |  38 ++
+ .../FlightAggregationPushdownRule.java        | 355 ++++++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |  27 ++
- .../sql/plan/PlanFragmentBuilder.java         |  57 +++-
- 21 files changed, 1003 insertions(+), 2 deletions(-)
+ .../sql/plan/PlanFragmentBuilder.java         |  57 ++-
+ 21 files changed, 1087 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -834,10 +834,10 @@ index 00000000..5a9aeab3
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
 new file mode 100644
-index 00000000..113a9418
+index 00000000..5e9c9f74
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
-@@ -0,0 +1,271 @@
+@@ -0,0 +1,355 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -857,6 +857,7 @@ index 00000000..113a9418
 +import com.google.common.collect.ImmutableSet;
 +import com.starrocks.catalog.Column;
 +import com.starrocks.catalog.FlightTable;
++import com.starrocks.catalog.Function;
 +import com.starrocks.catalog.FunctionSet;
 +import com.starrocks.connector.flight.FlightAggregationPushdown;
 +import com.starrocks.connector.flight.FlightConnector;
@@ -876,9 +877,11 @@ index 00000000..113a9418
 +import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ScalarOperatorUtil;
 +import com.starrocks.sql.optimizer.rewrite.ReplaceColumnRefRewriter;
 +import com.starrocks.sql.optimizer.rule.RuleType;
 +import com.starrocks.sql.optimizer.rule.transformation.materialization.common.AggregateFunctionRollupUtils;
++import com.starrocks.sql.optimizer.rule.transformation.materialization.common.AggregatePushDownUtils;
 +import com.starrocks.type.IntegerType;
 +import com.starrocks.type.Type;
 +
@@ -891,7 +894,7 @@ index 00000000..113a9418
 +import java.util.Set;
 +
 +/**
-+ * Pushes a GROUP BY aggregation (count, sum, min, max) over an Arrow Flight scan to the Flight SQL server:
++ * Pushes a GROUP BY aggregation (count, sum, min, max, avg) over an Arrow Flight scan to the Flight SQL server:
 + * <pre>
 + *   Agg(g, count(*), sum(x)) -> FlightScan(g, x, predicate)
 + * =>
@@ -904,7 +907,8 @@ index 00000000..113a9418
 + * to the StarRocks partial type for decimal and floating-point sums and for min/max; an integer sum (the server
 + * widens it to HUGEINT) needs a cast around it and is only pushed in result mode {@code complete}.
 + * Every endpoint returns partial groups; the StarRocks aggregation merges them (count -> sum, sum -> sum,
-+ * min -> min, max -> max). The rule only fires when every conjunct of the scan predicate, every grouping key and
++ * min -> min, max -> max; avg(x) is pushed as sum(x) and count(x) and becomes their quotient, as in the
++ * materialized-view rewrite). The rule only fires when every conjunct of the scan predicate, every grouping key and
 + * every aggregate argument can be rendered exactly; otherwise the plan is left unchanged.
 + * Runs once after the projections were merged into their operators (see QueryOptimizer).
 + */
@@ -912,7 +916,7 @@ index 00000000..113a9418
 +    public static final FlightAggregationPushdownRule INSTANCE = new FlightAggregationPushdownRule();
 +
 +    private static final Set<String> FUNCTIONS =
-+            ImmutableSet.of(FunctionSet.COUNT, FunctionSet.SUM, FunctionSet.MIN, FunctionSet.MAX);
++            ImmutableSet.of(FunctionSet.COUNT, FunctionSet.SUM, FunctionSet.MIN, FunctionSet.MAX, FunctionSet.AVG);
 +
 +    private FlightAggregationPushdownRule() {
 +        super(RuleType.TF_FLIGHT_AGGREGATION_PUSHDOWN, Pattern.create(OperatorType.LOGICAL_AGGR)
@@ -998,10 +1002,12 @@ index 00000000..113a9418
 +
 +        Map<String, String> remoteAggregates = new LinkedHashMap<>();
 +        Map<ColumnRefOperator, CallOperator> newAggregations = new HashMap<>();
-+        // count outputs: count -> sum(partial) is nullable, and without GROUP BY it must be coalesced to 0
++        // count outputs: count -> sum(partial) is nullable, and without GROUP BY it must be coalesced to 0;
++        // avg outputs: sum(partial sums) / sum(partial counts)
 +        Map<ColumnRefOperator, ScalarOperator> replaced = new HashMap<>();
 +        boolean hasGroupBy = !agg.getGroupingKeys().isEmpty();
-+        int i = 0;
++        Partials partials = new Partials(table, factory, relationId, cols,
++                props != null && "complete".equals(props.getResultMode()), newScanColumns, remoteAggregates);
 +        for (Map.Entry<ColumnRefOperator, CallOperator> e : agg.getAggregations().entrySet()) {
 +            CallOperator call = e.getValue();
 +            String fn = call.getFnName();
@@ -1012,26 +1018,33 @@ index 00000000..113a9418
 +            if (arg != null && resolver != null) {
 +                arg = resolver.rewrite(arg);
 +            }
-+            String remote = renderAggregate(fn, arg, call.getType(), cols,
-+                    props != null && "complete".equals(props.getResultMode()));
-+            if (remote == null) {
-+                return Collections.emptyList();
++            if (FunctionSet.AVG.equals(fn)) {
++                // avg(x) = sum(x) / count(x), both computed remotely as partial aggregates (q01: the filtered
++                // lineitem no longer streams into the BE)
++                CallOperator[] sumCount = avgAsSumCount(call);
++                if (arg == null || sumCount == null) {
++                    return Collections.emptyList();
++                }
++                CallOperator sumRollup = partials.add(sumCount[0], arg);
++                CallOperator countRollup = partials.add(sumCount[1], arg);
++                if (sumRollup == null || countRollup == null) {
++                    return Collections.emptyList();
++                }
++                ColumnRefOperator sumMerged = factory.create("avg_sum_" + e.getKey().getId(),
++                        sumRollup.getType(), true);
++                ColumnRefOperator countMerged = factory.create("avg_count_" + e.getKey().getId(),
++                        countRollup.getType(), true);
++                newAggregations.put(sumMerged, sumRollup);
++                newAggregations.put(countMerged, countRollup);
++                replaced.put(e.getKey(), AggregatePushDownUtils.createAvgBySumCount(call, sumMerged, countMerged));
++                continue;
 +            }
-+            String name = FlightAggregationPushdown.SYNTHETIC_PREFIX + i++;
-+            Type type = FunctionSet.COUNT.equals(fn) ? IntegerType.BIGINT : call.getType();
-+            Column column = new Column(name, type, true);
-+            ColumnRefOperator partial = factory.create(name, type, true);
-+            factory.updateColumnToRelationIds(partial.getId(), relationId);
-+            factory.updateColumnRefToColumns(partial, column, table);
-+            newScanColumns.put(partial, column);
-+            remoteAggregates.put(name, remote);
-+
-+            CallOperator rollup = AggregateFunctionRollupUtils.getRollupAggregateFunc(call, partial, false);
++            CallOperator rollup = partials.add(call, arg);
 +            if (rollup == null) {
 +                return Collections.emptyList();
 +            }
 +            if (FunctionSet.COUNT.equals(fn)) {
-+                ColumnRefOperator merged = factory.create("sum_" + name, rollup.getType(), true);
++                ColumnRefOperator merged = factory.create("sum_" + partials.lastName, rollup.getType(), true);
 +                newAggregations.put(merged, rollup);
 +                replaced.put(e.getKey(), AggregateFunctionRollupUtils.genRollupProject(call, merged, hasGroupBy));
 +            } else {
@@ -1066,6 +1079,77 @@ index 00000000..113a9418
 +            }
 +        }
 +        return Collections.singletonList(OptExpression.create(builder.build(), OptExpression.create(newScan)));
++    }
++
++    /**
++     * The sum and count calls of {@code avg(x)} with the types StarRocks gives them (sum of DECIMAL(p,s) is
++     * DECIMAL(38,s)), or null when the argument type has no such functions.
++     */
++    @VisibleForTesting
++    static CallOperator[] avgAsSumCount(CallOperator avg) {
++        if (avg.getFunction() == null || avg.getFunction().getArgs().length != 1) {
++            return null;
++        }
++        Type[] argTypes = avg.getFunction().getArgs();
++        if (!argTypes[0].isNumericType() && !argTypes[0].isDecimalOfAnyVersion()) {
++            return null;
++        }
++        Function sumFn;
++        try {
++            sumFn = ScalarOperatorUtil.findSumFn(argTypes);
++        } catch (IllegalStateException ex) {
++            return null;
++        }
++        Function countFn = ScalarOperatorUtil.findArithmeticFunction(argTypes, FunctionSet.COUNT);
++        if (sumFn == null || countFn == null) {
++            return null;
++        }
++        return new CallOperator[] {
++                new CallOperator(FunctionSet.SUM, sumFn.getReturnType(), avg.getArguments(), sumFn),
++                new CallOperator(FunctionSet.COUNT, IntegerType.BIGINT, avg.getArguments(), countFn)};
++    }
++
++    /** Adds remote partial aggregates as synthetic scan columns and returns the StarRocks merge aggregate. */
++    private static final class Partials {
++        private final FlightTable table;
++        private final ColumnRefFactory factory;
++        private final int relationId;
++        private final FlightSqlRenderer.Columns cols;
++        private final boolean completeMode;
++        private final Map<ColumnRefOperator, Column> scanColumns;
++        private final Map<String, String> remoteAggregates;
++        private String lastName;
++
++        Partials(FlightTable table, ColumnRefFactory factory, int relationId, FlightSqlRenderer.Columns cols,
++                 boolean completeMode, Map<ColumnRefOperator, Column> scanColumns,
++                 Map<String, String> remoteAggregates) {
++            this.table = table;
++            this.factory = factory;
++            this.relationId = relationId;
++            this.cols = cols;
++            this.completeMode = completeMode;
++            this.scanColumns = scanColumns;
++            this.remoteAggregates = remoteAggregates;
++        }
++
++        /** {@code call} is count/sum/min/max, {@code arg} its argument in scan columns (null for count(*)). */
++        CallOperator add(CallOperator call, ScalarOperator arg) {
++            String fn = call.getFnName();
++            String remote = renderAggregate(fn, arg, call.getType(), cols, completeMode);
++            if (remote == null) {
++                return null;
++            }
++            String name = FlightAggregationPushdown.SYNTHETIC_PREFIX + remoteAggregates.size();
++            Type type = FunctionSet.COUNT.equals(fn) ? IntegerType.BIGINT : call.getType();
++            Column column = new Column(name, type, true);
++            ColumnRefOperator partial = factory.create(name, type, true);
++            factory.updateColumnToRelationIds(partial.getId(), relationId);
++            factory.updateColumnRefToColumns(partial, column, table);
++            scanColumns.put(partial, column);
++            remoteAggregates.put(name, remote);
++            lastName = name;
++            return AggregateFunctionRollupUtils.getRollupAggregateFunc(call, partial, false);
++        }
 +    }
 +
 +    /** Remote partial aggregate whose result has the StarRocks type of the partial column, or null. */

@@ -8,12 +8,12 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
 ---
  .../flight/FlightPropertiesTest.java          | 138 +++++++
  .../flight/FlightSqlMetadataClientTest.java   | 160 ++++++++
- .../flight/FlightSqlRendererTest.java         | 151 ++++++++
+ .../flight/FlightSqlRendererTest.java         | 151 +++++++
  .../flight/FlightTypeMapperTest.java          | 164 ++++++++
- .../flight/MockedFlightSqlMetadataClient.java | 132 +++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 132 ++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 ++++
- .../sql/plan/FlightScanPlanTest.java          | 352 ++++++++++++++++++
- 7 files changed, 1169 insertions(+)
+ .../sql/plan/FlightScanPlanTest.java          | 383 ++++++++++++++++++
+ 7 files changed, 1200 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -877,10 +877,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..40fba1b8
+index 00000000..610b6608
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,383 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1048,8 +1048,39 @@ index 00000000..40fba1b8
 +    }
 +
 +    @Test
++    public void testAvgPushedAsSumAndCount() throws Exception {
++        // decimal avg (TPC-H q01): partial sum and count on the server, quotient of the merged sums in StarRocks
++        String plan = getFragmentPlan("select k, avg(cast(id as decimal(10, 2))), count(*) from " + T1
++                + " where id > 0 group by k having avg(cast(id as decimal(10, 2))) > 1");
++        String sql = remoteSql(plan);
++        assertContains(sql, "sum(CAST(CAST(\"id\" AS DECIMAL(10,2)) AS DECIMAL(38,2))) AS \"__flight_agg_",
++                "count(CAST(\"id\" AS DECIMAL(10,2))) AS \"__flight_agg_", "count(*) AS \"__flight_agg_",
++                " WHERE (\"id\" > 0) GROUP BY \"k\"");
++        assertNotContains(sql, "avg(");
++        assertNotContains(plan, "avg(", "PREDICATES: ");
++        assertContains(plan, "having: ", " / ");
++
++        // double avg without GROUP BY
++        plan = getFragmentPlan("select avg(cast(id as double)) from " + T1);
++        sql = remoteSql(plan);
++        assertContains(sql, "sum(CAST(CAST(\"id\" AS DOUBLE) AS DOUBLE)) AS \"__flight_agg_0\"",
++                "count(CAST(\"id\" AS DOUBLE)) AS \"__flight_agg_1\"");
++        assertNotContains(plan, "avg(");
++
++        // switched off with the aggregation pushdown
++        try {
++            connectContext.getSessionVariable().setFlightAggregatePushdown(false);
++            plan = getFragmentPlan("select k, avg(cast(id as decimal(10, 2))) from " + T1 + " group by k");
++            assertNotContains(plan, "__flight_agg_");
++            assertContains(plan, "avg(");
++        } finally {
++            connectContext.getSessionVariable().setFlightAggregatePushdown(true);
++        }
++    }
++
++    @Test
 +    public void testAggregationsNotPushed() throws Exception {
-+        // avg and count(distinct) are not pushed
++        // avg of an integer needs an integer sum (result mode complete only); count(distinct) is not pushed
 +        String plan = getFragmentPlan("select avg(id) from " + T1);
 +        assertNotContains(plan, "__flight_agg_");
 +        Assertions.assertEquals("SELECT \"id\" FROM \"s1\".\"t1\"", remoteSql(plan), plan);
