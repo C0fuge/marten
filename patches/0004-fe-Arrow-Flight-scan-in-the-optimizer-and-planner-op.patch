@@ -23,14 +23,14 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../sql/optimizer/rule/RuleType.java          |   3 +
  .../FlightScanImplementationRule.java         |  38 ++
  .../FlightAggregationPushdownRule.java        | 355 ++++++++++++++++++
- .../FlightJoinKeyPushdownRule.java            | 335 +++++++++++++++++
+ .../FlightJoinKeyPushdownRule.java            | 347 +++++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |  27 ++
  .../sql/plan/PlanFragmentBuilder.java         |  57 ++-
- 22 files changed, 1438 insertions(+), 2 deletions(-)
+ 22 files changed, 1450 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -1213,10 +1213,10 @@ index 00000000..5e9c9f74
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
 new file mode 100644
-index 00000000..86423e86
+index 00000000..6440fabe
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,347 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1254,6 +1254,7 @@ index 00000000..86423e86
 +import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.InPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.IsNullPredicateOperator;
 +import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
 +import com.starrocks.sql.optimizer.rule.RuleType;
 +import com.starrocks.type.Type;
@@ -1372,9 +1373,10 @@ index 00000000..86423e86
 +        boolean leftMayBeTarget = !type.isLeftOuterJoin();
 +        boolean rightMayBeTarget = !type.isRightOuterJoin();
 +
-+        // the source is the filtered side; with both filtered, the smaller table
-+        boolean leftFiltered = left.getPredicate() != null;
-+        boolean rightFiltered = right.getPredicate() != null;
++        // the source is the side with a reducing filter (IS NOT NULL, which the optimizer derives for every
++        // equi-join key, does not count); with both filtered, the smaller table
++        boolean leftFiltered = hasReducingPredicate(left);
++        boolean rightFiltered = hasReducingPredicate(right);
 +        boolean sourceIsLeft;
 +        if (leftFiltered && rightFiltered) {
 +            sourceIsLeft = metadata(left).getRowCount((FlightTable) left.getTable())
@@ -1444,6 +1446,14 @@ index 00000000..86423e86
 +                sourceIsLeft ? sourceExpr : targetExpr, sourceIsLeft ? targetExpr : sourceExpr));
 +    }
 +
++    private static boolean isNotNull(ScalarOperator conjunct) {
++        return conjunct instanceof IsNullPredicateOperator && ((IsNullPredicateOperator) conjunct).isNotNull();
++    }
++
++    private static boolean hasReducingPredicate(LogicalFlightScanOperator scan) {
++        return Utils.extractConjuncts(scan.getPredicate()).stream().anyMatch(c -> !isNotNull(c));
++    }
++
 +    /** {@code SELECT "k" FROM source WHERE <renderable conjuncts> GROUP BY "k" LIMIT max+1}, or null. */
 +    @VisibleForTesting
 +    static String keySql(LogicalFlightScanOperator source, ColumnRefOperator key, int maxKeys) {
@@ -1456,13 +1466,15 @@ index 00000000..86423e86
 +        }
 +        FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(pushable);
 +        List<String> where = new ArrayList<>();
++        boolean reducing = false;
 +        for (ScalarOperator conjunct : Utils.extractConjuncts(source.getPredicate())) {
 +            String p = FlightSqlRenderer.predicate(conjunct, cols);
 +            if (p != null) {
 +                where.add(p);
++                reducing |= !isNotNull(conjunct);
 +            }
 +        }
-+        if (where.isEmpty()) {
++        if (!reducing) {
 +            // nothing reduces the keys
 +            return null;
 +        }
