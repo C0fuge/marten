@@ -477,6 +477,11 @@ CASES3 = [
     # TPC-H q01 shape: avg() is pushed as a remote sum + count (connector comparison, 2026-11-03)
     ("2.12", "SELECT l_returnflag, l_linestatus, sum(l_quantity), sum(l_extendedprice * (1 - l_discount)), avg(l_quantity), avg(l_extendedprice), avg(l_discount), count(*) FROM {c}.tpch.lineitem WHERE l_shipdate <= DATE '1998-09-02' GROUP BY 1, 2 ORDER BY 1, 2",
      ['GROUP BY "l_returnflag", "l_linestatus"', 'count("l_discount")', "DATE '1998-09-02'"], ["avg("], "rows", []),
+    # TPC-H q17 / q19 shape: the filtered part's keys go into the lineitem scan (join-key pushdown, 2026-11-03)
+    ("2.13", "SELECT count(*), sum(l_quantity) FROM {c}.tpch.lineitem, {c}.tpch.part WHERE p_partkey = l_partkey AND p_brand = 'Brand#23' AND p_container = 'MED BOX'",
+     ['"l_partkey" IN (', "= 'Brand#23'"], [], "rows", []),
+    ("2.14", "SELECT count(*), sum(l_quantity) FROM {c}.tpch.lineitem, {c}.tpch.part WHERE p_partkey = l_partkey AND p_brand = 'Brand#23' AND p_container = 'MED BOX'",
+     [], ['"l_partkey" IN ('], "rows", ["flight_join_key_pushdown = false"]),
     ("2.10", "SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM {c}.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2",
      [], ["__flight_agg"], "rows", ["flight_aggregate_pushdown = false"]),
 ]

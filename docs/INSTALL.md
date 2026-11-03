@@ -78,8 +78,8 @@ SELECT * FROM flight.<schema>.<table> LIMIT 10;
 EXPLAIN SELECT count(*) FROM flight.<schema>.<table>;   -- shows the REMOTE SQL sent to the server
 ```
 
-All catalog properties: `docs/PLAN.md` §2.1. Session switches: `flight_filter_pushdown`, `flight_aggregate_pushdown`
-(both default `true`). The token and password are masked in `SHOW CREATE CATALOG`, logs and profiles.
+All catalog properties: `docs/PLAN.md` §2.1. Session switches: `flight_filter_pushdown`, `flight_aggregate_pushdown`,
+`flight_join_key_pushdown` (all default `true`). The token and password are masked in `SHOW CREATE CATALOG`, logs and profiles.
 
 Time travel (tables the server keeps versions of, e.g. Iceberg tables of our server from build 20b887839edf on):
 `SELECT … FROM flight.<schema>.<table> FOR VERSION AS OF <snapshot id>` or `… FOR TIMESTAMP AS OF '<datetime>'`

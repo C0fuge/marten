@@ -219,6 +219,7 @@ Lessons from the Trino plugin v10 (`~/Projects/trino-arrow-flight-connector` 6ee
 | `flight.metadata_cache_ttl_s` / `flight.stats_cache_ttl_s` | 60 / 600 | table-list and schema cache; row-count and column min/max cache |
 | `flight.exchange_buffer_mb` | 16 | memory per driver of the BE local exchange behind a Flight scan (StarRocks default 128 MB per driver; 0 keeps it). A fast endpoint stream otherwise fills dop × 128 MB while the join build sides are not ready (TPC-H q18 SF10 at BE 4G, STATUS A-4; added 2026-10-22) |
 | `flight.compression` | none | `none`, `lz4` or `zstd`: the BE scan asks the server for compressed result streams (call header `arrow-compression`, server cadd1aca9c23+; Arrow C++ in the BE decodes them). FE metadata/statistics calls never ask (Arrow Java without codecs); `flight.header.arrow-compression` is refused. For slow BE↔server links only (maintainer decision 2026-10-28; added 2026-10-28) |
+| `flight.pushdown.join_keys` / `flight.pushdown.join_keys_timeout_ms` | 10000 / 2000 | join-key pushdown between two Flight scans of an equi-join (integer keys): the filtered side's distinct keys (planning-time query `SELECT "k" FROM … WHERE … GROUP BY "k" LIMIT n+1`, bounded by the timeout) become an IN list (≤ n keys, max 10000 = the longest rendered IN list) or a min/max range of the other scan's remote SQL; 0 = off; session switch `flight_join_key_pushdown` (connector comparison item 2, 2026-11-03, §2.4) |
 | `flight.column_stats` | `true` | per-table `SELECT min(c), max(c), …` (numeric/date columns that are filterable, ≤ 100 per table; answered from Parquet footers by our servers) gives the CBO column min/max and a range NDV; loaded in the background like row counts (added 2026-10-22, STATUS P2) |
 
 ### 2.2 FE files (new package `FE/connector/flight/`)
@@ -357,6 +358,17 @@ the BE rebuild nearly in full. So **all Thrift changes land in one commit at the
 - **More aggregate pushdown later (P4, optional).** GROUP BY with sum/count/min/max, using the same pattern with
   a rewritten "remote aggregate" scan. Effort is large (a new rule plus partial/final aggregation semantics); it
   is a later decision.
+- **avg() (2026-11-03, connector comparison item 1).** `FlightAggregationPushdownRule` pushes `avg(x)` as two
+  partial aggregates `sum(CAST(x AS <sum type>))` and `count(x)`; StarRocks merges both with `sum` and computes the
+  quotient (`AggregatePushDownUtils.createAvgBySumCount`, as the MV rewrite does). Integer arguments follow the
+  integer-sum rule (result mode complete only).
+- **Join-key pushdown (2026-11-03, connector comparison item 2).** `FlightJoinKeyPushdownRule` (runs once before
+  the aggregation pushdown) on `Join(FlightScan, FlightScan)` with an integer equi-key: the filtered side's distinct
+  keys are fetched at planning time and added to the other scan's predicate as an IN list or a range (a normal
+  conjunct: rendered into the remote SQL and re-checked in the BE). Only on a side whose unmatched rows the join
+  drops. Why planning time and not the BE runtime filters: the Flight tickets (and so the remote SQL per endpoint) are
+  fixed when the FE plans the scan; a filter that is ready only in the BE could be applied only after streaming,
+  which StarRocks already does with its runtime filters.
 - **Endpoints and scan ranges.**
   - Each endpoint becomes one scan range: ticket bytes plus its locations in order.
   - Our failover build lists up to 2 backup locations per partial endpoint.

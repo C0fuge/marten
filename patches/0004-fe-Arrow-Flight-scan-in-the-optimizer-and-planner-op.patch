@@ -9,32 +9,34 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
 (remote SQL, endpoint scan ranges), session variables flight_filter_pushdown / flight_aggregate_pushdown.
 ---
  .../com/starrocks/planner/FlightScanNode.java | 313 +++++++++++++++
- .../com/starrocks/qe/SessionVariable.java     |  25 ++
+ .../com/starrocks/qe/SessionVariable.java     |  37 ++
  .../main/java/com/starrocks/sql/Explain.java  |  20 +
  .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
  .../sql/optimizer/OptExpressionVisitor.java   |   4 +
- .../sql/optimizer/QueryOptimizer.java         |   3 +
+ .../sql/optimizer/QueryOptimizer.java         |   6 +
  .../sql/optimizer/operator/OperatorType.java  |   2 +
  .../optimizer/operator/OperatorVisitor.java   |  10 +
  .../logical/LogicalFlightScanOperator.java    | 100 +++++
  .../operator/pattern/MultiOpPattern.java      |   1 +
  .../physical/PhysicalFlightScanOperator.java  |  67 ++++
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
- .../sql/optimizer/rule/RuleType.java          |   2 +
+ .../sql/optimizer/rule/RuleType.java          |   3 +
  .../FlightScanImplementationRule.java         |  38 ++
  .../FlightAggregationPushdownRule.java        | 355 ++++++++++++++++++
+ .../FlightJoinKeyPushdownRule.java            | 335 +++++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |  27 ++
  .../sql/plan/PlanFragmentBuilder.java         |  57 ++-
- 21 files changed, 1087 insertions(+), 2 deletions(-)
+ 22 files changed, 1438 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/implementation/FlightScanImplementationRule.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightAggregationPushdownRule.java
+ create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 new file mode 100644
@@ -356,20 +358,21 @@ index 00000000..d10e2751
 +    }
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java b/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java
-index e6c38a1c..aea93d3a 100644
+index e6c38a1c..54612e17 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/qe/SessionVariable.java
-@@ -923,6 +923,9 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
+@@ -923,6 +923,10 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
      public static final String ENABLE_REWRITE_SUM_BY_ASSOCIATIVE_RULE = "enable_rewrite_sum_by_associative_rule";
      public static final String ENABLE_REWRITE_SIMPLE_AGG_TO_META_SCAN = "enable_rewrite_simple_agg_to_meta_scan";
      public static final String ENABLE_REWRITE_SIMPLE_AGG_TO_HDFS_SCAN = "enable_rewrite_simple_agg_to_hdfs_scan";
 +    // Arrow Flight catalog: render WHERE / push GROUP BY aggregations into the remote Flight SQL query
 +    public static final String FLIGHT_FILTER_PUSHDOWN = "flight_filter_pushdown";
 +    public static final String FLIGHT_AGGREGATE_PUSHDOWN = "flight_aggregate_pushdown";
++    public static final String FLIGHT_JOIN_KEY_PUSHDOWN = "flight_join_key_pushdown";
      public static final String ENABLE_REWRITE_PARTITION_COLUMN_MINMAX = "enable_rewrite_partition_column_minmax";
      public static final String ENABLE_MIN_MAX_OPTIMIZATION = "enable_min_max_optimization";
      public static final String ENABLE_PRUNE_COMPLEX_TYPES = "enable_prune_complex_types";
-@@ -2169,6 +2172,12 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
+@@ -2169,6 +2173,15 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
      @VarAttr(name = ENABLE_REWRITE_SIMPLE_AGG_TO_HDFS_SCAN)
      private boolean enableRewriteSimpleAggToHdfsScan = true;
  
@@ -379,10 +382,13 @@ index e6c38a1c..aea93d3a 100644
 +    @VarAttr(name = FLIGHT_AGGREGATE_PUSHDOWN)
 +    private boolean flightAggregatePushdown = true;
 +
++    @VarAttr(name = FLIGHT_JOIN_KEY_PUSHDOWN)
++    private boolean flightJoinKeyPushdown = true;
++
      @VarAttr(name = ENABLE_EVALUATE_SCHEMA_SCAN_RULE)
      private boolean enableEvaluateSchemaScanRule = true;
  
-@@ -5436,6 +5445,22 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
+@@ -5436,6 +5449,30 @@ public class SessionVariable implements Serializable, Writable, Cloneable {
          return this.enableRewriteSimpleAggToHdfsScan;
      }
  
@@ -400,6 +406,14 @@ index e6c38a1c..aea93d3a 100644
 +
 +    public void setFlightAggregatePushdown(boolean flightAggregatePushdown) {
 +        this.flightAggregatePushdown = flightAggregatePushdown;
++    }
++
++    public boolean isFlightJoinKeyPushdown() {
++        return flightJoinKeyPushdown;
++    }
++
++    public void setFlightJoinKeyPushdown(boolean flightJoinKeyPushdown) {
++        this.flightJoinKeyPushdown = flightJoinKeyPushdown;
 +    }
 +
      public boolean isEnableEvaluateSchemaScanRule() {
@@ -475,22 +489,25 @@ index fbdf0cfb..00732b79 100644
          return visitPhysicalScan(optExpression, context);
      }
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java
-index a3cda600..726a2400 100644
+index a3cda600..0258ae97 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/QueryOptimizer.java
-@@ -54,6 +54,7 @@ import com.starrocks.sql.optimizer.rule.transformation.EliminateAggFunctionRule;
+@@ -54,6 +54,8 @@ import com.starrocks.sql.optimizer.rule.transformation.EliminateAggFunctionRule;
  import com.starrocks.sql.optimizer.rule.transformation.EliminateAggRule;
  import com.starrocks.sql.optimizer.rule.transformation.EliminateConstantCTERule;
  import com.starrocks.sql.optimizer.rule.transformation.EliminateSortColumnWithEqualityPredicateRule;
 +import com.starrocks.sql.optimizer.rule.transformation.FlightAggregationPushdownRule;
++import com.starrocks.sql.optimizer.rule.transformation.FlightJoinKeyPushdownRule;
  import com.starrocks.sql.optimizer.rule.transformation.ForceCTEReuseRule;
  import com.starrocks.sql.optimizer.rule.transformation.GroupByCountDistinctRewriteRule;
  import com.starrocks.sql.optimizer.rule.transformation.HoistHeavyCostExprsUponTopnRule;
-@@ -737,6 +738,8 @@ public class QueryOptimizer extends Optimizer {
+@@ -737,6 +739,10 @@ public class QueryOptimizer extends Optimizer {
          scheduler.rewriteOnce(tree, rootTaskContext, JsonPathRewriteRule.createForOlapScan());
          scheduler.rewriteIterative(tree, rootTaskContext, new RewriteMinMaxByMonotonicFunctionRule());
          scheduler.rewriteOnce(tree, rootTaskContext, RewriteSimpleAggToHDFSScanRule.SCAN_NO_PROJECT);
-+        // Arrow Flight catalog: GROUP BY / count / sum / min / max computed by the Flight SQL server
++        // Arrow Flight catalog: join keys of a filtered Flight scan as an IN list / range of the other Flight scan
++        scheduler.rewriteOnce(tree, rootTaskContext, FlightJoinKeyPushdownRule.INSTANCE);
++        // Arrow Flight catalog: GROUP BY / count / sum / min / max / avg computed by the Flight SQL server
 +        scheduler.rewriteOnce(tree, rootTaskContext, FlightAggregationPushdownRule.INSTANCE);
          // NOTE: This rule should be after MV Rewrite because MV Rewrite cannot handle
          // select count(distinct c) from t group by a, b
@@ -769,18 +786,19 @@ index b507f5f7..ce01c19f 100644
              new MysqlScanImplementationRule(),
              new EsScanImplementationRule(),
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java
-index 347f6340..73fe3638 100644
+index 347f6340..70b45a1d 100644
 --- a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/RuleType.java
-@@ -147,6 +147,7 @@ public enum RuleType {
+@@ -147,6 +147,8 @@ public enum RuleType {
      TF_REWRITE_GROUPING_SET,
      TF_PUSHDOWN_AGG_GROUPING_SET,
      TF_REWRITE_SIMPLE_AGG,
 +    TF_FLIGHT_AGGREGATION_PUSHDOWN,
++    TF_FLIGHT_JOIN_KEY_PUSHDOWN,
      TF_REWRITE_MIN_MAX_COUNT_AGG,
      TF_REWRITE_PARTITION_COLUMN_ONLY_AGG,
      TF_REWRITE_SUM_BY_ASSOCIATIVE_RULE,
-@@ -263,6 +264,7 @@ public enum RuleType {
+@@ -263,6 +265,7 @@ public enum RuleType {
      IMP_ODPS_LSCAN_TO_PSCAN,
      IMP_ICEBERG_METADATA_LSCAN_TO_PSCAN,
      IMP_KUDU_LSCAN_TO_PSCAN,
@@ -1191,6 +1209,347 @@ index 00000000..5e9c9f74
 +        }
 +        // min/max keep their argument's type
 +        return sqlType == null ? null : fn + "(CAST(" + in + " AS " + sqlType + "))";
++    }
++}
+diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
+new file mode 100644
+index 00000000..86423e86
+--- /dev/null
++++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
+@@ -0,0 +1,335 @@
++// Copyright 2021-present StarRocks, Inc. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     https://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++package com.starrocks.sql.optimizer.rule.transformation;
++
++import com.google.common.annotations.VisibleForTesting;
++import com.starrocks.catalog.Column;
++import com.starrocks.catalog.FlightTable;
++import com.starrocks.connector.ConnectorMetadata;
++import com.starrocks.connector.flight.FlightConnector;
++import com.starrocks.connector.flight.FlightMetadata;
++import com.starrocks.connector.flight.FlightProperties;
++import com.starrocks.connector.flight.FlightSqlRenderer;
++import com.starrocks.server.GlobalStateMgr;
++import com.starrocks.sql.ast.JoinOperator;
++import com.starrocks.sql.ast.expression.BinaryType;
++import com.starrocks.sql.optimizer.OptExpression;
++import com.starrocks.sql.optimizer.OptimizerContext;
++import com.starrocks.sql.optimizer.Utils;
++import com.starrocks.sql.optimizer.operator.OperatorType;
++import com.starrocks.sql.optimizer.operator.logical.LogicalFlightScanOperator;
++import com.starrocks.sql.optimizer.operator.logical.LogicalJoinOperator;
++import com.starrocks.sql.optimizer.operator.pattern.Pattern;
++import com.starrocks.sql.optimizer.operator.scalar.BinaryPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ColumnRefOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ConstantOperator;
++import com.starrocks.sql.optimizer.operator.scalar.InPredicateOperator;
++import com.starrocks.sql.optimizer.operator.scalar.ScalarOperator;
++import com.starrocks.sql.optimizer.rule.RuleType;
++import com.starrocks.type.Type;
++import org.apache.logging.log4j.LogManager;
++import org.apache.logging.log4j.Logger;
++
++import java.util.ArrayList;
++import java.util.Collections;
++import java.util.HashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.Optional;
++import java.util.TreeSet;
++
++/**
++ * Join-key pushdown between two Arrow Flight scans (TPC-H q17, q19):
++ * <pre>
++ *   Join(a.k = b.k) -> FlightScan(a), FlightScan(b, predicate)
++ * =>
++ *   Join(a.k = b.k) -> FlightScan(a, a.k IN (keys of b)), FlightScan(b, predicate)
++ * </pre>
++ * At planning time the rule asks the server for the distinct join keys of the filtered side
++ * ({@code SELECT "k" FROM b WHERE ... GROUP BY "k" LIMIT max+1}, bounded by
++ * {@code flight.pushdown.join_keys_timeout_ms}). Up to {@code flight.pushdown.join_keys} keys become an IN
++ * conjunct of the other scan; more keys become a min/max range. The conjunct is an ordinary scan predicate, so the
++ * Flight scan renders it into its remote SQL and the BE re-checks it. The keys of the filtered side are a superset
++ * of the keys that can match (conjuncts the server cannot evaluate are left out of the key query), so the result
++ * is unchanged; the conjunct only goes to a side whose unmatched rows the join drops (inner and semi joins: either
++ * side; left outer: the right side; right outer: the left side). Only integer keys of the same type on both sides.
++ * <p>
++ * Unlike a runtime filter, which the BE applies after the rows were streamed, this filter reaches the server: the
++ * Flight tickets are fixed at planning time, so a filter known only at execution time cannot be added to them.
++ * Runs once before the aggregation pushdown (see QueryOptimizer); any failure or timeout leaves the plan unchanged.
++ */
++public class FlightJoinKeyPushdownRule extends TransformationRule {
++    private static final Logger LOG = LogManager.getLogger(FlightJoinKeyPushdownRule.class);
++
++    public static final FlightJoinKeyPushdownRule INSTANCE = new FlightJoinKeyPushdownRule();
++
++    private FlightJoinKeyPushdownRule() {
++        super(RuleType.TF_FLIGHT_JOIN_KEY_PUSHDOWN, Pattern.create(OperatorType.LOGICAL_JOIN)
++                .addChildren(Pattern.create(OperatorType.LOGICAL_FLIGHT_SCAN),
++                        Pattern.create(OperatorType.LOGICAL_FLIGHT_SCAN)));
++    }
++
++    @Override
++    public boolean check(OptExpression input, OptimizerContext context) {
++        LogicalJoinOperator join = (LogicalJoinOperator) input.getOp();
++        if (!context.getSessionVariable().isFlightJoinKeyPushdown()
++                || !context.getSessionVariable().isFlightFilterPushdown()
++                || join.getOnPredicate() == null) {
++            return false;
++        }
++        JoinOperator type = join.getJoinType();
++        return type.isInnerJoin() || type.isSemiJoin() || type.isLeftOuterJoin() || type.isRightOuterJoin();
++    }
++
++    private static FlightProperties properties(LogicalFlightScanOperator scan) {
++        FlightMetadata metadata = metadata(scan);
++        return metadata == null ? null : metadata.getProperties();
++    }
++
++    /** The catalog's metadata as the metadata manager hands it out (a test registers its own), else the connector's. */
++    private static FlightMetadata metadata(LogicalFlightScanOperator scan) {
++        if (!(scan.getTable() instanceof FlightTable)) {
++            return null;
++        }
++        String catalog = ((FlightTable) scan.getTable()).getCatalogName();
++        Optional<ConnectorMetadata> m = GlobalStateMgr.getCurrentState().getMetadataMgr().getOptionalMetadata(catalog);
++        if (m.isPresent() && m.get() instanceof FlightMetadata) {
++            return (FlightMetadata) m.get();
++        }
++        return FlightConnector.metadataOf(catalog);
++    }
++
++    /** Scan column behind an output column of the scan (through an identity projection), or null. */
++    private static ColumnRefOperator scanColumn(LogicalFlightScanOperator scan, ColumnRefOperator out) {
++        ColumnRefOperator ref = out;
++        if (scan.getProjection() != null) {
++            ScalarOperator v = scan.getProjection().getColumnRefMap().get(out);
++            if (!(v instanceof ColumnRefOperator)) {
++                return null;
++            }
++            ref = (ColumnRefOperator) v;
++        }
++        return scan.getColRefToColumnMetaMap().containsKey(ref) ? ref : null;
++    }
++
++    private static boolean usable(LogicalFlightScanOperator scan) {
++        FlightProperties props = properties(scan);
++        return props != null && props.isFilterPushdown() && props.getJoinKeyPushdownMax() > 0
++                && scan.getAggregationPushdown() == null && scan.getLimit() < 0;
++    }
++
++    private static boolean isIntegerKey(Type t) {
++        switch (t.getPrimitiveType()) {
++            case TINYINT:
++            case SMALLINT:
++            case INT:
++            case BIGINT:
++                return true;
++            default:
++                return false;
++        }
++    }
++
++    @Override
++    public List<OptExpression> transform(OptExpression input, OptimizerContext context) {
++        LogicalJoinOperator join = (LogicalJoinOperator) input.getOp();
++        LogicalFlightScanOperator left = (LogicalFlightScanOperator) input.inputAt(0).getOp();
++        LogicalFlightScanOperator right = (LogicalFlightScanOperator) input.inputAt(1).getOp();
++        if (!usable(left) || !usable(right)) {
++            return Collections.emptyList();
++        }
++        JoinOperator type = join.getJoinType();
++        boolean leftMayBeTarget = !type.isLeftOuterJoin();
++        boolean rightMayBeTarget = !type.isRightOuterJoin();
++
++        // the source is the filtered side; with both filtered, the smaller table
++        boolean leftFiltered = left.getPredicate() != null;
++        boolean rightFiltered = right.getPredicate() != null;
++        boolean sourceIsLeft;
++        if (leftFiltered && rightFiltered) {
++            sourceIsLeft = metadata(left).getRowCount((FlightTable) left.getTable())
++                    <= metadata(right).getRowCount((FlightTable) right.getTable());
++        } else if (leftFiltered || rightFiltered) {
++            sourceIsLeft = leftFiltered;
++        } else {
++            return Collections.emptyList();
++        }
++        if (sourceIsLeft ? !rightMayBeTarget : !leftMayBeTarget) {
++            return Collections.emptyList();
++        }
++        LogicalFlightScanOperator source = sourceIsLeft ? left : right;
++        LogicalFlightScanOperator target = sourceIsLeft ? right : left;
++
++        // the first integer equi-join key with the same type on both sides
++        ColumnRefOperator sourceKey = null;
++        ColumnRefOperator targetKey = null;
++        for (ScalarOperator conjunct : Utils.extractConjuncts(join.getOnPredicate())) {
++            if (!(conjunct instanceof BinaryPredicateOperator)
++                    || ((BinaryPredicateOperator) conjunct).getBinaryType() != BinaryType.EQ
++                    || !(conjunct.getChild(0) instanceof ColumnRefOperator)
++                    || !(conjunct.getChild(1) instanceof ColumnRefOperator)) {
++                continue;
++            }
++            ColumnRefOperator c0 = (ColumnRefOperator) conjunct.getChild(0);
++            ColumnRefOperator c1 = (ColumnRefOperator) conjunct.getChild(1);
++            for (int swap = 0; swap < 2 && sourceKey == null; swap++) {
++                ColumnRefOperator s = scanColumn(source, swap == 0 ? c0 : c1);
++                ColumnRefOperator t = scanColumn(target, swap == 0 ? c1 : c0);
++                if (s != null && t != null && isIntegerKey(s.getType()) && s.getType().equals(t.getType())
++                        && ((FlightTable) source.getTable()).isFilterable(
++                        source.getColRefToColumnMetaMap().get(s).getName())
++                        && ((FlightTable) target.getTable()).isFilterable(
++                        target.getColRefToColumnMetaMap().get(t).getName())) {
++                    sourceKey = s;
++                    targetKey = t;
++                }
++            }
++            if (sourceKey != null) {
++                break;
++            }
++        }
++        if (sourceKey == null) {
++            return Collections.emptyList();
++        }
++
++        String sql = keySql(source, sourceKey, properties(source).getJoinKeyPushdownMax());
++        if (sql == null) {
++            return Collections.emptyList();
++        }
++        ScalarOperator filter;
++        try {
++            filter = keyFilter(metadata(source), sql, source, sourceKey, targetKey);
++        } catch (Exception e) {
++            LOG.warn("Flight join-key pushdown skipped for {}: {}", source.getTable().getName(), e.getMessage());
++            return Collections.emptyList();
++        }
++        if (filter == null) {
++            return Collections.emptyList();
++        }
++        LogicalFlightScanOperator newTarget = new LogicalFlightScanOperator.Builder().withOperator(target).build();
++        newTarget.setPredicate(Utils.compoundAnd(target.getPredicate(), filter));
++        OptExpression targetExpr = OptExpression.create(newTarget);
++        OptExpression sourceExpr = sourceIsLeft ? input.inputAt(0) : input.inputAt(1);
++        return Collections.singletonList(OptExpression.create(join,
++                sourceIsLeft ? sourceExpr : targetExpr, sourceIsLeft ? targetExpr : sourceExpr));
++    }
++
++    /** {@code SELECT "k" FROM source WHERE <renderable conjuncts> GROUP BY "k" LIMIT max+1}, or null. */
++    @VisibleForTesting
++    static String keySql(LogicalFlightScanOperator source, ColumnRefOperator key, int maxKeys) {
++        FlightTable table = (FlightTable) source.getTable();
++        Map<ColumnRefOperator, String> pushable = new HashMap<>();
++        for (Map.Entry<ColumnRefOperator, Column> e : source.getColRefToColumnMetaMap().entrySet()) {
++            if (table.isFilterable(e.getValue().getName())) {
++                pushable.put(e.getKey(), e.getValue().getName());
++            }
++        }
++        FlightSqlRenderer.Columns cols = FlightSqlRenderer.columns(pushable);
++        List<String> where = new ArrayList<>();
++        for (ScalarOperator conjunct : Utils.extractConjuncts(source.getPredicate())) {
++            String p = FlightSqlRenderer.predicate(conjunct, cols);
++            if (p != null) {
++                where.add(p);
++            }
++        }
++        if (where.isEmpty()) {
++            // nothing reduces the keys
++            return null;
++        }
++        String name = source.getColRefToColumnMetaMap().get(key).getName();
++        List<FlightSqlRenderer.SelectItem> items =
++                List.of(new FlightSqlRenderer.SelectItem(FlightSqlRenderer.quoteIdent(name), null));
++        return FlightSqlRenderer.select(table.getCatalogDBName(), table.getCatalogTableName(), source.getTimeTravel(),
++                items, where, List.of(name), maxKeys + 1L, false);
++    }
++
++    private static Long longValue(Object o) {
++        return o instanceof Number ? ((Number) o).longValue() : null;
++    }
++
++    /** IN list or range conjunct on {@code targetKey}, or null when the keys do not reduce anything. */
++    private static ScalarOperator keyFilter(FlightMetadata metadata, String sql, LogicalFlightScanOperator source,
++                                            ColumnRefOperator sourceKey, ColumnRefOperator targetKey) {
++        FlightProperties props = metadata.getProperties();
++        int maxKeys = props.getJoinKeyPushdownMax();
++        long timeoutMs = props.getJoinKeyPushdownTimeoutMs();
++        List<Object[]> rows = metadata.getClient().queryRows(sql, (v, row) -> v.getObject(row), timeoutMs);
++        // result mode partial: every endpoint returns its own distinct keys (and its own LIMIT)
++        TreeSet<Long> keys = new TreeSet<>();
++        boolean truncated = false;
++        for (Object[] row : rows) {
++            Long k = row.length == 1 ? longValue(row[0]) : null;
++            if (k != null) {
++                keys.add(k);
++            }
++            if (keys.size() > maxKeys) {
++                truncated = true;
++                break;
++            }
++        }
++        if (!truncated) {
++            if (keys.isEmpty()) {
++                // no key passes the filter (or only NULLs): the join is empty; left to the BE
++                return null;
++            }
++            List<ScalarOperator> args = new ArrayList<>();
++            args.add(targetKey);
++            for (Long k : keys) {
++                args.add(constant(targetKey.getType(), k));
++            }
++            return new InPredicateOperator(false, args);
++        }
++        // too many keys: their range
++        String rangeSql = sql.replaceFirst("^SELECT (\"(?:[^\"]|\"\")*\") FROM", "SELECT min($1), max($1) FROM");
++        int groupBy = rangeSql.lastIndexOf(" GROUP BY ");
++        if (rangeSql.equals(sql) || groupBy < 0) {
++            return null;
++        }
++        rangeSql = rangeSql.substring(0, groupBy);
++        Long min = null;
++        Long max = null;
++        for (Object[] row : metadata.getClient().queryRows(rangeSql, (v, row) -> v.getObject(row), timeoutMs)) {
++            if (row.length != 2) {
++                return null;
++            }
++            Long lo = longValue(row[0]);
++            Long hi = longValue(row[1]);
++            if (lo != null) {
++                min = min == null ? lo : Math.min(min, lo);
++            }
++            if (hi != null) {
++                max = max == null ? hi : Math.max(max, hi);
++            }
++        }
++        if (min == null || max == null) {
++            return null;
++        }
++        return Utils.compoundAnd(
++                new BinaryPredicateOperator(BinaryType.GE, targetKey, constant(targetKey.getType(), min)),
++                new BinaryPredicateOperator(BinaryType.LE, targetKey, constant(targetKey.getType(), max)));
++    }
++
++    private static ConstantOperator constant(Type type, long v) {
++        switch (type.getPrimitiveType()) {
++            case TINYINT:
++                return ConstantOperator.createTinyInt((byte) v);
++            case SMALLINT:
++                return ConstantOperator.createSmallInt((short) v);
++            case INT:
++                return ConstantOperator.createInt((int) v);
++            default:
++                return ConstantOperator.createBigint(v);
++        }
 +    }
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/MergeLimitDirectRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/MergeLimitDirectRule.java

@@ -18,16 +18,16 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../connector/flight/FlightConnector.java     |  57 ++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
  .../connector/flight/FlightMetadata.java      | 475 +++++++++++++++++
- .../connector/flight/FlightProperties.java    | 382 ++++++++++++++
+ .../connector/flight/FlightProperties.java    | 404 ++++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
- .../flight/FlightSqlMetadataClient.java       | 482 +++++++++++++++++
- .../connector/flight/FlightSqlRenderer.java   | 488 ++++++++++++++++++
+ .../flight/FlightSqlMetadataClient.java       | 501 ++++++++++++++++++
+ .../connector/flight/FlightSqlRenderer.java   | 488 +++++++++++++++++
  .../connector/flight/FlightTypeMapper.java    | 257 +++++++++
  .../starrocks/credential/CredentialUtil.java  |   6 +
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2439 insertions(+), 3 deletions(-)
+ 18 files changed, 2480 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -889,10 +889,10 @@ index 00000000..c2f915c1
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
 new file mode 100644
-index 00000000..7f6958e7
+index 00000000..b1b0fcfc
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,404 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -949,6 +949,14 @@ index 00000000..7f6958e7
 +    public static final String PUSHDOWN_FILTER = "flight.pushdown.filter";
 +    public static final String PUSHDOWN_LIMIT = "flight.pushdown.limit";
 +    public static final String PUSHDOWN_AGGREGATE = "flight.pushdown.aggregate";
++    /**
++     * Join-key pushdown: the most distinct join keys of a filtered Flight scan that are pushed as an IN list into the
++     * other Flight scan of an equi-join (more keys: their min/max range); 0 switches it off. Default and maximum
++     * 10000 (the longest IN list the remote SQL renders).
++     */
++    public static final String PUSHDOWN_JOIN_KEYS = "flight.pushdown.join_keys";
++    /** Time budget of the planning-time key query in ms (default 2000); slower answers leave the plan unchanged. */
++    public static final String PUSHDOWN_JOIN_KEYS_TIMEOUT_MS = "flight.pushdown.join_keys_timeout_ms";
 +    public static final String METADATA_CACHE_TTL_S = "flight.metadata_cache_ttl_s";
 +    public static final String STATS_CACHE_TTL_S = "flight.stats_cache_ttl_s";
 +    public static final String COLUMN_STATS = "flight.column_stats";
@@ -977,8 +985,9 @@ index 00000000..7f6958e7
 +
 +    private static final Set<String> KNOWN = ImmutableSet.of(URI, TOKEN, USER, PASSWORD, TLS_VERIFY, TLS_CA_FILE,
 +            TLS_OVERRIDE_HOSTNAME, RESULT_MODE, LOCATION_FAILOVER, CONNECT_TIMEOUT_MS, KEEPALIVE_MS, RPC_TIMEOUT_MS,
-+            CATALOG, NESTED_TYPES, CONVERTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE, METADATA_CACHE_TTL_S,
-+            STATS_CACHE_TTL_S, COLUMN_STATS, EXCHANGE_BUFFER_MB, COMPRESSION, "type");
++            CATALOG, NESTED_TYPES, CONVERTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE,
++            PUSHDOWN_JOIN_KEYS, PUSHDOWN_JOIN_KEYS_TIMEOUT_MS, METADATA_CACHE_TTL_S, STATS_CACHE_TTL_S, COLUMN_STATS,
++            EXCHANGE_BUFFER_MB, COMPRESSION, "type");
 +
 +    private final List<URI> uris;
 +    private final String token;
@@ -999,6 +1008,8 @@ index 00000000..7f6958e7
 +    private final boolean filterPushdown;
 +    private final boolean limitPushdown;
 +    private final boolean aggregatePushdown;
++    private final int joinKeyPushdownMax;
++    private final long joinKeyPushdownTimeoutMs;
 +    private final long metadataCacheTtlSec;
 +    private final long statsCacheTtlSec;
 +    private final boolean columnStats;
@@ -1083,6 +1094,8 @@ index 00000000..7f6958e7
 +        this.filterPushdown = parseBool(props, PUSHDOWN_FILTER, true);
 +        this.limitPushdown = parseBool(props, PUSHDOWN_LIMIT, true);
 +        this.aggregatePushdown = parseBool(props, PUSHDOWN_AGGREGATE, true);
++        this.joinKeyPushdownMax = (int) parseLong(props, PUSHDOWN_JOIN_KEYS, 10_000, 0, 10_000);
++        this.joinKeyPushdownTimeoutMs = parseLong(props, PUSHDOWN_JOIN_KEYS_TIMEOUT_MS, 2_000, 100, 60_000);
 +        this.metadataCacheTtlSec = parseLong(props, METADATA_CACHE_TTL_S, 60, 0, 86_400 * 30L);
 +        this.statsCacheTtlSec = parseLong(props, STATS_CACHE_TTL_S, 600, 0, 86_400 * 30L);
 +        this.columnStats = parseBool(props, COLUMN_STATS, true);
@@ -1253,6 +1266,15 @@ index 00000000..7f6958e7
 +        return aggregatePushdown;
 +    }
 +
++    /** Most join keys pushed as an IN list; 0 = join-key pushdown off. */
++    public int getJoinKeyPushdownMax() {
++        return joinKeyPushdownMax;
++    }
++
++    public long getJoinKeyPushdownTimeoutMs() {
++        return joinKeyPushdownTimeoutMs;
++    }
++
 +    public long getMetadataCacheTtlSec() {
 +        return metadataCacheTtlSec;
 +    }
@@ -1347,10 +1369,10 @@ index 00000000..75bee134
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..f76082b2
+index 00000000..67a9b1b4
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightSqlMetadataClient.java
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,501 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1572,6 +1594,11 @@ index 00000000..f76082b2
 +     * up but timed out while its cluster drops a lost member), that URI is tried once more.
 +     */
 +    private <T> T withFailover(String what, BiFunction<Conn, CallOption[], T> call) {
++        return withFailover(what, unaryTimeoutMs(), call);
++    }
++
++    /** As above, with {@code timeoutMs} as the deadline of each call. */
++    private <T> T withFailover(String what, long timeoutMs, BiFunction<Conn, CallOption[], T> call) {
 +        int n = props.getUris().size();
 +        RuntimeException last = null;
 +        Conn failed = null;
@@ -1594,7 +1621,7 @@ index 00000000..f76082b2
 +            }
 +            if (c != null) {
 +                try {
-+                    return call.apply(c, options(c, unaryTimeoutMs()));
++                    return call.apply(c, options(c, timeoutMs));
 +                } catch (FlightRuntimeException e) {
 +                    last = e;
 +                    failed = c;
@@ -1641,6 +1668,12 @@ index 00000000..f76082b2
 +
 +    /** Reads all rows of all endpoints of a metadata FlightInfo. */
 +    private <T> List<T> readRows(Conn c, FlightInfo info, BiFunction<VectorSchemaRoot, Integer, T> mapper) {
++        return readRows(c, info, mapper, unaryTimeoutMs());
++    }
++
++    /** As above, with {@code timeoutMs} as the deadline of each endpoint stream. */
++    private <T> List<T> readRows(Conn c, FlightInfo info, BiFunction<VectorSchemaRoot, Integer, T> mapper,
++                                 long timeoutMs) {
 +        List<T> result = new ArrayList<>();
 +        for (FlightEndpoint endpoint : info.getEndpoints()) {
 +            FlightClient streamClient = c.client;
@@ -1650,7 +1683,7 @@ index 00000000..f76082b2
 +                streamClient = buildClient(loc);
 +                own = true;
 +            }
-+            try (FlightStream stream = streamClient.getStream(endpoint.getTicket(), options(c, unaryTimeoutMs()))) {
++            try (FlightStream stream = streamClient.getStream(endpoint.getTicket(), options(c, timeoutMs))) {
 +                while (stream.next()) {
 +                    VectorSchemaRoot root = stream.getRoot();
 +                    for (int row = 0; row < root.getRowCount(); row++) {
@@ -1789,7 +1822,15 @@ index 00000000..f76082b2
 +     * Values are mapped by {@code mapper(vector, row)}.
 +     */
 +    public List<Object[]> queryRows(String sql, BiFunction<FieldVector, Integer, Object> mapper) {
-+        return withFailover("statistics query", (c, opts) -> {
++        return queryRows(sql, mapper, unaryTimeoutMs());
++    }
++
++    /**
++     * {@link #queryRows(String, BiFunction)} with {@code timeoutMs} as the deadline of the GetFlightInfo call and of
++     * each endpoint stream (join-key pushdown: a planning-time query with a small budget).
++     */
++    public List<Object[]> queryRows(String sql, BiFunction<FieldVector, Integer, Object> mapper, long timeoutMs) {
++        return withFailover("planning query", timeoutMs, (c, opts) -> {
 +            FlightInfo info = c.sql.execute(sql, opts);
 +            return readRows(c, info, (root, row) -> {
 +                List<FieldVector> vectors = root.getFieldVectors();
@@ -1798,7 +1839,7 @@ index 00000000..f76082b2
 +                    values[i] = vectors.get(i).isNull(row) ? null : mapper.apply(vectors.get(i), row);
 +                }
 +                return values;
-+            });
++            }, timeoutMs);
 +        });
 +    }
 +
