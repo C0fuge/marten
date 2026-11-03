@@ -10,10 +10,10 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
  .../flight/FlightSqlMetadataClientTest.java   | 160 ++++++
  .../flight/FlightSqlRendererTest.java         | 151 ++++++
  .../flight/FlightTypeMapperTest.java          | 164 ++++++
- .../flight/MockedFlightSqlMetadataClient.java | 148 ++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 156 ++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 +++
- .../sql/plan/FlightScanPlanTest.java          | 473 ++++++++++++++++++
- 7 files changed, 1312 insertions(+)
+ .../sql/plan/FlightScanPlanTest.java          | 477 ++++++++++++++++++
+ 7 files changed, 1324 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -24,7 +24,7 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
 
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
-index 00000000..4cfd9dad
+index 00000000..08893f15
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 @@ -0,0 +1,144 @@
@@ -88,12 +88,12 @@ index 00000000..4cfd9dad
 +                p.getCallHeaders());
 +        Assertions.assertEquals("none", p.getCompression());
 +        Assertions.assertEquals(p.getCallHeaders(), p.getScanCallHeaders());
-+        Assertions.assertEquals(10_000, p.getJoinKeyPushdownMax());
++        Assertions.assertEquals(50_000, p.getJoinKeyPushdownMax());
 +        Assertions.assertEquals(2_000, p.getJoinKeyPushdownTimeoutMs());
 +        Assertions.assertEquals(0, props("flight.uri", "grpc://h1:8815", "flight.pushdown.join_keys", "0")
 +                .getJoinKeyPushdownMax());
 +        Assertions.assertThrows(Exception.class,
-+                () -> props("flight.uri", "grpc://h1:8815", "flight.pushdown.join_keys", "10001"));
++                () -> props("flight.uri", "grpc://h1:8815", "flight.pushdown.join_keys", "50001"));
 +    }
 +
 +    @Test
@@ -667,10 +667,10 @@ index 00000000..b6805cf4
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..07a4407a
+index 00000000..e41d6740
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,156 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -776,11 +776,19 @@ index 00000000..07a4407a
 +    public List<Object[]> queryRows(String sql, BiFunction<FieldVector, Integer, Object> mapper, long timeoutMs) {
 +        statsQueries.add(sql);
 +        if (sql.contains(" GROUP BY ")) {
-+            // join-key query: t1 has three keys (2 endpoints), t2 more than the default limit of 10000; t1 too
++            // join-key query: t1 has three keys (2 endpoints), t2 more than the default limit of 50000; t1 too
 +            // when the filter contains 'many' or 'wide'
 +            if (sql.contains("\"" + BIG_TABLE + "\"") || sql.contains("'many'") || sql.contains("'wide'")) {
 +                List<Object[]> rows = new ArrayList<>();
-+                for (int i = 1; i <= 10_001; i++) {
++                for (int i = 1; i <= FlightProperties.MAX_JOIN_KEYS + 1; i++) {
++                    rows.add(new Object[] {i});
++                }
++                return rows;
++            }
++            if (sql.contains("'mid'")) {
++                // more keys than the old limit of 10000 (TPC-H q19 at SF10: ~21 600), fewer than the limit
++                List<Object[]> rows = new ArrayList<>();
++                for (int i = 1; i <= 20_000; i++) {
 +                    rows.add(new Object[] {i});
 +                }
 +                return rows;
@@ -899,10 +907,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..967e5185
+index 00000000..426a6fc5
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,477 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1129,7 +1137,11 @@ index 00000000..967e5185
 +        assertContains(remoteSqlOf(plan, "t2"), "(\"id\" IN (1, 3, 5))");
 +        assertNotContains(remoteSqlOf(plan, "t1"), " IN (");
 +
-+        // too many keys (more than 10000): their min/max range (t1's ids 1..1000 within t2's 1..10M)
++        // 20000 keys (q19 at SF10 needs ~21 600): still an IN list
++        plan = getFragmentPlan("select b.k from " + T1 + " a join " + T2 + " b on a.id = b.id where a.k = 'mid'");
++        assertContains(remoteSqlOf(plan, "t2"), "(\"id\" IN (1, 2, 3, ", ", 19999, 20000))");
++
++        // too many keys (more than 50000): their min/max range (t1's ids 1..1000 within t2's 1..10M)
 +        plan = getFragmentPlan("select b.k from " + T1 + " a join " + T2 + " b on a.id = b.id where a.k = 'many'");
 +        assertContains(remoteSqlOf(plan, "t2"), "(\"id\" >= 1)", "(\"id\" <= 1000)");
 +
@@ -1186,7 +1198,7 @@ index 00000000..967e5185
 +                .getGlobalStateMgr().getMetadataMgr().getOptionalMetadata(CATALOG).get()).getClient();
 +        getFragmentPlan("select b.k from " + T1 + " a join " + T2 + " b on a.id = b.id where a.k = 'y' and a.id > 0");
 +        Assertions.assertTrue(client.getStatsQueries().contains(
-+                "SELECT \"id\" FROM \"s1\".\"t1\" WHERE (\"k\" = 'y') AND (\"id\" > 0) GROUP BY \"id\" LIMIT 10001"),
++                "SELECT \"id\" FROM \"s1\".\"t1\" WHERE (\"k\" = 'y') AND (\"id\" > 0) GROUP BY \"id\" LIMIT 50001"),
 +                client.getStatsQueries().toString());
 +    }
 +
