@@ -7,13 +7,13 @@ FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggrega
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
  .../flight/FlightPropertiesTest.java          | 144 ++++++
- .../flight/FlightSqlMetadataClientTest.java   | 160 +++++++
+ .../flight/FlightSqlMetadataClientTest.java   | 160 ++++++
  .../flight/FlightSqlRendererTest.java         | 151 ++++++
- .../flight/FlightTypeMapperTest.java          | 164 +++++++
- .../flight/MockedFlightSqlMetadataClient.java | 143 ++++++
+ .../flight/FlightTypeMapperTest.java          | 164 ++++++
+ .../flight/MockedFlightSqlMetadataClient.java | 148 ++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 +++
- .../sql/plan/FlightScanPlanTest.java          | 440 ++++++++++++++++++
- 7 files changed, 1274 insertions(+)
+ .../sql/plan/FlightScanPlanTest.java          | 473 ++++++++++++++++++
+ 7 files changed, 1312 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -667,10 +667,10 @@ index 00000000..b6805cf4
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
 new file mode 100644
-index 00000000..02c05f5f
+index 00000000..07a4407a
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/MockedFlightSqlMetadataClient.java
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,148 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -776,8 +776,9 @@ index 00000000..02c05f5f
 +    public List<Object[]> queryRows(String sql, BiFunction<FieldVector, Integer, Object> mapper, long timeoutMs) {
 +        statsQueries.add(sql);
 +        if (sql.contains(" GROUP BY ")) {
-+            // join-key query: t1 has three keys (2 endpoints), t2 more than the default limit of 10000
-+            if (sql.contains("\"" + BIG_TABLE + "\"")) {
++            // join-key query: t1 has three keys (2 endpoints), t2 more than the default limit of 10000; t1 too
++            // when the filter contains 'many' or 'wide'
++            if (sql.contains("\"" + BIG_TABLE + "\"") || sql.contains("'many'") || sql.contains("'wide'")) {
 +                List<Object[]> rows = new ArrayList<>();
 +                for (int i = 1; i <= 10_001; i++) {
 +                    rows.add(new Object[] {i});
@@ -787,6 +788,10 @@ index 00000000..02c05f5f
 +            return ImmutableList.of(new Object[] {5}, new Object[] {1}, new Object[] {3}, new Object[] {1});
 +        }
 +        double max = rowCountOf(sql);
++        if (sql.contains("'wide'")) {
++            // join-key range query of t1: wider than t2's id range
++            return ImmutableList.of(new Object[] {0L, BIG_ROW_COUNT + 5});
++        }
 +        // one row per endpoint, as in result mode partial; the second endpoint has no rows for t1
 +        return sql.contains("\"" + BIG_TABLE + "\"")
 +                ? ImmutableList.of(new Object[] {1.0, max / 2}, new Object[] {max / 2 + 1, max})
@@ -894,10 +899,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..dcb2db30
+index 00000000..967e5185
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,473 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -921,6 +926,7 @@ index 00000000..dcb2db30
 +import com.starrocks.connector.flight.MockedFlightSqlMetadataClient;
 +import com.starrocks.server.GlobalStateMgr;
 +import com.starrocks.sql.optimizer.Utils;
++import com.starrocks.sql.optimizer.rule.transformation.FlightJoinKeyPushdownRule;
 +import org.junit.jupiter.api.AfterAll;
 +import org.junit.jupiter.api.Assertions;
 +import org.junit.jupiter.api.BeforeAll;
@@ -1123,9 +1129,13 @@ index 00000000..dcb2db30
 +        assertContains(remoteSqlOf(plan, "t2"), "(\"id\" IN (1, 3, 5))");
 +        assertNotContains(remoteSqlOf(plan, "t1"), " IN (");
 +
-+        // too many keys (t2 returns more than 10000): their min/max range
-+        plan = getFragmentPlan("select a.k from " + T1 + " a join " + T2 + " b on a.id = b.id where b.k = 'x'");
-+        assertContains(remoteSqlOf(plan, "t1"), "(\"id\" >= 1)", "(\"id\" <= 10000000)");
++        // too many keys (more than 10000): their min/max range (t1's ids 1..1000 within t2's 1..10M)
++        plan = getFragmentPlan("select b.k from " + T1 + " a join " + T2 + " b on a.id = b.id where a.k = 'many'");
++        assertContains(remoteSqlOf(plan, "t2"), "(\"id\" >= 1)", "(\"id\" <= 1000)");
++
++        // a range that covers t2's whole id range is not pushed
++        plan = getFragmentPlan("select b.k from " + T1 + " a join " + T2 + " b on a.id = b.id where a.k = 'wide'");
++        assertNotContains(remoteSqlOf(plan, "t2"), ">= ", " IN (");
 +
 +        // left outer join: only the right side may be reduced
 +        plan = getFragmentPlan("select a.id, b.k from " + T1 + " a left join " + T2
@@ -1140,6 +1150,34 @@ index 00000000..dcb2db30
 +        } finally {
 +            connectContext.getSessionVariable().setFlightJoinKeyPushdown(true);
 +        }
++    }
++
++    @Test
++    public void testJoinKeyNotQueriedFromBigSource() throws Exception {
++        // TPC-H q12 / q14 shape: the only filtered side is the big table; no key query to it, the small side unchanged
++        MockedFlightSqlMetadataClient client = (MockedFlightSqlMetadataClient) ((FlightMetadata) connectContext
++                .getGlobalStateMgr().getMetadataMgr().getOptionalMetadata(CATALOG).get()).getClient();
++        String plan = getFragmentPlan("select a.k from " + T1 + " a join " + T2
++                + " b on a.id = b.id where b.k = 'q12'");
++        assertNotContains(remoteSqlOf(plan, "t1"), ">= ", " IN (");
++        Assertions.assertTrue(client.getStatsQueries().stream().noneMatch(q -> q.contains("'q12'")),
++                client.getStatsQueries().toString());
++    }
++
++    @Test
++    public void testJoinKeyGates() {
++        Assertions.assertTrue(FlightJoinKeyPushdownRule.worthAKeyQuery(1000, 10_000_000));
++        Assertions.assertFalse(FlightJoinKeyPushdownRule.worthAKeyQuery(10_000_000, 1000));
++        Assertions.assertFalse(FlightJoinKeyPushdownRule.worthAKeyQuery(1000, 1000));
++        Assertions.assertTrue(FlightJoinKeyPushdownRule.worthAKeyQuery(-1, 1000));
++        double[] target = {1, 1000};
++        Assertions.assertTrue(FlightJoinKeyPushdownRule.rangeReduces(1, 100, target));
++        Assertions.assertTrue(FlightJoinKeyPushdownRule.rangeReduces(1, 900, target));
++        Assertions.assertFalse(FlightJoinKeyPushdownRule.rangeReduces(5, 995, target));
++        Assertions.assertFalse(FlightJoinKeyPushdownRule.rangeReduces(0, 2000, target));
++        Assertions.assertTrue(FlightJoinKeyPushdownRule.rangeReduces(2000, 3000, target));
++        Assertions.assertTrue(FlightJoinKeyPushdownRule.rangeReduces(0, 2000, null));
++        Assertions.assertFalse(FlightJoinKeyPushdownRule.rangeReduces(0, 10, new double[] {5, 5}));
 +    }
 +
 +    @Test

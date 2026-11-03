@@ -482,6 +482,9 @@ CASES3 = [
      ['"l_partkey" IN (', "= 'Brand#23'"], [], "rows", []),
     ("2.14", "SELECT count(*), sum(l_quantity) FROM {c}.tpch.lineitem, {c}.tpch.part WHERE p_partkey = l_partkey AND p_brand = 'Brand#23' AND p_container = 'MED BOX'",
      [], ['"l_partkey" IN ('], "rows", ["flight_join_key_pushdown = false"]),
+    # TPC-H q14 shape: the only filtered side is the big lineitem, so no key query and no key filter on part (2026-11-03)
+    ("2.15", "SELECT count(*), sum(l_extendedprice) FROM {c}.tpch.lineitem, {c}.tpch.part WHERE l_partkey = p_partkey AND l_shipdate >= DATE '1995-09-01' AND l_shipdate < DATE '1995-10-01'",
+     ["DATE '1995-09-01'"], ['"p_partkey" IN (', '"p_partkey" >='], "rows", []),
     ("2.10", "SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM {c}.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2",
      [], ["__flight_agg"], "rows", ["flight_aggregate_pushdown = false"]),
 ]

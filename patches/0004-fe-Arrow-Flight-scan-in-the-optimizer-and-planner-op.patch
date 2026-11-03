@@ -8,7 +8,7 @@ Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, FlightAggregat
 count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, statistics, EXPLAIN, FlightScanNode
 (remote SQL, endpoint scan ranges), session variables flight_filter_pushdown / flight_aggregate_pushdown.
 ---
- .../com/starrocks/planner/FlightScanNode.java | 313 +++++++++++++++
+ .../com/starrocks/planner/FlightScanNode.java | 313 ++++++++++++++
  .../com/starrocks/qe/SessionVariable.java     |  37 ++
  .../main/java/com/starrocks/sql/Explain.java  |  20 +
  .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
@@ -18,19 +18,19 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../optimizer/operator/OperatorVisitor.java   |  10 +
  .../logical/LogicalFlightScanOperator.java    | 100 +++++
  .../operator/pattern/MultiOpPattern.java      |   1 +
- .../physical/PhysicalFlightScanOperator.java  |  67 ++++
+ .../physical/PhysicalFlightScanOperator.java  |  67 +++
  .../starrocks/sql/optimizer/rule/RuleSet.java |   2 +
  .../sql/optimizer/rule/RuleType.java          |   3 +
  .../FlightScanImplementationRule.java         |  38 ++
- .../FlightAggregationPushdownRule.java        | 355 ++++++++++++++++++
- .../FlightJoinKeyPushdownRule.java            | 347 +++++++++++++++++
+ .../FlightAggregationPushdownRule.java        | 355 ++++++++++++++++
+ .../FlightJoinKeyPushdownRule.java            | 397 ++++++++++++++++++
  .../transformation/MergeLimitDirectRule.java  |   1 +
  .../transformation/PruneScanColumnRule.java   |   3 +-
  .../PushDownPredicateScanRule.java            |   1 +
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |  27 ++
  .../sql/plan/PlanFragmentBuilder.java         |  57 ++-
- 22 files changed, 1450 insertions(+), 2 deletions(-)
+ 22 files changed, 1500 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -1213,10 +1213,10 @@ index 00000000..5e9c9f74
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
 new file mode 100644
-index 00000000..6440fabe
+index 00000000..5dbb7b5d
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/sql/optimizer/rule/transformation/FlightJoinKeyPushdownRule.java
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,397 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1279,7 +1279,10 @@ index 00000000..6440fabe
 + * At planning time the rule asks the server for the distinct join keys of the filtered side
 + * ({@code SELECT "k" FROM b WHERE ... GROUP BY "k" LIMIT max+1}, bounded by
 + * {@code flight.pushdown.join_keys_timeout_ms}). Up to {@code flight.pushdown.join_keys} keys become an IN
-+ * conjunct of the other scan; more keys become a min/max range. The conjunct is an ordinary scan predicate, so the
++ * conjunct of the other scan; more keys become a min/max range, but only if it leaves out at least a tenth of the
++ * target column's known range. The key query runs only when the source table is smaller than the target (by the
++ * cached row counts): a filtered big table as source (TPC-H q12, q14) costs a second remote scan of it and rarely
++ * yields a usable key set. The conjunct is an ordinary scan predicate, so the
 + * Flight scan renders it into its remote SQL and the BE re-checks it. The keys of the filtered side are a superset
 + * of the keys that can match (conjuncts the server cannot evaluate are left out of the key query), so the result
 + * is unchanged; the conjunct only goes to a side whose unmatched rows the join drops (inner and semi joins: either
@@ -1293,6 +1296,9 @@ index 00000000..6440fabe
 +    private static final Logger LOG = LogManager.getLogger(FlightJoinKeyPushdownRule.class);
 +
 +    public static final FlightJoinKeyPushdownRule INSTANCE = new FlightJoinKeyPushdownRule();
++
++    /** Share of the target column's range a key range must leave out to be pushed. */
++    static final double MIN_RANGE_REDUCTION = 0.1;
 +
 +    private FlightJoinKeyPushdownRule() {
 +        super(RuleType.TF_FLIGHT_JOIN_KEY_PUSHDOWN, Pattern.create(OperatorType.LOGICAL_JOIN)
@@ -1377,10 +1383,11 @@ index 00000000..6440fabe
 +        // equi-join key, does not count); with both filtered, the smaller table
 +        boolean leftFiltered = hasReducingPredicate(left);
 +        boolean rightFiltered = hasReducingPredicate(right);
++        long leftRows = metadata(left).getRowCount((FlightTable) left.getTable());
++        long rightRows = metadata(right).getRowCount((FlightTable) right.getTable());
 +        boolean sourceIsLeft;
 +        if (leftFiltered && rightFiltered) {
-+            sourceIsLeft = metadata(left).getRowCount((FlightTable) left.getTable())
-+                    <= metadata(right).getRowCount((FlightTable) right.getTable());
++            sourceIsLeft = leftRows <= rightRows;
 +        } else if (leftFiltered || rightFiltered) {
 +            sourceIsLeft = leftFiltered;
 +        } else {
@@ -1391,6 +1398,11 @@ index 00000000..6440fabe
 +        }
 +        LogicalFlightScanOperator source = sourceIsLeft ? left : right;
 +        LogicalFlightScanOperator target = sourceIsLeft ? right : left;
++        if (!worthAKeyQuery(sourceIsLeft ? leftRows : rightRows, sourceIsLeft ? rightRows : leftRows)) {
++            // TPC-H q12 / q14 shape: the filtered side is the big table; its key query is a second remote scan of
++            // it, its key set exceeds the IN limit, and the remaining range covers (almost) all of the target
++            return Collections.emptyList();
++        }
 +
 +        // the first integer equi-join key with the same type on both sides
 +        ColumnRefOperator sourceKey = null;
@@ -1428,9 +1440,11 @@ index 00000000..6440fabe
 +        if (sql == null) {
 +            return Collections.emptyList();
 +        }
++        double[] targetRange = metadata(target).getColumnRanges((FlightTable) target.getTable())
++                .get(target.getColRefToColumnMetaMap().get(targetKey).getName());
 +        ScalarOperator filter;
 +        try {
-+            filter = keyFilter(metadata(source), sql, source, sourceKey, targetKey);
++            filter = keyFilter(metadata(source), sql, sourceKey, targetKey, targetRange);
 +        } catch (Exception e) {
 +            LOG.warn("Flight join-key pushdown skipped for {}: {}", source.getTable().getName(), e.getMessage());
 +            return Collections.emptyList();
@@ -1444,6 +1458,38 @@ index 00000000..6440fabe
 +        OptExpression sourceExpr = sourceIsLeft ? input.inputAt(0) : input.inputAt(1);
 +        return Collections.singletonList(OptExpression.create(join,
 +                sourceIsLeft ? sourceExpr : targetExpr, sourceIsLeft ? targetExpr : sourceExpr));
++    }
++
++    /**
++     * The key query reads the filtered source table once more on the server; it only pays off when the source table
++     * is smaller than the target. Unknown row counts (-1, not loaded yet) do not block it.
++     */
++    @VisibleForTesting
++    public static boolean worthAKeyQuery(long sourceRows, long targetRows) {
++        return sourceRows < 0 || targetRows < 0 || sourceRows < targetRows;
++    }
++
++    /**
++     * A key range [min, max] reduces the target only when it leaves out a real part of the target column's known
++     * range (P2 column statistics): it must exclude at least {@link #MIN_RANGE_REDUCTION} of it. Without a known
++     * target range the range is used.
++     */
++    @VisibleForTesting
++    public static boolean rangeReduces(long min, long max, double[] targetRange) {
++        if (targetRange == null || targetRange.length != 2 || !(targetRange[1] >= targetRange[0])) {
++            return true;
++        }
++        double lo = Math.max(min, targetRange[0]);
++        double hi = Math.min(max, targetRange[1]);
++        if (hi < lo) {
++            // disjoint: nothing of the target matches
++            return true;
++        }
++        double span = targetRange[1] - targetRange[0];
++        if (span <= 0) {
++            return false;
++        }
++        return (hi - lo) / span <= 1.0 - MIN_RANGE_REDUCTION;
 +    }
 +
 +    private static boolean isNotNull(ScalarOperator conjunct) {
@@ -1490,8 +1536,8 @@ index 00000000..6440fabe
 +    }
 +
 +    /** IN list or range conjunct on {@code targetKey}, or null when the keys do not reduce anything. */
-+    private static ScalarOperator keyFilter(FlightMetadata metadata, String sql, LogicalFlightScanOperator source,
-+                                            ColumnRefOperator sourceKey, ColumnRefOperator targetKey) {
++    private static ScalarOperator keyFilter(FlightMetadata metadata, String sql, ColumnRefOperator sourceKey,
++                                            ColumnRefOperator targetKey, double[] targetRange) {
 +        FlightProperties props = metadata.getProperties();
 +        int maxKeys = props.getJoinKeyPushdownMax();
 +        long timeoutMs = props.getJoinKeyPushdownTimeoutMs();
@@ -1544,6 +1590,10 @@ index 00000000..6440fabe
 +            }
 +        }
 +        if (min == null || max == null) {
++            return null;
++        }
++        if (!rangeReduces(min, max, targetRange)) {
++            LOG.debug("Flight join-key range [{}, {}] does not reduce the target", min, max);
 +            return null;
 +        }
 +        return Utils.compoundAnd(
