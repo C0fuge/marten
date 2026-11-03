@@ -1,6 +1,5 @@
 # Workflow requests (see .github/workflows/dispatch.yml). Pushing a change to this file runs them.
 # Replace the lines below with the requests for this push; keep only requests you want run now.
 # At most two m4 requests per push: the m4 concurrency group keeps one running and one pending run (a third cancels the second).
-# 2026-11-03 04:50: series flded1b0 (BE 41579557200): m4 S3 checks 1-9 (3: avg / join-key cases, 4: TPC-H answers), then compare SF1 ours vs up
-m4 checks=1,2,3,4,5,6,7,8,9
-compare sf=1 paths=ours,up profiles=default,speed
+# 2026-11-03 05:12: series flded1b0, m4 41580199568 green; compare SF10 ours vs up (queued behind compare SF1 41580201961)
+compare sf=10 paths=ours,up profiles=default,speed
