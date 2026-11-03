@@ -859,8 +859,8 @@ def check6(conn, args, res):
         th = threading.Thread(target=run)
         th.start()
         time.sleep(max(1.0, KILL_AT * t_read))
+        t_kill = time.time()        # before the call: a fast server can fail the read while `docker kill` returns
         stack("kill", "flight2")
-        t_kill = time.time()
         th.join(600)
         ok, r, secs = out.get("r", (False, "no result (hung)", 0))
         kill_at = t_kill - out.get("t0", t_kill)
@@ -879,7 +879,7 @@ def check6(conn, args, res):
             failovers = counter_sum(p, "FailoverCount") if p else None
         # proof that the kill hit a running read: the query failed, or an endpoint failed over to its backup
         res.add("the kill overlapped the read (query ended after it; error or FailoverCount > 0)",
-                after > 0.2 and (not ok or bool(failovers)),
+                after > 0 and (not ok or bool(failovers)),
                 f"ended {after:.1f}s after the kill, {'error' if not ok else 'success'}, FailoverCount={failovers}")
         res.add("BE alive after failover tests", be_alive(conn))
     finally:
@@ -891,7 +891,8 @@ def check6(conn, args, res):
 
 def check7(conn, args, res):
     branch = "SELECT l_comment FROM flight.tpch.lineitem"
-    q = "SELECT count(*), sum(length(l_comment)) FROM (" + " UNION ALL ".join([branch] * 8) + ") t"
+    # 24 reads: with server 0e457de30f25 eight reads took only 3.9 s on the runner (2026-11-03)
+    q = "SELECT count(*), sum(length(l_comment)) FROM (" + " UNION ALL ".join([branch] * 24) + ") t"
     c2 = sr_connect()
     cid = sr(c2, "SELECT CONNECTION_ID()")[0][0]
     out = {}
@@ -900,9 +901,9 @@ def check7(conn, args, res):
         out["t"] = time.time()
     th = threading.Thread(target=run)
     th.start()
-    time.sleep(4)
+    time.sleep(2)
     if not th.is_alive():
-        res.add("scan still running after 4 s (precondition)", False, str(out.get("r"))[:300])
+        res.add("scan still running after 2 s (precondition)", False, str(out.get("r"))[:300])
         return
     t_kill = time.time()
     sr(conn, f"KILL QUERY {cid}")
