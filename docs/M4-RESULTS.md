@@ -698,3 +698,17 @@ zero-copy writes, distributed complete mode, size-aware DuckDB sizing (per-conne
 
 Timings (sum of the 44 TPC-H query times of check 4): S3 24.8 s (cadd1aca9c23 25.0 s), lakeFS 25.2 s (23.6 s) — inside
 the runners' spread. **a9e43ca5e296 is the m4 default from 2026-10-28 13:40 UTC.**
+
+## 2026-11-03, CI: server 0e457de30f25 (candidate m4 default) — series `4a9848e-fl1eb792`
+
+Server 0e457de30f25 = 1e7b43a4e0c7 + JWT fix (maintainer's "final server build", 2026-10-29; contents per the server
+release's START-NOTES "Settings since 7562a5bdb7b9"). Same DuckDB 1.5.6 extension set; `stack.sh` needs no change.
+
+| Run | Server | Store | Checks | Result |
+|---|---|---|---|---|
+| 41706457323 | 0e457de30f25 | s3 | 1–9 | 1–5, 8, 9 PASS (25 + 52 + 27 + 46 + 26 + 14 + 6); **6 5/6, 7 0/1 — harness timing**: the faster server finished check 7's 8× lineitem read in 3.9 s (< the 4 s precondition), and check 6's read failed on the flight2 kill (`Socket closed` from flight2) while `docker kill` was still returning, so "ended −0.3 s after the kill" |
+| 41706460586 | 0e457de30f25 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 41710154468 | 0e457de30f25 | s3 | 1, 6, 7 | PASS (25/25, 6/6, 2/2) with the m4.py fix (check 6 takes the kill time before the stop call; check 7 reads lineitem 24× and checks the precondition after 2 s); "flight2 stopped" 2.1 s (1.7 s in the first run): member-loss stall not hit; KILL 0.02 s |
+| (queued) | 0e457de30f25 | lakefs | 1, 3, 4, 10 | dispatched 2026-11-03 20:40 UTC; result for the next session |
+
+Timings: sum of the 44 TPC-H query times of check 4 (S3): **18.7 s** (a9e43ca5e296: 24.8 s).
