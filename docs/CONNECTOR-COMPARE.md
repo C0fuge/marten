@@ -6,7 +6,7 @@ checked against DuckDB on the same parquet files (row count + checksum of the no
 by order), peak resident memory of the FE and BE processes sampled every second.
 
 
-**State (2026-11-02 15:45 UTC): done.** Final runs: SF1 41466070831, SF10 41466074590 (all three paths, default
+**State (2026-11-03 05:55 UTC): "after" pass done (SF1 41580201961, SF10 41582285095), see "After the improvements".** Before (2026-11-02 15:45 UTC): Final runs: SF1 41466070831, SF10 41466074590 (all three paths, default
 and speed profile, one runner each, consecutive). Interim runs 41447501206 / 41451137029 (ours + jdbc only) agree with
 them within ~1 %.
 
@@ -35,7 +35,41 @@ a second pass per path adds `-DresourceProfile=speed`. StarRocks: one allin1 con
   Results: artifact `compare-<run>`, branch `m4-results` `compare/<run>.md` + per-run JSON.
 
 
-## Results
+## After the improvements (series `4a9848e-flded1b0`, 2026-11-03)
+
+Re-run of ours vs up only (jdbc unchanged) after `avg()` pushdown and join-key pushdown (STATUS Log 2026-11-03), same
+server `f06b5834e76e`, same harness: SF1 run **41580201961**, SF10 run **41582285095** (FE 41578204766, BE 41579557200;
+m4 41580199568 checks 1–9 PASS on the same series). The runner of this pass was faster than the one of the "before"
+runs (up, unchanged, SF1 12.82 → 8.87 s), so compare ours with up *within* a run, not across runs.
+
+| run | correct | ours warm, common (s) | up warm, common (s) | ours / up | before: ours / up |
+|---|---|---|---|---|---|
+| SF1 default (common 19) | ours 22/22, up 19/22 | 8.30 (cold 10.88) | 8.87 (cold 12.25) | 0.94 | 0.85 (10.91 / 12.82) |
+| SF1 speed (common 19) | ours 22/22, up 19/22 | 7.55 (cold 9.79) | 8.98 (cold 11.83) | 0.84 | 0.79 (10.22 / 12.98) |
+| SF10 default (common 20) | ours 22/22, up 20/22 | 68.28 (cold 74.70) | 56.17 (cold 69.42) | 1.22 | 1.18 (69.56 / 59.05) |
+| SF10 speed (common 20) | ours 22/22, up 20/22 | 52.70 (cold 57.72) | 53.33 (cold 66.56) | 0.99 | 0.95 (53.35 / 56.34) |
+
+Peak memory (MB, FE / BE): SF10 ours default 686 / 3711, speed 733 / 2014; up default 1574 / 2179, speed 1329 / 1496.
+
+SF10 default, warm median (s) of the queries that moved, ours before → after (up after):
+
+| q | ours before | ours after | up after | why |
+|---|---|---|---|---|
+| q01 | 6.08 | **2.69** | 2.60 | `avg()` pushed as sum + count: the aggregation runs remotely (item 1 works) |
+| q17 | 3.19 | **1.03** | 1.06 | `p_partkey IN (…)` from the filtered `part` cuts the lineitem scan (item 2 works) |
+| q19 | 3.36 | 3.21 | 1.92 | no change: likely because the part filters sit in an OR across both sides (q19 shape), so no reducing filter lands on the part scan alone — not verified with EXPLAIN |
+| q12 | 1.88 | **4.15** ↑ | 1.92 | regression: source = filtered `lineitem` (the only filtered side), > 10 000 distinct `l_orderkey` → the key query is an extra planning-time scan of lineitem and ends in a range over almost all of `orders` |
+| q14 | 1.28 | **2.44** ↑ | 1.15 | regression, same pattern: filtered `lineitem` (one month) as source for `part` |
+
+**Verdict after:** items 1 and 2 close the q01 and q17 gaps completely. The net SF10 gain is eaten by the new q12 / q14
+regressions (+3.4 s together): the join-key query must not run when the source side is large (it is a second remote scan
+of the big table, and its key set exceeds the IN limit anyway, so only an ineffective range remains). With those two
+back at their old times ours would be ~64.9 s vs up 56.2 s at SF10 default, and ~50 s vs 53.3 s with the speed profile.
+Next fix: STATUS Next steps.
+
+## Before the improvements (2026-11-02)
+
+### Results (before)
 
 Warm = median of runs 2 and 3, cold = run 1; sums over the queries a path answered correctly. "Common" = the queries
 both native paths answered (SF1: 19, without q10 q14 q19; SF10: 20, without q11 q21), the like-for-like comparison.
@@ -140,7 +174,7 @@ SQL JDBC metadata reports decimal128 columns as `Types.DECIMAL`, which falls to 
 analyzer refuses the column. It is the adapter path's behaviour with its documented setup (a fix belongs in the
 driver's metadata, reporting NUMERIC, or in the resolver), not a harness error (the same tables pass for ours).
 
-## Verdict
+## Verdict (before)
 
 - **Correctness:** only ours answers all 44 query runs per profile (22/22 at SF1 and SF10, default and speed). The
   upstream native fork answers 19/22 (SF1) and 20/22 (SF10), failing at planning on the server's default DuckDB memory
