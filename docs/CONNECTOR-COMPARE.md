@@ -47,6 +47,8 @@ ours / up ratio within the run.
 |---|---|---|---|---|---|---|
 | SF10 default | ours 22/22, up 20/22 | 92.30 (cold 100.85) | 80.96 (cold 98.46) | **1.14** | 1.22 | 1.18 |
 | SF10 speed | ours 22/22, up 20/22 | 75.67 (cold 80.34) | 77.97 (cold 96.66) | **0.97** | 0.99 | 0.95 |
+| SF1 default (common 19), run 41598906259 | ours 22/22, up 19/22 | 11.09 (cold 14.84) | 13.23 (cold 17.69) | **0.84** | 0.94 | 0.85 |
+| SF1 speed (common 19), run 41598906259 | ours 22/22, up 19/22 | 10.64 (cold 13.44) | 12.55 (cold 16.49) | **0.85** | 0.84 | 0.79 |
 
 Peak memory (MB, FE / BE): ours default 688 / 3295, speed 746 / 3726; up default 1182 / 2290, speed 1523 / 2236.
 
@@ -62,7 +64,15 @@ q12 is back to parity; q14 lost most of the regression (no key query any more by
 vs. before, 1.21 vs 0.98, is not explained yet — runner noise or the slower runner hitting the BE join; check in the
 next run's REMOTE SQL dump); q01 / q17 keep their gains. q19 is still the largest single gap
 (STATUS Next steps (b); `compare.py` now records the REMOTE SQL of q12/q14/q17/q19 for path ours in the run JSON and
-report). SF1 re-run: STATUS Log.
+report).
+
+SF1 run **41598906259** (same series, first run with the REMOTE SQL dump): ours ahead in both profiles (table above).
+Its dump confirms: q12 and q14 send no key filter (only the derived `IS NOT NULL`), q17 sends an IN list of ~200
+`p_partkey` values to `lineitem`, and **q19 is matched** — `part` gets the OR-derived conjuncts (`p_brand IN (…)`,
+`p_size` 1–15, `p_container IN (…)`) and `lineitem` an IN list of ~2 170 keys. At SF10 the same filter leaves ~21 600
+`p_partkey` values (1.08 % of 2 M), more than the IN limit of 10 000, and their min/max range covers all of
+`l_partkey`, so nothing reached the lineitem scan there: the q19 gap at SF10 is that missing filter. Fix: IN limit
+raised to 50 000 (series after `fla21c2a`, STATUS Log 2026-11-03 08:40).
 
 ## After the improvements (series `4a9848e-flded1b0`, 2026-11-03)
 
