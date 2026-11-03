@@ -106,6 +106,9 @@ def make_catalog(conn, path):
     return props
 
 
+EXPLAIN_QUERIES = ["q12", "q14", "q17", "q19"]
+
+
 def run(args):
     ref = json.load(open(args.ref))
     conn = m4.sr_connect()
@@ -173,6 +176,16 @@ def run(args):
         total_fe, total_be = max(total_fe, mem.fe), max(total_be, mem.be)
         print(f"{args.label} {q}: {'OK ' if ok else 'BAD'} {times} fe {mem.fe} MB be {mem.be} MB {detail}", flush=True)
     mem.stop = True
+    if args.path == "ours":
+        # remote SQL of the join-key-pushdown queries (STATUS Next steps (b)), after the timed runs
+        res["explain"] = {}
+        for q in EXPLAIN_QUERIES:
+            try:
+                plan = "\n".join(r[0] for r in m4.sr(conn, "EXPLAIN " + sr_sql(query_sql(q))))
+                res["explain"][q] = re.findall(r"REMOTE SQL:\s*(.*)", plan)
+            except Exception as e:
+                res["explain"][q] = [f"{type(e).__name__}: {e}"[:400]]
+            print(f"{args.label} {q} REMOTE SQL: {res['explain'][q]}", flush=True)
     res["fe_peak_mb"], res["be_peak_mb"] = total_fe, total_be
     res["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     json.dump(res, open(os.path.join(args.out, f"{args.label}.json"), "w"), indent=1)
@@ -209,6 +222,11 @@ def report(args):
         for q, v in r.get("queries", {}).items():
             if not v["ok"]:
                 L.append(f"- {r['label']} {q}: {v['detail']}")
+    for r in rs:
+        for q, sqls in r.get("explain", {}).items():
+            if q == EXPLAIN_QUERIES[0]:
+                L += ["", f"REMOTE SQL ({r['label']}):", ""]
+            L += [f"- {q}: " + " | ".join(f"`{x}`" for x in sqls)]
     open(args.out, "w").write("\n".join(L) + "\n")
     print("\n".join(L))
 
