@@ -546,6 +546,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   42229381807, lakefs 1,3,4,10 42236966253, check 13 42236969873, A/B 42243838994 / 42243843230, compare 42250112453 /
   42250115981 — all PASS. deafc861cce3 made the m4 default (m4.yml, compare.yml, stack.sh, M4-CI.md, M4-RESULTS.md,
   CONNECTOR-COMPARE.md); dispatch.txt cleared. No patch change; lock released.
+- 2026-11-06 17:41–17:50 UTC (cloud session): finish mode, nothing to do — no new maintainer item or answer, newest
+  server jar in `m4-assets` is still deafc861cce3. No CI dispatched, no patch change; lock released.
 
 ## Next steps
 
