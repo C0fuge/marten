@@ -524,17 +524,19 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   any more (query after the stop 2.0 s; 15 s on earlier servers). **Timing: check 4 30 s vs 20 s on 0e457de30f25
   (41706457323); every SF1 query 1.2–1.7x slower, also tiny ones (q22 0.10 → 0.14 s), and checks 2/3/8/9 too** —
   uniform, so runner variance is as likely as a server effect; runner CPU was not recorded. m4.py / compare.yml now
-  write the runner CPU model into the report header. Pair 2 dispatched: lakefs 1,3,4,10 m4 42236966253, check 13
-  m4 42236969873 (results: see the next Log line or `origin/m4-results`). No patch change.
+  write the runner CPU model into the report header. Pair 2: **lakefs 1,3,4,10 m4 42236966253 all PASS** (25/25, 27/27,
+  46/46, 5/5; runner 4 x AMD EPYC 9V74) and there check 4 is *faster* than on 0e457de30f25 (29 vs 38 s, 41713886604),
+  so the S3 slowdown is most likely runner variance (A/B pair queued in Next steps to confirm). Check 13 (compression)
+  m4 42236969873 still running at session end. No patch change; lock released.
 
 ## Next steps
 
 > **deafc861cce3 regression in progress (2026-11-06 15:20 UTC; maintainer item below).** Assets checked (Log), cache
 > `m4-assets-v20`. Done: (1) S3 1–9 m4 42229377380 PASS, iceberg 1,11,12 m4 42229381807 PASS. Running when the session
-> ended: (2) lakefs 1,3,4,10 m4 42236966253 and check 13 m4 42236969873 — read them (`git show
-> origin/m4-results:runs/<id>.md`; compare lakefs times with 0e457de30f25 run 41713886604). **Next, in `ci/dispatch.txt`
+> ended: check 13 (compression) m4 42236969873 — read it (`git show origin/m4-results:runs/42236969873.md`). Done in
+> (2): lakefs 1,3,4,10 m4 42236966253 PASS (check 4 29 s vs 38 s on 0e457de30f25). **Next, in `ci/dispatch.txt`
 > (≤ 2 m4-group requests per push, only when no m4/compare run is pending):**
-> (2b) timing A/B for the uniform 1.2–1.7x slowdown of check 4 (30 s vs 20 s on 0e457de30f25): `m4 checks=3,4
+> (2b) timing A/B for the uniform 1.2–1.7x slowdown of S3 check 4 (30 s vs 20 s on 0e457de30f25; lakefs was faster instead, so likely runner variance): `m4 checks=3,4
 > server=arrow-flight-server-1.0.0-0e457de30f25-linux.jar` and `m4 checks=3,4 server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar`
 > in one push; the reports now name the runner CPU. Same CPU and still > 10 % slower on deafc → report it as a server
 > regression (Open questions + notification); otherwise note runner variance.
