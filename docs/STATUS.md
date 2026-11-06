@@ -507,6 +507,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-06 16:30 - NEW SERVER BUILD `server-1.0.0-deafc861cce3` (kestrel items 29-34: SASL HDFS, plain-name resolution, node-local copies, log hygiene) - full regression first, before anything else.** Pin it as the e2e/m4 server (asset digests from the release SHA256SUMS; deepscan the assets as usual) and run the complete e2e suite with BOTH server profiles (default and `-DresourceProfile=speed`): every TPC-H query SF1 and SF10 (answers vs the reference), pushdown checks, metadata, prepared statements, auth modes, cluster mode (3 servers) if the suite has it. Compare times with the previous server run in this repo (same runner class). Report pass/fail per check, any wrong answer (critical), regressions >10 %; write "SERVER deafc861cce3 CHECKED" in the Log with the run ids. No new features in this session.
+
 > **Next session (from 2026-11-03 22:00 UTC): finish mode.** Server 0e457de30f25 is the m4 default (lakefs 41713886604
 > PASS, full suite green; `m4-assets-v19`). Stop early unless the maintainer adds an item / answers an Open question, or
 > a server jar newer than f06b5834e76e (2026-11-02, the compare pre-release) appears in the `m4-assets` release. The
