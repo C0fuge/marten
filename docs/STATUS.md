@@ -527,18 +527,20 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   write the runner CPU model into the report header. Pair 2: **lakefs 1,3,4,10 m4 42236966253 all PASS** (25/25, 27/27,
   46/46, 5/5; runner 4 x AMD EPYC 9V74) and there check 4 is *faster* than on 0e457de30f25 (29 vs 38 s, 41713886604),
   so the S3 slowdown is most likely runner variance (A/B pair queued in Next steps to confirm). Check 13 (compression)
-  m4 42236969873 still running at session end. No patch change; lock released.
+  **check 13 m4 42236969873 PASS** (103/103; runner AMD EPYC 7763 — runner CPUs differ between runs). Step (2b) A/B
+  dispatched at 15:35 (two m4 runs, checks 3,4 on 0e457de30f25 and deafc861cce3). No patch change; lock released.
 
 ## Next steps
 
 > **deafc861cce3 regression in progress (2026-11-06 15:20 UTC; maintainer item below).** Assets checked (Log), cache
 > `m4-assets-v20`. Done: (1) S3 1–9 m4 42229377380 PASS, iceberg 1,11,12 m4 42229381807 PASS. Running when the session
-> ended: check 13 (compression) m4 42236969873 — read it (`git show origin/m4-results:runs/42236969873.md`). Done in
-> (2): lakefs 1,3,4,10 m4 42236966253 PASS (check 4 29 s vs 38 s on 0e457de30f25). **Next, in `ci/dispatch.txt`
+> ended: the (2b) A/B pair below (dispatched 15:35 UTC; newest two `m4` runs, `git show origin/m4-results:runs/<id>.md`).
+> Done in (2): lakefs 1,3,4,10 m4 42236966253 PASS (check 4 29 s vs 38 s on 0e457de30f25), check 13 m4 42236969873
+> PASS 103/103. **Next, in `ci/dispatch.txt`
 > (≤ 2 m4-group requests per push, only when no m4/compare run is pending):**
 > (2b) timing A/B for the uniform 1.2–1.7x slowdown of S3 check 4 (30 s vs 20 s on 0e457de30f25; lakefs was faster instead, so likely runner variance): `m4 checks=3,4
 > server=arrow-flight-server-1.0.0-0e457de30f25-linux.jar` and `m4 checks=3,4 server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar`
-> in one push; the reports now name the runner CPU. Same CPU and still > 10 % slower on deafc → report it as a server
+> (already dispatched 15:35 UTC; read the results); the reports now name the runner CPU. Same CPU and still > 10 % slower on deafc → report it as a server
 > regression (Open questions + notification); otherwise note runner variance.
 > (3) `compare sf=1 paths=ours profiles=default,speed server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar` and
 > `compare sf=10 paths=ours profiles=default,speed server=…` (every TPC-H answer vs the DuckDB reference, both profiles;
