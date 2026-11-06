@@ -529,6 +529,13 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   so the S3 slowdown is most likely runner variance (A/B pair queued in Next steps to confirm). Check 13 (compression)
   **check 13 m4 42236969873 PASS** (103/103; runner AMD EPYC 7763 — runner CPUs differ between runs). Step (2b) A/B
   dispatched at 15:35 (two m4 runs, checks 3,4 on 0e457de30f25 and deafc861cce3). No patch change; lock released.
+- 2026-11-06 15:40–16:40 UTC (cloud session): deafc861cce3 regression, step (2b) A/B done: checks 3,4 on the same
+  day, **0e457de30f25 m4 42243838994 PASS** (27/27, 46/46; check 3 11 s, check 4 29 s; runner AMD EPYC 7763) vs
+  **deafc861cce3 m4 42243843230 PASS** (27/27, 46/46; 9 s, 24 s; runner AMD EPYC 9V74). The old server is now as slow as
+  the new one was in 42229377380 (30 s), so the 1.2–1.7x of the first S3 run was **runner variance, not a server
+  regression** (no same-CPU pair needed: on today's runners deafc861cce3 is never slower than 0e457de30f25). Step (3)
+  dispatched ~16:35 UTC: `compare sf=1` and `compare sf=10`, `paths=ours profiles=default,speed` on deafc861cce3
+  (m4 concurrency group, run ids in STATUS-CI). No patch change; lock released.
 
 ## Next steps
 
@@ -538,10 +545,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > Done in (2): lakefs 1,3,4,10 m4 42236966253 PASS (check 4 29 s vs 38 s on 0e457de30f25), check 13 m4 42236969873
 > PASS 103/103. **Next, in `ci/dispatch.txt`
 > (≤ 2 m4-group requests per push, only when no m4/compare run is pending):**
-> (2b) timing A/B for the uniform 1.2–1.7x slowdown of S3 check 4 (30 s vs 20 s on 0e457de30f25; lakefs was faster instead, so likely runner variance): `m4 checks=3,4
-> server=arrow-flight-server-1.0.0-0e457de30f25-linux.jar` and `m4 checks=3,4 server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar`
-> (already dispatched 15:35 UTC; read the results); the reports now name the runner CPU. Same CPU and still > 10 % slower on deafc → report it as a server
-> regression (Open questions + notification); otherwise note runner variance.
+> (2b) DONE 16:30 UTC: runner variance, not a server regression (m4 42243838994 on 0e457de30f25 29 s vs
+> 42243843230 on deafc861cce3 24 s for check 4; Log). **(3) was dispatched ~16:35 UTC — read the two newest `compare` runs
+> (`git show origin/m4-results:compare/<run>.md`); do not dispatch them again.** Original text:
 > (3) `compare sf=1 paths=ours profiles=default,speed server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar` and
 > `compare sf=10 paths=ours profiles=default,speed server=…` (every TPC-H answer vs the DuckDB reference, both profiles;
 > times vs 41598906259 / 41606943229 on f06b5834e76e). If all green, make deafc861cce3 the m4 default (m4.yml,
