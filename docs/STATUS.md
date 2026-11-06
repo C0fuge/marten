@@ -510,6 +510,9 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   newest server there is f06b5834e76e, no `*-deafc861cce3*` jar/plugins/libs/auth tar and no SHA256SUMS line for it.
   Open question added; the run plan is ready under Next steps. No patch change, no CI run.
 
+- 2026-11-06 13:40 UTC (cloud session): deafc861cce3 regression **still blocked**: `m4-assets` (still the only
+  release) has no `*-deafc861cce3*` asset and SHA256SUMS unchanged since 2026-11-02 12:38 UTC. No patch change, no CI run.
+
 ## Next steps
 
 > **Maintainer item below waits on the upload (2026-11-06 13:30 UTC).** As soon as `m4-assets` has
