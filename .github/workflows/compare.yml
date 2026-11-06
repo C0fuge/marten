@@ -179,7 +179,7 @@ jobs:
           {
             echo "# Connector comparison run $GITHUB_RUN_ID (SF${{ inputs.sf }}, server ${{ inputs.server }})"
             echo
-            echo "Paths with outputs:${CMP_PATHS:-}; profiles ${{ inputs.profiles }}; ${{ inputs.runs }} runs per query; runner $(nproc) vCPU, $(free -g | awk '/Mem/ {print $2}') GB"
+            echo "Paths with outputs:${CMP_PATHS:-}; profiles ${{ inputs.profiles }}; ${{ inputs.runs }} runs per query; runner $(nproc) vCPU ($(grep -m1 '^model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')), $(free -g | awk '/Mem/ {print $2}') GB"
             echo
             ls "$out"/*.json >/dev/null 2>&1 && python3 ci/m4/compare.py report --out "$out/report.md" "$out"/*.json >/dev/null && cat "$out/report.md"
             echo

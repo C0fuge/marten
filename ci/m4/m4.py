@@ -1467,9 +1467,15 @@ def main():
         results.append(res)
 
     run = os.environ.get("GITHUB_RUN_ID", "local")
+    cpu = "?"
+    try:
+        with open("/proc/cpuinfo") as ci:
+            cpu = next((l.split(":", 1)[1].strip() for l in ci if l.startswith("model name")), "?")
+    except OSError:
+        pass
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, checks {args.checks}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, checks {args.checks}, runner {os.cpu_count()} x {cpu}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "
