@@ -513,19 +513,36 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - 2026-11-06 13:40 UTC (cloud session): deafc861cce3 regression **still blocked**: `m4-assets` (still the only
   release) has no `*-deafc861cce3*` asset and SHA256SUMS unchanged since 2026-11-02 12:38 UTC. No patch change, no CI run.
 
+- 2026-11-06 13:50–15:20 UTC (cloud session): **server deafc861cce3 regression, part 1.** Assets arrived in `m4-assets`
+  13:47–13:48 UTC. Asset check (deepscan): the four SHA256SUMS lines and every inner SHA256SUMS verify; no links, setuid
+  bits or path escapes in the tars; plugins, runtime libs, LDAP/JWT jars, every third-party class and native lib in the
+  server jar byte-identical to 0e457de30f25; 82 new/changed classes, all in `pro.surpin.data.arrowflight.server`
+  (LocalCopyCache, HdfsShortCircuit, PeerReadGate, CopyBatchMerge, ResourceProfile, ...), +1 class in ranger-hive; no
+  credentials, URLs or process-exec strings in them. m4 assets cache key now `m4-assets-v20` (v19 lacked the new assets).
+  Series `fl1eb792` (unchanged): **S3 checks 1–9 m4 42229377380 all PASS** (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2,
+  14/14, 6/6); **iceberg 1,11,12 m4 42229381807 all PASS** (25/25, 22/22, 10/10). Check 6: no ~10 s member-loss stall
+  any more (query after the stop 2.0 s; 15 s on earlier servers). **Timing: check 4 30 s vs 20 s on 0e457de30f25
+  (41706457323); every SF1 query 1.2–1.7x slower, also tiny ones (q22 0.10 → 0.14 s), and checks 2/3/8/9 too** —
+  uniform, so runner variance is as likely as a server effect; runner CPU was not recorded. m4.py / compare.yml now
+  write the runner CPU model into the report header. Pair 2 dispatched: lakefs 1,3,4,10 m4 42236966253, check 13
+  m4 42236969873 (results: see the next Log line or `origin/m4-results`). No patch change.
+
 ## Next steps
 
-> **Maintainer item below waits on the upload (2026-11-06 13:30 UTC).** As soon as `m4-assets` has
-> `arrow-flight-server-1.0.0-deafc861cce3-linux.jar`, `flight-plugins-1.0.0-deafc861cce3.tar.zst`,
-> `flight-server-libs-1.0.0-deafc861cce3.tar.zst` (+ `flight-auth-…`) and their SHA256SUMS lines: deepscan the assets,
-> then in `ci/dispatch.txt` (≤ 2 m4-group requests per push, one push per pair as the previous runs finish):
-> (1) `m4 checks=1,2,3,4,5,6,7,8,9 server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar` and
-> `m4 checks=1,11,12 store=iceberg server=…`; (2) `m4 checks=1,3,4,10 store=lakefs server=…` and
-> `m4 checks=13 server=…` (compression); (3) `compare sf=1 paths=ours profiles=default,speed server=…` and
-> `compare sf=10 paths=ours profiles=default,speed server=…` (every TPC-H answer vs the DuckDB reference, both
-> profiles; compare times with 41598906259 / 41606943229 on f06b5834e76e and m4 41706457323 on 0e457de30f25). If all
-> green, make it the m4 default (m4.yml, compare.yml, stack.sh, cache key `m4-assets-v20`, M4-CI.md table) and write
-> "SERVER deafc861cce3 CHECKED" in the Log. Cluster mode = m4 check 6 (3 servers); auth modes = check 8.
+> **deafc861cce3 regression in progress (2026-11-06 15:20 UTC; maintainer item below).** Assets checked (Log), cache
+> `m4-assets-v20`. Done: (1) S3 1–9 m4 42229377380 PASS, iceberg 1,11,12 m4 42229381807 PASS. Running when the session
+> ended: (2) lakefs 1,3,4,10 m4 42236966253 and check 13 m4 42236969873 — read them (`git show
+> origin/m4-results:runs/<id>.md`; compare lakefs times with 0e457de30f25 run 41713886604). **Next, in `ci/dispatch.txt`
+> (≤ 2 m4-group requests per push, only when no m4/compare run is pending):**
+> (2b) timing A/B for the uniform 1.2–1.7x slowdown of check 4 (30 s vs 20 s on 0e457de30f25): `m4 checks=3,4
+> server=arrow-flight-server-1.0.0-0e457de30f25-linux.jar` and `m4 checks=3,4 server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar`
+> in one push; the reports now name the runner CPU. Same CPU and still > 10 % slower on deafc → report it as a server
+> regression (Open questions + notification); otherwise note runner variance.
+> (3) `compare sf=1 paths=ours profiles=default,speed server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar` and
+> `compare sf=10 paths=ours profiles=default,speed server=…` (every TPC-H answer vs the DuckDB reference, both profiles;
+> times vs 41598906259 / 41606943229 on f06b5834e76e). If all green, make deafc861cce3 the m4 default (m4.yml,
+> compare.yml, stack.sh, M4-CI.md table row, M4 milestone line) and write "SERVER deafc861cce3 CHECKED" in the Log with
+> all run ids. Cluster mode = m4 check 6 (done in (1)); auth modes = check 8 (done in (1)).
 
 > **Maintainer, 2026-11-06 16:30 - NEW SERVER BUILD `server-1.0.0-deafc861cce3` (kestrel items 29-34: SASL HDFS, plain-name resolution, node-local copies, log hygiene) - full regression first, before anything else.** Pin it as the e2e/m4 server (asset digests from the release SHA256SUMS; deepscan the assets as usual) and run the complete e2e suite with BOTH server profiles (default and `-DresourceProfile=speed`): every TPC-H query SF1 and SF10 (answers vs the reference), pushdown checks, metadata, prepared statements, auth modes, cluster mode (3 servers) if the suite has it. Compare times with the previous server run in this repo (same runner class). Report pass/fail per check, any wrong answer (critical), regressions >10 %; write "SERVER deafc861cce3 CHECKED" in the Log with the run ids. No new features in this session.
 
@@ -870,9 +887,7 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
-- **2026-11-06 13:30 UTC (blocks the deafc861cce3 regression):** the server build `server-1.0.0-deafc861cce3` is not in
-  this repo's `m4-assets` release (newest there: f06b5834e76e, 2026-11-02). Please upload jar, plugins tar, libs tar,
-  auth tar and the merged SHA256SUMS as for earlier builds; the next session runs the full suite (plan in Next steps).
+- ~~**2026-11-06 13:30 UTC:** deafc861cce3 assets missing from `m4-assets`~~ — uploaded 13:48 UTC, regression running.
 
 - **2026-11-03, after IMPROVEMENTS DONE (no decision needed to continue):** (1) release: should `4a9848e-fl1eb792`
   (avg + join-key pushdown, FE only since `flf41597`) get a draft release for your local check? (2) With the server's
