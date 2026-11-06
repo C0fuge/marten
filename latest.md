@@ -1,11 +1,12 @@
-# M4 run 42236969873
+# M4 run 42243838994
 
-2026-11-06 15:30 UTC, series `4.1.4-4a9848e-fl1eb792`, server `arrow-flight-server-1.0.0-deafc861cce3-linux.jar`, store `s3: s3://lake/parquet`, compression `none`, checks 13, runner 4 x AMD EPYC 7763 64-Core Processor
+2026-11-06 15:52 UTC, series `4.1.4-4a9848e-fl1eb792`, server `arrow-flight-server-1.0.0-0e457de30f25-linux.jar`, store `s3: s3://lake/parquet`, compression `none`, checks 3,4, runner 4 x AMD EPYC 7763 64-Core Processor
 
 | # | Check | Result | Items | Time |
 |---|---|---|---|---|
 | 1 | catalog, SHOW, DESC, masking | PASS | 25/25 | 3 s |
-| 13 | result compression (flight.compression none / lz4 / zstd) | PASS | 103/103 | 91 s |
+| 3 | M4-TESTS §1–2 (EXPLAIN + results) | PASS | 27/27 | 11 s |
+| 4 | TPC-H SF1 q01–q22, topn default and 0 | PASS | 46/46 | 29 s |
 
 ## Check 1: catalog, SHOW, DESC, masking
 
@@ -37,117 +38,91 @@
 - note: DESC flight.types.alltypes: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME
 - note: DESC flight.types.alltypes_full: id INT, c_bool BOOLEAN, c_tinyint TINYINT, c_smallint SMALLINT, c_int INT, c_bigint BIGINT, c_utinyint SMALLINT, c_usmallint INT, c_uinteger BIGINT, c_ubigint DECIMAL(20,0), c_hugeint DOUBLE, c_float FLOAT, c_double DOUBLE, c_dec9_2 DECIMAL(9,2), c_dec18_4 DECIMAL(18,4), c_dec38_10 DECIMAL(38,10), c_varchar VARCHAR(1073741824), c_blob VARBINARY, c_date DATE, c_time VARCHAR(1073741824), c_ts DATETIME, c_ts_ms DATETIME, c_ts_ns DATETIME, c_tstz DATETIME, c_uuid VARCHAR(1073741824), c_interval VARCHAR(1073741824), c_list ARRAY<BIGINT>, c_struct struct<`a` int(11), `b` varchar(1073741824)>, c_map MAP<VARCHAR(1073741824),INT>
 
-## Check 13: result compression (flight.compression none / lz4 / zstd)
+## Check 3: M4-TESTS §1–2 (EXPLAIN + results)
 
-- PASS `lz4 q01 topn=default` rows 4/4 0.79s
-- PASS `lz4 q02 topn=default` rows 100/100 0.30s
-- PASS `lz4 q03 topn=default` rows 10/10 0.92s
-- PASS `lz4 q04 topn=default` rows 5/5 0.63s
-- PASS `lz4 q05 topn=default` rows 5/5 1.12s
-- PASS `lz4 q06 topn=default` rows 1/1 0.25s
-- PASS `lz4 q07 topn=default` rows 4/4 0.73s
-- PASS `lz4 q08 topn=default` rows 2/2 1.30s
-- PASS `lz4 q09 topn=default` rows 175/175 1.31s
-- PASS `lz4 q10 topn=default` rows 20/20 0.91s
-- PASS `lz4 q11 topn=default` rows 1048/1048 0.22s
-- PASS `lz4 q12 topn=default` rows 2/2 0.54s
-- PASS `lz4 q13 topn=default` rows 42/42 0.64s
-- PASS `lz4 q14 topn=default` rows 1/1 0.33s
-- PASS `lz4 q15 topn=default` rows 1/1 0.36s
-- PASS `lz4 q16 topn=default` rows 18314/18314 1.72s
-- PASS `lz4 q17 topn=default` rows 1/1 0.29s
-- PASS `lz4 q18 topn=default` rows 57/57 1.09s
-- PASS `lz4 q19 topn=default` rows 1/1 0.55s
-- PASS `lz4 q20 topn=default` rows 186/186 0.52s
-- PASS `lz4 q21 topn=default` rows 100/100 1.38s
-- PASS `lz4 q22 topn=default` rows 7/7 0.20s
-- PASS `lz4 q01 topn=0` rows 4/4 0.70s
-- PASS `lz4 q02 topn=0` rows 100/100 0.22s
-- PASS `lz4 q03 topn=0` rows 10/10 0.82s
-- PASS `lz4 q04 topn=0` rows 5/5 0.56s
-- PASS `lz4 q05 topn=0` rows 5/5 0.90s
-- PASS `lz4 q06 topn=0` rows 1/1 0.22s
-- PASS `lz4 q07 topn=0` rows 4/4 0.68s
-- PASS `lz4 q08 topn=0` rows 2/2 1.23s
-- PASS `lz4 q09 topn=0` rows 175/175 1.17s
-- PASS `lz4 q10 topn=0` rows 20/20 0.82s
-- PASS `lz4 q11 topn=0` rows 1048/1048 0.23s
-- PASS `lz4 q12 topn=0` rows 2/2 0.45s
-- PASS `lz4 q13 topn=0` rows 42/42 0.60s
-- PASS `lz4 q14 topn=0` rows 1/1 0.30s
-- PASS `lz4 q15 topn=0` rows 1/1 0.37s
-- PASS `lz4 q16 topn=0` rows 18314/18314 0.76s
-- PASS `lz4 q17 topn=0` rows 1/1 0.27s
-- PASS `lz4 q18 topn=0` rows 57/57 0.96s
-- PASS `lz4 q19 topn=0` rows 1/1 0.43s
-- PASS `lz4 q20 topn=0` rows 186/186 0.45s
-- PASS `lz4 q21 topn=0` rows 100/100 1.57s
-- PASS `lz4 q22 topn=0` rows 7/7 0.20s
-- PASS `zstd q01 topn=default` rows 4/4 0.75s
-- PASS `zstd q02 topn=default` rows 100/100 0.25s
-- PASS `zstd q03 topn=default` rows 10/10 0.98s
-- PASS `zstd q04 topn=default` rows 5/5 0.65s
-- PASS `zstd q05 topn=default` rows 5/5 1.09s
-- PASS `zstd q06 topn=default` rows 1/1 0.21s
-- PASS `zstd q07 topn=default` rows 4/4 0.69s
-- PASS `zstd q08 topn=default` rows 2/2 1.36s
-- PASS `zstd q09 topn=default` rows 175/175 1.50s
-- PASS `zstd q10 topn=default` rows 20/20 0.88s
-- PASS `zstd q11 topn=default` rows 1048/1048 0.23s
-- PASS `zstd q12 topn=default` rows 2/2 0.45s
-- PASS `zstd q13 topn=default` rows 42/42 0.73s
-- PASS `zstd q14 topn=default` rows 1/1 0.28s
-- PASS `zstd q15 topn=default` rows 1/1 0.34s
-- PASS `zstd q16 topn=default` rows 18314/18314 0.87s
-- PASS `zstd q17 topn=default` rows 1/1 0.32s
-- PASS `zstd q18 topn=default` rows 57/57 1.17s
-- PASS `zstd q19 topn=default` rows 1/1 0.48s
-- PASS `zstd q20 topn=default` rows 186/186 0.52s
-- PASS `zstd q21 topn=default` rows 100/100 1.46s
-- PASS `zstd q22 topn=default` rows 7/7 0.17s
-- PASS `zstd q01 topn=0` rows 4/4 0.69s
-- PASS `zstd q02 topn=0` rows 100/100 0.22s
-- PASS `zstd q03 topn=0` rows 10/10 0.87s
-- PASS `zstd q04 topn=0` rows 5/5 0.57s
-- PASS `zstd q05 topn=0` rows 5/5 1.09s
-- PASS `zstd q06 topn=0` rows 1/1 0.22s
-- PASS `zstd q07 topn=0` rows 4/4 0.76s
-- PASS `zstd q08 topn=0` rows 2/2 1.36s
-- PASS `zstd q09 topn=0` rows 175/175 1.44s
-- PASS `zstd q10 topn=0` rows 20/20 0.88s
-- PASS `zstd q11 topn=0` rows 1048/1048 0.25s
-- PASS `zstd q12 topn=0` rows 2/2 0.46s
-- PASS `zstd q13 topn=0` rows 42/42 0.71s
-- PASS `zstd q14 topn=0` rows 1/1 0.33s
-- PASS `zstd q15 topn=0` rows 1/1 0.33s
-- PASS `zstd q16 topn=0` rows 18314/18314 0.78s
-- PASS `zstd q17 topn=0` rows 1/1 0.25s
-- PASS `zstd q18 topn=0` rows 57/57 1.00s
-- PASS `zstd q19 topn=0` rows 1/1 0.41s
-- PASS `zstd q20 topn=0` rows 186/186 0.58s
-- PASS `zstd q21 topn=0` rows 100/100 1.73s
-- PASS `zstd q22 topn=0` rows 7/7 0.17s
-- PASS `types.alltypes lz4 = none` rows 5000/5000
-- PASS `types.alltypes zstd = none` rows 5000/5000
-- PASS `types.alltypes_full lz4 = none` rows 5000/5000
-- PASS `types.alltypes_full zstd = none` rows 5000/5000
-- PASS `tc netem on veth5daeb5b` 
-- PASS `scan lz4 netem = DuckDB` 
-- PASS `scan none netem = DuckDB` 
-- PASS `scan zstd netem = DuckDB` 
-- PASS `scan lz4 plain = DuckDB` 
-- PASS `scan none plain = DuckDB` 
-- PASS `scan zstd plain = DuckDB` 
-- PASS `lz4 plain: bytes into sr < 0.8 x none` 172.2 MB vs 358.3 MB
-- PASS `zstd plain: bytes into sr < 0.8 x none` 115.4 MB vs 358.3 MB
-- PASS `lz4 netem: bytes into sr < 0.8 x none` 172.2 MB vs 356.5 MB
-- PASS `zstd netem: bytes into sr < 0.8 x none` 115.4 MB vs 356.5 MB
-- note: netem link (delay 10ms rate 1gbit) lz4: 1.59 s, 172.2 MB into sr, 352.7 MB decoded (BytesRead), 222 MB/s decoded, 108 MB/s on the wire
-- note: netem link (delay 10ms rate 1gbit) none: 3.13 s, 356.5 MB into sr, 352.7 MB decoded (BytesRead), 113 MB/s decoded, 114 MB/s on the wire
-- note: netem link (delay 10ms rate 1gbit) zstd: 1.88 s, 115.4 MB into sr, 352.7 MB decoded (BytesRead), 188 MB/s decoded, 61 MB/s on the wire
-- note: plain link () lz4: 1.48 s, 172.2 MB into sr, 352.7 MB decoded (BytesRead), 238 MB/s decoded, 116 MB/s on the wire
-- note: plain link () none: 1.21 s, 358.3 MB into sr, 352.7 MB decoded (BytesRead), 292 MB/s decoded, 296 MB/s on the wire
-- note: plain link () zstd: 1.80 s, 115.4 MB into sr, 352.7 MB decoded (BytesRead), 196 MB/s decoded, 64 MB/s on the wire
+- PASS `1.1 SELECT l_orderkey, l_quantity FROM flight.tpch.lineitem WHERE l_shipdate >= DATE '1998-09-01' AND l_returnflag = 'R'` REMOTE SQL: SELECT "l_orderkey", "l_quantity", "l_returnflag", "l_shipdate" FROM "tpch"."lineitem" WHERE ("l_shipdate" >= DATE '1998-09-01') AND ("l_returnflag" = 'R') | rows 0 (0.25s)
+- PASS `1.2 SELECT * FROM flight.tpch.nation LIMIT 5` REMOTE SQL: SELECT "n_nationkey", "n_name", "n_regionkey", "n_comment" FROM "tpch"."nation" LIMIT 5 | rows 5 (0.05s)
+- PASS `1.3 SELECT * FROM flight.tpch.nation WHERE n_name LIKE 'A%' LIMIT 3` REMOTE SQL: SELECT "n_nationkey", "n_name", "n_regionkey", "n_comment" FROM "tpch"."nation" WHERE ("n_name" LIKE 'A%') LIMIT 3 | rows 2 (0.06s)
+- PASS `1.4 SELECT count(*) FROM flight.tpch.customer WHERE c_comment LIKE '%a\\_b%'` REMOTE SQL: SELECT "c_comment" FROM "tpch"."customer" | rows 1 (0.18s)
+- PASS `1.5 SELECT l_orderkey, l_quantity FROM flight.tpch.lineitem WHERE l_shipdate >= DATE '1998-09-01' AND l_returnflag = 'R'` REMOTE SQL: SELECT "l_orderkey", "l_quantity", "l_returnflag", "l_shipdate" FROM "tpch"."lineitem" | rows 0 (0.81s)
+- PASS `2.1 SELECT count(*) FROM flight.tpch.lineitem` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" | rows 1 (0.07s)
+- PASS `2.1 (complete) SELECT count(*) FROM flight_c.tpch.lineitem` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" | rows 1 (0.08s)
+- PASS `2.2 SELECT count(*) FROM flight.tpch.lineitem WHERE l_quantity > 45` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" WHERE ("l_quantity" > 45) | rows 1 (0.09s)
+- PASS `2.2 (complete) SELECT count(*) FROM flight_c.tpch.lineitem WHERE l_quantity > 45` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" WHERE ("l_quantity" > 45) | rows 1 (0.08s)
+- PASS `2.3 SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", min("l_shipdate") AS "__flight_agg_1", max("l_discount") AS "__flight_agg_2", count(*) AS "__flight_agg_3" FROM "tpch"."lineitem" GROUP BY "l_returnflag", "l_linestatus" | rows 4 (0.32s)
+- PASS `2.3 (complete) SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight_c.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", min("l_shipdate") AS "__flight_agg_1", max("l_discount") AS "__flight_agg_2", count(*) AS "__flight_agg_3" FROM "tpch"."lineitem" GROUP BY "l_returnflag", "l_linestatus" | rows 4 (0.28s)
+- PASS `2.4 SELECT DISTINCT n_regionkey FROM flight.tpch.nation` REMOTE SQL: SELECT "n_regionkey" FROM "tpch"."nation" GROUP BY "n_regionkey" | rows 5 (0.04s)
+- PASS `2.4 (complete) SELECT DISTINCT n_regionkey FROM flight_c.tpch.nation` REMOTE SQL: SELECT "n_regionkey" FROM "tpch"."nation" GROUP BY "n_regionkey" | rows 5 (0.05s)
+- PASS `2.5 SELECT avg(l_quantity) FROM flight.tpch.lineitem` REMOTE SQL: SELECT sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", count("l_quantity") AS "__flight_agg_1" FROM "tpch"."lineitem" | rows 1 (0.14s)
+- PASS `2.5 (complete) SELECT avg(l_quantity) FROM flight_c.tpch.lineitem` REMOTE SQL: SELECT sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", count("l_quantity") AS "__flight_agg_1" FROM "tpch"."lineitem" | rows 1 (0.14s)
+- PASS `2.6 SELECT count(DISTINCT l_suppkey) FROM flight.tpch.lineitem` REMOTE SQL: SELECT "l_suppkey" FROM "tpch"."lineitem" | rows 1 (0.24s)
+- PASS `2.7 SELECT o_orderpriority, count(*) FROM flight.tpch.orders WHERE o_comment LIKE '%a\\_b%' GROUP BY 1` REMOTE SQL: SELECT "o_orderpriority", "o_comment" FROM "tpch"."orders" | rows 0 (0.38s)
+- PASS `2.8 SELECT count(*) FROM flight.tpch.nation WHERE n_nationkey < 0` REMOTE SQL: SELECT count(*) AS "__flight_agg_0" FROM "tpch"."nation" WHERE ("n_nationkey" < 0) | rows 1 (0.03s)
+- PASS `2.9 SELECT l_returnflag, count(*) c FROM flight.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000` REMOTE SQL: SELECT "l_returnflag", count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" GROUP BY "l_returnflag" | rows 3 (0.08s)
+- PASS `2.9 (complete) SELECT l_returnflag, count(*) c FROM flight_c.tpch.lineitem GROUP BY 1 HAVING count(*) > 1000` REMOTE SQL: SELECT "l_returnflag", count(*) AS "__flight_agg_0" FROM "tpch"."lineitem" GROUP BY "l_returnflag" | rows 3 (0.09s)
+- PASS `2.12 SELECT l_returnflag, l_linestatus, sum(l_quantity), sum(l_extendedprice * (1 - l_discount)), avg(l_quantity), avg(l_extendedprice), avg(l_discount), count(*) FROM flight.tpch.lineitem WHERE l_shi` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", sum(CAST((CAST("l_extendedprice" AS DECIMAL(15,2)) * CAST((1 - CAST("l_discount" AS DECIMAL(16,2))) AS DECIMAL(16,2))) AS DECIMAL(38,4))) AS "__flight_agg_1", sum(CAST("l_quantity" AS DECIMAL(38,2))) | rows 4 (0.59s)
+- PASS `2.12 (complete) SELECT l_returnflag, l_linestatus, sum(l_quantity), sum(l_extendedprice * (1 - l_discount)), avg(l_quantity), avg(l_extendedprice), avg(l_discount), count(*) FROM flight_c.tpch.lineite` REMOTE SQL: SELECT "l_returnflag", "l_linestatus", sum(CAST("l_quantity" AS DECIMAL(38,2))) AS "__flight_agg_0", sum(CAST((CAST("l_extendedprice" AS DECIMAL(15,2)) * CAST((1 - CAST("l_discount" AS DECIMAL(16,2))) AS DECIMAL(16,2))) AS DECIMAL(38,4))) AS "__flight_agg_1", sum(CAST("l_quantity" AS DECIMAL(38,2))) | rows 4 (0.60s)
+- PASS `2.13 SELECT count(*), sum(l_quantity) FROM flight.tpch.lineitem, flight.tpch.part WHERE p_partkey = l_partkey AND p_brand = 'Brand#23' AND p_container = 'MED BOX'` REMOTE SQL: SELECT "p_partkey", "p_brand", "p_container" FROM "tpch"."part" WHERE ("p_brand" = 'Brand#23') AND ("p_container" = 'MED BOX') | SELECT "l_partkey", "l_quantity" FROM "tpch"."lineitem" WHERE ("l_partkey" IS NOT NULL) AND ("l_partkey" IN (2409, 2425, 4880, 5627, 6079, 7682, 10687, 11200, 11256, 11816 | rows 1 (0.23s)
+- PASS `2.14 SELECT count(*), sum(l_quantity) FROM flight.tpch.lineitem, flight.tpch.part WHERE p_partkey = l_partkey AND p_brand = 'Brand#23' AND p_container = 'MED BOX'` REMOTE SQL: SELECT "l_partkey", "l_quantity" FROM "tpch"."lineitem" WHERE ("l_partkey" IS NOT NULL) | SELECT "p_partkey", "p_brand", "p_container" FROM "tpch"."part" WHERE ("p_brand" = 'Brand#23') AND ("p_container" = 'MED BOX') | rows 1 (0.40s)
+- PASS `2.15 SELECT count(*), sum(l_extendedprice) FROM flight.tpch.lineitem, flight.tpch.part WHERE l_partkey = p_partkey AND l_shipdate >= DATE '1995-09-01' AND l_shipdate < DATE '1995-10-01'` REMOTE SQL: SELECT "l_partkey", "l_extendedprice", "l_shipdate" FROM "tpch"."lineitem" WHERE ("l_shipdate" >= DATE '1995-09-01') AND ("l_shipdate" < DATE '1995-10-01') | SELECT "p_partkey" FROM "tpch"."part" WHERE ("p_partkey" IS NOT NULL) | rows 1 (0.27s)
+- PASS `2.10 SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_quantity", "l_discount", "l_returnflag", "l_linestatus", "l_shipdate" FROM "tpch"."lineitem" | rows 4 (0.69s)
+- PASS `2.11 (flight.pushdown.aggregate=false) SELECT l_returnflag, l_linestatus, sum(l_quantity), min(l_shipdate), max(l_discount), count(*) FROM flight_noagg.tpch.lineitem GROUP BY 1, 2 ORDER BY 1, 2` REMOTE SQL: SELECT "l_quantity", "l_discount", "l_returnflag", "l_linestatus", "l_shipdate" FROM "tpch"."lineitem" | rows 4 (0.78s)
+
+## Check 4: TPC-H SF1 q01–q22, topn default and 0
+
+- PASS `q05 EXPLAIN COSTS: row counts of all 6 Flight scans` tpch.region=5, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.lineitem=6001215, tpch.orders=227651
+- PASS `q05 EXPLAIN COSTS: orders estimate from o_orderdate min/max` orders=[227651], band 150000..320000 (scale 1)
+- PASS `q01 topn=default` rows 4/4 0.80s
+- PASS `q02 topn=default` rows 100/100 0.29s
+- PASS `q03 topn=default` rows 10/10 0.87s
+- PASS `q04 topn=default` rows 5/5 0.55s
+- PASS `q05 topn=default` rows 5/5 0.83s
+- PASS `q06 topn=default` rows 1/1 0.29s
+- PASS `q07 topn=default` rows 4/4 0.70s
+- PASS `q08 topn=default` rows 2/2 1.06s
+- PASS `q09 topn=default` rows 175/175 0.99s
+- PASS `q10 topn=default` rows 20/20 0.81s
+- PASS `q11 topn=default` rows 1048/1048 0.23s
+- PASS `q12 topn=default` rows 2/2 0.49s
+- PASS `q13 topn=default` rows 42/42 0.50s
+- PASS `q14 topn=default` rows 1/1 0.37s
+- PASS `q15 topn=default` rows 1/1 0.43s
+- PASS `q16 topn=default` rows 18314/18314 1.67s
+- PASS `q17 topn=default` rows 1/1 0.29s
+- PASS `q18 topn=default` rows 57/57 0.92s
+- PASS `q19 topn=default` rows 1/1 0.55s
+- PASS `q20 topn=default` rows 186/186 0.52s
+- PASS `q21 topn=default` rows 100/100 1.24s
+- PASS `q22 topn=default` rows 7/7 0.18s
+- PASS `q01 topn=0` rows 4/4 0.71s
+- PASS `q02 topn=0` rows 100/100 0.21s
+- PASS `q03 topn=0` rows 10/10 0.71s
+- PASS `q04 topn=0` rows 5/5 0.42s
+- PASS `q05 topn=0` rows 5/5 0.78s
+- PASS `q06 topn=0` rows 1/1 0.24s
+- PASS `q07 topn=0` rows 4/4 0.64s
+- PASS `q08 topn=0` rows 2/2 1.09s
+- PASS `q09 topn=0` rows 175/175 1.21s
+- PASS `q10 topn=0` rows 20/20 0.75s
+- PASS `q11 topn=0` rows 1048/1048 0.20s
+- PASS `q12 topn=0` rows 2/2 0.41s
+- PASS `q13 topn=0` rows 42/42 0.44s
+- PASS `q14 topn=0` rows 1/1 0.31s
+- PASS `q15 topn=0` rows 1/1 0.36s
+- PASS `q16 topn=0` rows 18314/18314 0.76s
+- PASS `q17 topn=0` rows 1/1 0.24s
+- PASS `q18 topn=0` rows 57/57 0.91s
+- PASS `q19 topn=0` rows 1/1 0.42s
+- PASS `q20 topn=0` rows 186/186 0.45s
+- PASS `q21 topn=0` rows 100/100 1.09s
+- PASS `q22 topn=0` rows 7/7 0.14s
+- note: q05 scans: tpch.region=5, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.lineitem=6001215, tpch.orders=227651
+- note: q05 plan outline: PLAN FRAGMENT 0 / 28:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 28 / 25:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 25 / 22:HASH JOIN / |----21:EXCHANGE / 17:HASH JOIN / |----16:EXCHANGE / 13:HASH JOIN / |----12:EXCHANGE / 9:HASH JOIN / |----8:EXCHANGE / 6:EXCHANGE / PLAN FRAGMENT 3 / EXCHANGE ID: 21 / TABLE: tpch.region / PLAN FRAGMENT 4 / EXCHANGE ID: 16 / TABLE: tpch.nation / PLAN FRAGMENT 5 / EXCHANGE ID: 12 / TABLE: tpch.supplier / PLAN FRAGMENT 6 / EXCHANGE ID: 08 / TABLE: tpch.customer / PLAN FRAGMENT 7 / EXCHANGE ID: 06 / 4:HASH JOIN / |----3:EXCHANGE / TABLE: tpch.lineitem / PLAN FRAGMENT 8 / EXCHANGE ID: 03 / TABLE: tpch.orders
+- note: q08 scans: tpch.lineitem=6001215, tpch.region=5, tpch.nation=25, tpch.nation=25, tpch.supplier=10000, tpch.customer=150000, tpch.part=200000, tpch.orders=455301
+- note: q08 plan outline: PLAN FRAGMENT 0 / 36:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 36 / 32:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 32 / 29:HASH JOIN / |----28:EXCHANGE / 24:HASH JOIN / |----23:EXCHANGE / 20:HASH JOIN / |----19:EXCHANGE / 16:HASH JOIN / |----15:EXCHANGE / 12:HASH JOIN / |----11:EXCHANGE / 8:HASH JOIN / |----7:EXCHANGE / 3:HASH JOIN / |----2:EXCHANGE / TABLE: tpch.lineitem / PLAN FRAGMENT 3 / EXCHANGE ID: 28 / TABLE: tpch.region / PLAN FRAGMENT 4 / EXCHANGE ID: 23 / TABLE: tpch.nation / PLAN FRAGMENT 5 / EXCHANGE ID: 19 / TABLE: tpch.nation / PLAN FRAGMENT 6 / EXCHANGE ID: 15 / TABLE: tpch.supplier / PLAN FRAGMENT 7 / EXCHANGE ID: 11 / TABLE: tpch.customer / PLAN FRAGMENT 8 / EXCHANGE ID: 07 / TABLE: tpch.part / PLAN FRAGMENT 9 / EXCHANGE ID: 02 / TABLE: tpch.orders
+- note: q09 scans: tpch.nation=25, tpch.supplier=10000, tpch.part=50000, tpch.partsupp=800000, tpch.orders=1500000, tpch.lineitem=6001215
+- note: q09 plan outline: PLAN FRAGMENT 0 / 28:MERGING-EXCHANGE / PLAN FRAGMENT 1 / EXCHANGE ID: 28 / 25:EXCHANGE / PLAN FRAGMENT 2 / EXCHANGE ID: 25 / 22:HASH JOIN / |----21:EXCHANGE / 18:HASH JOIN / |----17:EXCHANGE / 14:HASH JOIN / |----13:EXCHANGE / 9:HASH JOIN / |----8:EXCHANGE / 6:EXCHANGE / PLAN FRAGMENT 3 / EXCHANGE ID: 21 / TABLE: tpch.nation / PLAN FRAGMENT 4 / EXCHANGE ID: 17 / TABLE: tpch.supplier / PLAN FRAGMENT 5 / EXCHANGE ID: 13 / TABLE: tpch.part / PLAN FRAGMENT 6 / EXCHANGE ID: 08 / TABLE: tpch.partsupp / PLAN FRAGMENT 7 / EXCHANGE ID: 06 / 4:HASH JOIN / |----3:EXCHANGE / 1:EXCHANGE / PLAN FRAGMENT 8 / EXCHANGE ID: 03 / TABLE: tpch.orders / PLAN FRAGMENT 9 / EXCHANGE ID: 01 / TABLE: tpch.lineitem
+- note: timings flight (s): q01/default=0.80, q02/default=0.29, q03/default=0.87, q04/default=0.55, q05/default=0.83, q06/default=0.29, q07/default=0.70, q08/default=1.06, q09/default=0.99, q10/default=0.81, q11/default=0.23, q12/default=0.49, q13/default=0.50, q14/default=0.37, q15/default=0.43, q16/default=1.67, q17/default=0.29, q18/default=0.92, q19/default=0.55, q20/default=0.52, q21/default=1.24, q22/default=0.18, q01/0=0.71, q02/0=0.21, q03/0=0.71, q04/0=0.42, q05/0=0.78, q06/0=0.24, q07/0=0.64, q08/0=1.09, q09/0=1.21, q10/0=0.75, q11/0=0.20, q12/0=0.41, q13/0=0.44, q14/0=0.31, q15/0=0.36, q16/0=0.76, q17/0=0.24, q18/0=0.91, q19/0=0.42, q20/0=0.45, q21/0=1.09, q22/0=0.14
 
 ## Log masking
 
