@@ -265,3 +265,11 @@ driver's metadata, reporting NUMERIC, or in the resolver), not a harness error (
 - **Take-aways for ours** (not done here; candidates for the maintainer): aggregate pushdown of `avg()` (as sum + count,
   q01) and a bounded join-key / runtime-filter pushdown into the remote SQL (q17, q19) are the two places
   where the fork is clearly ahead.
+
+## 2026-11-06: server deafc861cce3 (ours only, default + speed)
+
+SF1 run **42250112453**, SF10 run **42250115981** (series `fl1eb792`): 88/88 answers correct. Sum of warm medians: SF1
+13.80 s default / 9.30 s speed, SF10 101.05 s / 56.45 s (f06b5834e76e: 12.58 / 12.05, 109.07 / 84.08). The `speed`
+profile is now clearly faster at both scales. SF1 q16 0.28 → 0.71 s comes from the 50 000-key IN list of series
+`fl1eb792` (the f06b5834e76e SF1 run was on `fla21c2a`), not from the server (`docs/M4-RESULTS.md`, 2026-11-06).
+deafc861cce3 is now the default `server` of compare.yml.

@@ -18,7 +18,7 @@ on:
         default: "default"
       server:
         description: "Flight server jar asset of release m4-assets"
-        default: "arrow-flight-server-1.0.0-f06b5834e76e-linux.jar"
+        default: "arrow-flight-server-1.0.0-deafc861cce3-linux.jar"
       runs:
         description: "runs per query (1st = cold)"
         default: "3"

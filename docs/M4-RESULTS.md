@@ -714,3 +714,28 @@ release's START-NOTES "Settings since 7562a5bdb7b9"). Same DuckDB 1.5.6 extensio
 Timings: sum of the 44 TPC-H query times of check 4 (S3): **18.7 s** (a9e43ca5e296: 24.8 s).
 
 Full suite green: **0e457de30f25 is the m4 default from 2026-11-03 22:00 UTC** (assets cache `m4-assets-v19`).
+
+## 2026-11-06, CI: server deafc861cce3 as the m4 default — series `4a9848e-fl1eb792`
+
+Server deafc861cce3 = 0e457de30f25 + kestrel items 29–34 (SASL HDFS, plain-name resolution, node-local copies, log
+hygiene; asset check in `docs/M4-CI.md` §2). Full regression, assets cache `m4-assets-v20`:
+
+| run | server | store / workflow | checks | result |
+|---|---|---|---|---|
+| 42229377380 | deafc861cce3 | s3 | 1–9 | PASS (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6); check 6 cluster mode, check 8 auth modes |
+| 42229381807 | deafc861cce3 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10) |
+| 42236966253 | deafc861cce3 | lakefs | 1, 3, 4, 10 | PASS (25/25, 27/27, 46/46, 5/5) |
+| 42236969873 | deafc861cce3 | s3 | 13 | PASS (103/103, compression none/lz4/zstd) |
+| 42243838994 / 42243843230 | 0e457de30f25 / deafc861cce3 | s3 | 3, 4 (same-day A/B) | PASS both; check 4 29 s vs 24 s |
+| 42250112453 | deafc861cce3 | compare SF1 | default + speed | 22/22 + 22/22 answers equal to the DuckDB reference |
+| 42250115981 | deafc861cce3 | compare SF10 | default + speed | 22/22 + 22/22 answers equal to the DuckDB reference |
+
+Timings (sum of warm medians, ours, vs f06b5834e76e runs 41598906259 / 41606943229): SF1 default 13.80 s vs 12.58 s
+(1.10×), SF1 speed 9.30 vs 12.05 s (0.77×), SF10 default 101.05 vs 109.07 s (0.93×), SF10 speed 56.45 vs 84.08 s (0.67×).
+Per-query > 10 % slower: SF1 q16 0.28 → 0.71 s (both profiles) — **not the server**: the old reference run used series
+`fla21c2a` (IN list ≤ 10 000 keys); with `fl1eb792` (≤ 50 000) q16 at SF1 is equally slow on 0e457de30f25 (m4
+42243838994: q16 1.67 / 0.76 s vs 1.30 / 0.61 s on deafc861cce3). The rest (SF1 q01/q07/q08 +0.06…0.19 s, SF10
+q01/q02 default +10–12 %) are within runner variance (runner CPUs differ: Intel 8370C, AMD EPYC 7763 / 9V74). The first
+S3 run's uniform 1.2–1.7× was runner variance (A/B pair). No wrong answer anywhere.
+
+Full suite green: **deafc861cce3 is the m4 default from 2026-11-06 17:00 UTC** (m4.yml, compare.yml, stack.sh).
