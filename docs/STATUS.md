@@ -505,7 +505,24 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   `docs/M4-RESULTS.md`, M4 milestone line. No newer server jar than f06b5834e76e in `m4-assets`; no new maintainer
   items. No patch change, no CI dispatched.
 
+- 2026-11-06 13:15–13:30 UTC (cloud session): maintainer item "full regression on server deafc861cce3" **blocked: the
+  server assets are not in this repo.** Release `m4-assets` (the only release) was last changed 2026-11-02 12:38 UTC;
+  newest server there is f06b5834e76e, no `*-deafc861cce3*` jar/plugins/libs/auth tar and no SHA256SUMS line for it.
+  Open question added; the run plan is ready under Next steps. No patch change, no CI run.
+
 ## Next steps
+
+> **Maintainer item below waits on the upload (2026-11-06 13:30 UTC).** As soon as `m4-assets` has
+> `arrow-flight-server-1.0.0-deafc861cce3-linux.jar`, `flight-plugins-1.0.0-deafc861cce3.tar.zst`,
+> `flight-server-libs-1.0.0-deafc861cce3.tar.zst` (+ `flight-auth-…`) and their SHA256SUMS lines: deepscan the assets,
+> then in `ci/dispatch.txt` (≤ 2 m4-group requests per push, one push per pair as the previous runs finish):
+> (1) `m4 checks=1,2,3,4,5,6,7,8,9 server=arrow-flight-server-1.0.0-deafc861cce3-linux.jar` and
+> `m4 checks=1,11,12 store=iceberg server=…`; (2) `m4 checks=1,3,4,10 store=lakefs server=…` and
+> `m4 checks=13 server=…` (compression); (3) `compare sf=1 paths=ours profiles=default,speed server=…` and
+> `compare sf=10 paths=ours profiles=default,speed server=…` (every TPC-H answer vs the DuckDB reference, both
+> profiles; compare times with 41598906259 / 41606943229 on f06b5834e76e and m4 41706457323 on 0e457de30f25). If all
+> green, make it the m4 default (m4.yml, compare.yml, stack.sh, cache key `m4-assets-v20`, M4-CI.md table) and write
+> "SERVER deafc861cce3 CHECKED" in the Log. Cluster mode = m4 check 6 (3 servers); auth modes = check 8.
 
 > **Maintainer, 2026-11-06 16:30 - NEW SERVER BUILD `server-1.0.0-deafc861cce3` (kestrel items 29-34: SASL HDFS, plain-name resolution, node-local copies, log hygiene) - full regression first, before anything else.** Pin it as the e2e/m4 server (asset digests from the release SHA256SUMS; deepscan the assets as usual) and run the complete e2e suite with BOTH server profiles (default and `-DresourceProfile=speed`): every TPC-H query SF1 and SF10 (answers vs the reference), pushdown checks, metadata, prepared statements, auth modes, cluster mode (3 servers) if the suite has it. Compare times with the previous server run in this repo (same runner class). Report pass/fail per check, any wrong answer (critical), regressions >10 %; write "SERVER deafc861cce3 CHECKED" in the Log with the run ids. No new features in this session.
 
@@ -849,6 +866,10 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
   No patch change.
 
 ## Open questions for the maintainer
+
+- **2026-11-06 13:30 UTC (blocks the deafc861cce3 regression):** the server build `server-1.0.0-deafc861cce3` is not in
+  this repo's `m4-assets` release (newest there: f06b5834e76e, 2026-11-02). Please upload jar, plugins tar, libs tar,
+  auth tar and the merged SHA256SUMS as for earlier builds; the next session runs the full suite (plan in Next steps).
 
 - **2026-11-03, after IMPROVEMENTS DONE (no decision needed to continue):** (1) release: should `4a9848e-fl1eb792`
   (avg + join-key pushdown, FE only since `flf41597`) get a draft release for your local check? (2) With the server's
