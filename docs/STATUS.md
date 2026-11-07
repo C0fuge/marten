@@ -548,7 +548,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   CONNECTOR-COMPARE.md); dispatch.txt cleared. No patch change; lock released.
 - 2026-11-06 17:41–17:50 UTC (cloud session): finish mode, nothing to do — no new maintainer item or answer, newest
   server jar in `m4-assets` is still deafc861cce3. No CI dispatched, no patch change; lock released.
-- 2026-11-07 05:40–05:45 UTC and 06:40–06:50 UTC (cloud sessions): finish mode again, nothing to do — no new maintainer item or answer,
+- 2026-11-07 05:40–05:45, 06:40–06:50 and 07:40–07:50 UTC (cloud sessions): finish mode again, nothing to do — no new maintainer item or answer,
   newest server jar in `m4-assets` still deafc861cce3 (uploaded 2026-11-06 13:48). No CI dispatched, no patch change; lock released.
 
 ## Next steps
