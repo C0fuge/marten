@@ -558,7 +558,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   server jar in `m4-assets` still deafc861cce3. No CI dispatched, no patch change; lock released.
 - 2026-11-11 03:43–03:50, 04:40–04:41, 05:40–05:41, 06:40–06:41, 07:40–07:41, 08:40–08:45, 09:40–09:45, 10:40–10:45, 11:40–11:45, 12:40–12:45, 13:40–13:45, 14:40–14:45, 15:40–15:45, 16:40–16:45, 17:44–17:50, 18:40–18:45 UTC (cloud sessions): finish mode, nothing to do — no new maintainer item or answer, newest
   server jar in `m4-assets` still deafc861cce3. No CI dispatched, no patch change; lock released.
-- 2026-11-12 03:42–03:50 UTC (cloud session): finish mode, nothing to do — no new maintainer item or answer, newest
+- 2026-11-12 03:42–03:50, 04:40–04:45 UTC (cloud sessions): finish mode, nothing to do — no new maintainer item or answer, newest
   server jar in `m4-assets` still deafc861cce3. No CI dispatched, no patch change; lock released.
 
 ## Next steps
