@@ -13,8 +13,8 @@ generated at test time (root certs + override hostname, hostname mismatch, untru
 tls_verify=false, plain client against a TLS server).
 ---
  be/test/CMakeLists.txt                      |    3 +
- be/test/connector/flight_connector_test.cpp | 1048 +++++++++++++++++++
- 2 files changed, 1051 insertions(+)
+ be/test/connector/flight_connector_test.cpp | 1147 +++++++++++++++++++
+ 2 files changed, 1150 insertions(+)
  create mode 100644 be/test/connector/flight_connector_test.cpp
 
 diff --git a/be/test/CMakeLists.txt b/be/test/CMakeLists.txt
@@ -30,10 +30,10 @@ index 4e533869..67b2a33a 100644
 +ADD_BE_TEST(connector/flight_connector_test)
 diff --git a/be/test/connector/flight_connector_test.cpp b/be/test/connector/flight_connector_test.cpp
 new file mode 100644
-index 00000000..0d185405
+index 00000000..a714a1a6
 --- /dev/null
 +++ b/be/test/connector/flight_connector_test.cpp
-@@ -0,0 +1,1048 @@
+@@ -0,0 +1,1147 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,9 +75,12 @@ index 00000000..0d185405
 +
 +#include <atomic>
 +#include <chrono>
++#include <cstring>
 +#include <functional>
 +#include <future>
 +#include <limits>
++#include <mutex>
++#include <set>
 +#include <thread>
 +
 +#include "column/chunk.h"
@@ -85,13 +88,16 @@ index 00000000..0d185405
 +#include "column/datum.h"
 +#include "common/config.h"
 +#include "common/object_pool.h"
++#include "exprs/column_ref.h"
 +#include "exprs/expr_context.h"
++#include "exprs/in_const_predicate.hpp"
 +#include "runtime/descriptor_helper.h"
 +#include "runtime/descriptors.h"
 +#include "runtime/exec_env.h"
 +#include "runtime/runtime_state.h"
 +#include "runtime/time_types.h"
 +#include "testutil/assert.h"
++#include "testutil/column_test_helper.h"
 +#include "testutil/exprs_test_helper.h"
 +#include "util/cpu_info.h"
 +#include "util/logging.h"
@@ -262,7 +268,17 @@ index 00000000..0d185405
 +                                                                                : arrow::Compression::LZ4_FRAME));
 +            num_compressed++;
 +        }
-+        const std::string& t = request.ticket;
++        // a runtime filter block (field 15, "ARF1") appended to the ticket: recorded, then cut off
++        std::string t = request.ticket;
++        size_t magic = t.find("1FRA");
++        if (magic != std::string::npos) {
++            size_t tag = t.rfind('\x7a', magic);
++            if (tag != std::string::npos) {
++                std::lock_guard<std::mutex> l(filter_lock);
++                filter_block = t.substr(magic);
++                t = t.substr(0, tag);
++            }
++        }
 +        if (t == "types") {
 +            ARROW_ASSIGN_OR_RAISE(auto reader, arrow::RecordBatchReader::Make({types_batch()}));
 +            *stream = std::make_unique<fl::RecordBatchStream>(reader, ipc);
@@ -433,6 +449,8 @@ index 00000000..0d185405
 +    }
 +
 +    std::atomic<int> num_do_get{0};
++    std::mutex filter_lock;
++    std::string filter_block; // the last runtime filter block received with a ticket
 +    std::atomic<int> num_compressed{0};
 +    std::atomic<bool> release{false};
 +};
@@ -968,6 +986,87 @@ index 00000000..0d185405
 +    EXPECT_EQ(30, source->raw_rows_read());
 +    EXPECT_EQ(4, source->num_rows_read());
 +    Expr::close(conjuncts, _state);
++}
++
++TEST(FlightRuntimeFilterTest, EncodesBlockAndAppendsField15) {
++    std::vector<FlightRuntimeInFilter> filters{{"k", {1, -2}}};
++    std::string block = encode_flight_runtime_filters(filters);
++    // magic, count, name length, name, value count, 2 x int64
++    ASSERT_EQ(4u + 4 + 4 + 1 + 4 + 16, block.size());
++    EXPECT_EQ(std::string("1FRA", 4), block.substr(0, 4));
++    EXPECT_EQ(std::string("\x01\0\0\0", 4), block.substr(4, 4));
++    EXPECT_EQ(std::string("\x01\0\0\0k\x02\0\0\0", 9), block.substr(8, 9));
++    EXPECT_EQ(std::string("\x01\0\0\0\0\0\0\0", 8), block.substr(17, 8));
++    EXPECT_EQ(std::string(8, '\xff').replace(0, 1, 1, '\xfe'), block.substr(25, 8));
++
++    std::string ticket = append_flight_runtime_filters("abc", block);
++    ASSERT_EQ(3u + 1 + 1 + block.size(), ticket.size());
++    EXPECT_EQ("abc", ticket.substr(0, 3));
++    EXPECT_EQ('\x7a', ticket[3]); // field 15, length-delimited
++    EXPECT_EQ(static_cast<char>(block.size()), ticket[4]);
++    EXPECT_EQ(block, ticket.substr(5));
++    // a length >= 128 takes a two-byte varint
++    std::string long_ticket = append_flight_runtime_filters("", std::string(300, 'x'));
++    EXPECT_EQ(std::string("\x7a\xac\x02", 3), long_ticket.substr(0, 3));
++}
++
++TEST_F(FlightConnectorTest, SendsJoinInFilterWithTicket) {
++    create_state(int_slots());
++    _tnode.flight_scan_node.__set_options({{"runtime_filter_max_keys", "100"}});
++    auto* probe = _pool.add(new ColumnRef(TypeDescriptor(TYPE_INT), 0));
++    VectorizedInConstPredicateBuilder builder(_state, &_pool, probe);
++    builder.use_as_join_runtime_filter();
++    ASSERT_OK(builder.create());
++    ColumnPtr keys = ColumnTestHelper::build_column(std::vector<int32_t>{3, 7});
++    builder.add_values(keys, 0);
++    ExprContext* in_filter = builder.get_in_const_predicate();
++    ASSERT_OK(in_filter->prepare(_state));
++    ASSERT_OK(in_filter->open(_state));
++    std::vector<ExprContext*> conjuncts{in_filter};
++
++    auto source = create_source("ints:10:2");
++    source->set_predicates(conjuncts);
++    ASSERT_OK(source->open(_state));
++    std::vector<ChunkPtr> chunks;
++    ASSERT_OK(read_all(source.get(), &chunks));
++    source->close(_state);
++    size_t rows = 0;
++    for (const auto& c : chunks) {
++        rows += c->num_rows();
++    }
++    EXPECT_EQ(2u, rows); // the BE still applies the filter (the test server ignores the block)
++    std::string block;
++    {
++        std::lock_guard<std::mutex> l(_server->filter_lock);
++        block = _server->filter_block;
++    }
++    ASSERT_EQ(4u + 4 + 4 + 2 + 4 + 16, block.size());
++    EXPECT_EQ(std::string("\x02\0\0\0c0\x02\0\0\0", 10), block.substr(8, 10));
++    std::set<int64_t> values;
++    for (int i = 0; i < 2; i++) {
++        int64_t v = 0;
++        memcpy(&v, block.data() + 18 + 8 * i, 8);
++        values.insert(v);
++    }
++    EXPECT_EQ((std::set<int64_t>{3, 7}), values);
++
++    // without the option nothing is appended
++    {
++        std::lock_guard<std::mutex> l(_server->filter_lock);
++        _server->filter_block.clear();
++    }
++    _tnode.flight_scan_node.__set_options({});
++    auto plain = create_source("ints:10:2");
++    plain->set_predicates(conjuncts);
++    ASSERT_OK(plain->open(_state));
++    chunks.clear();
++    ASSERT_OK(read_all(plain.get(), &chunks));
++    plain->close(_state);
++    {
++        std::lock_guard<std::mutex> l(_server->filter_lock);
++        EXPECT_TRUE(_server->filter_block.empty());
++    }
++    in_filter->close(_state);
 +}
 +
 +TEST_F(FlightConnectorTest, BasicAuthHandshakeYieldsBearerToken) {

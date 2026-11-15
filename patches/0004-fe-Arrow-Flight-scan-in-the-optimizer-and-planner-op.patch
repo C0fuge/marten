@@ -8,7 +8,7 @@ Logical/PhysicalFlightScanOperator, FlightScanImplementationRule, FlightAggregat
 count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, statistics, EXPLAIN, FlightScanNode
 (remote SQL, endpoint scan ranges), session variables flight_filter_pushdown / flight_aggregate_pushdown.
 ---
- .../com/starrocks/planner/FlightScanNode.java | 313 ++++++++++++++
+ .../com/starrocks/planner/FlightScanNode.java | 323 ++++++++++++++
  .../com/starrocks/qe/SessionVariable.java     |  37 ++
  .../main/java/com/starrocks/sql/Explain.java  |  20 +
  .../sql/optimizer/LogicalPlanPrinter.java     |   5 +
@@ -30,7 +30,7 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
  .../statistics/StatisticsCalculator.java      |  53 +++
  .../transformer/RelationTransformer.java      |  27 ++
  .../sql/plan/PlanFragmentBuilder.java         |  57 ++-
- 22 files changed, 1500 insertions(+), 2 deletions(-)
+ 22 files changed, 1510 insertions(+), 2 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/logical/LogicalFlightScanOperator.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/sql/optimizer/operator/physical/PhysicalFlightScanOperator.java
@@ -40,10 +40,10 @@ count/sum/min/max computed by the server), projection/filter/LIMIT pushdown, sta
 
 diff --git a/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
 new file mode 100644
-index 00000000..d10e2751
+index 00000000..e9c99e2a
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/planner/FlightScanNode.java
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,323 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -115,6 +115,7 @@ index 00000000..d10e2751
 +    private long totalRecords = -1;
 +    private int pushedConjuncts;
 +    private int totalConjuncts;
++    private boolean aggregationPushed;
 +    private boolean limitPushed;
 +    private String timeTravel;
 +
@@ -174,6 +175,7 @@ index 00000000..d10e2751
 +        List<String> groupBy = Collections.emptyList();
 +        List<ScalarOperator> conjuncts = Utils.extractConjuncts(predicate);
 +        totalConjuncts = conjuncts.size();
++        aggregationPushed = aggregation != null;
 +        if (aggregation != null) {
 +            // the aggregation rule only fires when every conjunct is rendered; they are part of it
 +            where.addAll(aggregation.getWhere());
@@ -346,6 +348,14 @@ index 00000000..d10e2751
 +            node.setLocation_failover(props.isLocationFailover());
 +            Map<String, String> options = new HashMap<>();
 +            options.put(FlightProperties.OPTION_EXCHANGE_BUFFER_MB, String.valueOf(props.getExchangeBufferMb()));
++            // join runtime filters on the ticket filter the remote query's output rows, which are partial
++            // aggregates when an aggregation is pushed: only plain scans send them
++            if (props.getRuntimeFilterMaxKeys() > 0 && !aggregationPushed) {
++                options.put(FlightProperties.OPTION_RUNTIME_FILTER_MAX_KEYS,
++                        String.valueOf(props.getRuntimeFilterMaxKeys()));
++                options.put(FlightProperties.OPTION_RUNTIME_FILTER_WAIT_MS,
++                        String.valueOf(props.getRuntimeFilterWaitMs()));
++            }
 +            node.setOptions(options);
 +        }
 +        msg.flight_scan_node = node;

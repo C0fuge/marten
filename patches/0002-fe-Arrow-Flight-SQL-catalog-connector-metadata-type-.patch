@@ -18,7 +18,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../connector/flight/FlightConnector.java     |  57 ++
  .../flight/FlightGetRemoteFilesParams.java    |  31 ++
  .../connector/flight/FlightMetadata.java      | 475 +++++++++++++++++
- .../connector/flight/FlightProperties.java    | 405 ++++++++++++++
+ .../connector/flight/FlightProperties.java    | 435 +++++++++++++++
  .../flight/FlightRemoteFileDesc.java          |  64 +++
  .../flight/FlightSqlMetadataClient.java       | 501 ++++++++++++++++++
  .../connector/flight/FlightSqlRenderer.java   | 488 +++++++++++++++++
@@ -27,7 +27,7 @@ SqlCredentialRedactor and the CatalogMgr logs.
  .../java/com/starrocks/qe/StmtExecutor.java   |   2 +
  .../java/com/starrocks/server/CatalogMgr.java |   7 +-
  .../starrocks/sql/analyzer/Authorizer.java    |   1 +
- 18 files changed, 2481 insertions(+), 3 deletions(-)
+ 18 files changed, 2511 insertions(+), 3 deletions(-)
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/catalog/FlightTable.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightAggregationPushdown.java
  create mode 100644 fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightConnector.java
@@ -889,10 +889,10 @@ index 00000000..c2f915c1
 +}
 diff --git a/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
 new file mode 100644
-index 00000000..5db64e81
+index 00000000..ea3721b8
 --- /dev/null
 +++ b/fe/fe-core/src/main/java/com/starrocks/connector/flight/FlightProperties.java
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,435 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -974,6 +974,22 @@ index 00000000..5db64e81
 +     * the FE never ask (the FE's Arrow Java has no compression codecs).
 +     */
 +    public static final String COMPRESSION = "flight.compression";
++    /**
++     * Join runtime filters sent to the server with the scan's ticket: the most keys per filter (exact IN sets and
++     * bitsets of integer join keys that are ready when the stream starts); 0 (default) sends none. The server must
++     * read the ticket's runtime filter block (field 15, "ARF1"); one that does not ignores it. Maximum
++     * {@value #MAX_RUNTIME_FILTER_KEYS}.
++     */
++    public static final String RUNTIME_FILTERS_MAX_KEYS = "flight.runtime_filters.max_keys";
++    public static final int MAX_RUNTIME_FILTER_KEYS = 1_000_000;
++    /**
++     * Longest wait of a Flight scan for its join runtime filters in ms when they are sent (default 500); the
++     * session's {@code runtime_filter_scan_wait_time} applies when it is longer.
++     */
++    public static final String RUNTIME_FILTERS_WAIT_MS = "flight.runtime_filters.wait_ms";
++    /** Keys in {@code TFlightScanNode.options}. */
++    public static final String OPTION_RUNTIME_FILTER_MAX_KEYS = "runtime_filter_max_keys";
++    public static final String OPTION_RUNTIME_FILTER_WAIT_MS = "runtime_filter_wait_ms";
 +
 +    /** Property keys whose values are secrets (masked in SHOW CREATE CATALOG, logs and the audit log). */
 +    public static final Set<String> SENSITIVE_KEYS = ImmutableSet.of(TOKEN, PASSWORD);
@@ -988,7 +1004,7 @@ index 00000000..5db64e81
 +            TLS_OVERRIDE_HOSTNAME, RESULT_MODE, LOCATION_FAILOVER, CONNECT_TIMEOUT_MS, KEEPALIVE_MS, RPC_TIMEOUT_MS,
 +            CATALOG, NESTED_TYPES, CONVERTED_TYPES, PUSHDOWN_FILTER, PUSHDOWN_LIMIT, PUSHDOWN_AGGREGATE,
 +            PUSHDOWN_JOIN_KEYS, PUSHDOWN_JOIN_KEYS_TIMEOUT_MS, METADATA_CACHE_TTL_S, STATS_CACHE_TTL_S, COLUMN_STATS,
-+            EXCHANGE_BUFFER_MB, COMPRESSION, "type");
++            EXCHANGE_BUFFER_MB, COMPRESSION, RUNTIME_FILTERS_MAX_KEYS, RUNTIME_FILTERS_WAIT_MS, "type");
 +
 +    private final List<URI> uris;
 +    private final String token;
@@ -1016,6 +1032,8 @@ index 00000000..5db64e81
 +    private final boolean columnStats;
 +    private final int exchangeBufferMb;
 +    private final String compression;
++    private final int runtimeFilterMaxKeys;
++    private final int runtimeFilterWaitMs;
 +
 +    public FlightProperties(Map<String, String> props) {
 +        String uriList = props.get(URI);
@@ -1101,6 +1119,8 @@ index 00000000..5db64e81
 +        this.statsCacheTtlSec = parseLong(props, STATS_CACHE_TTL_S, 600, 0, 86_400 * 30L);
 +        this.columnStats = parseBool(props, COLUMN_STATS, true);
 +        this.exchangeBufferMb = (int) parseLong(props, EXCHANGE_BUFFER_MB, 16, 0, 1024);
++        this.runtimeFilterMaxKeys = (int) parseLong(props, RUNTIME_FILTERS_MAX_KEYS, 0, 0, MAX_RUNTIME_FILTER_KEYS);
++        this.runtimeFilterWaitMs = (int) parseLong(props, RUNTIME_FILTERS_WAIT_MS, 500, 0, 60_000);
 +        this.compression = props.getOrDefault(COMPRESSION, "none").trim().toLowerCase(Locale.ROOT);
 +        if (!compression.equals("none") && !compression.equals("zstd") && !compression.equals("lz4")) {
 +            throw new StarRocksConnectorException("%s must be none, zstd or lz4, got: %s", COMPRESSION,
@@ -1292,6 +1312,16 @@ index 00000000..5db64e81
 +    /** Local exchange memory per driver behind a Flight scan in MB; 0 = StarRocks default. */
 +    public int getExchangeBufferMb() {
 +        return exchangeBufferMb;
++    }
++
++    /** Most keys per join runtime filter sent with a scan's ticket; 0 = none are sent. */
++    public int getRuntimeFilterMaxKeys() {
++        return runtimeFilterMaxKeys;
++    }
++
++    /** Scan wait for join runtime filters in ms while they are sent. */
++    public int getRuntimeFilterWaitMs() {
++        return runtimeFilterWaitMs;
 +    }
 +
 +    public boolean isTls() {

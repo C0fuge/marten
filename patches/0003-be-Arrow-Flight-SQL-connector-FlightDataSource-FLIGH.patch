@@ -13,13 +13,13 @@ and LIMIT evaluated in the data source. FLIGHT_TABLE uses the plain TableDescrip
  be/src/connector/CMakeLists.txt              |   1 +
  be/src/connector/connector.cpp               |   3 +
  be/src/connector/connector.h                 |   2 +
- be/src/connector/flight_connector.cpp        | 718 +++++++++++++++++++
- be/src/connector/flight_connector.h          | 149 ++++
+ be/src/connector/flight_connector.cpp        | 923 +++++++++++++++++++
+ be/src/connector/flight_connector.h          | 190 ++++
  be/src/exec/arrow_to_starrocks_converter.cpp |  23 +-
- be/src/exec/connector_scan_node.cpp          |  14 +
+ be/src/exec/connector_scan_node.cpp          |  23 +
  be/src/exec/exec_node.cpp                    |   7 +
  be/src/runtime/descriptors.cpp               |   5 +
- 9 files changed, 919 insertions(+), 3 deletions(-)
+ 9 files changed, 1174 insertions(+), 3 deletions(-)
  create mode 100644 be/src/connector/flight_connector.cpp
  create mode 100644 be/src/connector/flight_connector.h
 
@@ -85,10 +85,10 @@ index 0b983626..ddea013e 100644
      // First version we use TPlanNode to construct data source provider.
 diff --git a/be/src/connector/flight_connector.cpp b/be/src/connector/flight_connector.cpp
 new file mode 100644
-index 00000000..4a20166e
+index 00000000..54a02da6
 --- /dev/null
 +++ b/be/src/connector/flight_connector.cpp
-@@ -0,0 +1,718 @@
+@@ -0,0 +1,923 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,7 +123,12 @@ index 00000000..4a20166e
 +#include "column/column_helper.h"
 +#include "exec/exec_node.h"
 +#include "exec/file_scanner/parquet_scanner.h"
++#include "exprs/column_ref.h"
 +#include "exprs/expr.h"
++#include "exprs/in_const_predicate.hpp"
++#include "exprs/runtime_filter.h"
++#include "exprs/runtime_filter_bank.h"
++#include "gutil/casts.h"
 +#include "runtime/descriptors.h"
 +#include "runtime/runtime_state.h"
 +#include "util/arrow/utils.h"
@@ -401,7 +406,131 @@ index 00000000..4a20166e
 +}
 +// ---- end normalize_batch
 +
++
++// ---- join runtime filters sent with the ticket ----
++
++bool is_integer_key(LogicalType type) {
++    return type == TYPE_TINYINT || type == TYPE_SMALLINT || type == TYPE_INT || type == TYPE_BIGINT;
++}
++
++// values of an IN-set a join built for this scan (broadcast join "runtime IN filter"); false when it cannot be
++// sent: NOT IN, null-aware, dictionary array form, or more than max_values keys
++template <LogicalType LT>
++bool join_in_values(const Expr* root, size_t max_values, std::vector<int64_t>* values) {
++    const auto* pred = dynamic_cast<const VectorizedInConstPredicate<LT>*>(root);
++    if (pred == nullptr || !pred->is_join_runtime_filter() || pred->is_not_in() || pred->null_in_set() ||
++        pred->is_eq_null() || pred->is_use_array() || pred->hash_set().size() > max_values) {
++        return false;
++    }
++    values->reserve(pred->hash_set().size());
++    for (const auto& v : pred->hash_set()) {
++        values->push_back(static_cast<int64_t>(v));
++    }
++    return true;
++}
++
++bool join_in_values(LogicalType type, const Expr* root, size_t max_values, std::vector<int64_t>* values) {
++    switch (type) {
++    case TYPE_TINYINT:
++        return join_in_values<TYPE_TINYINT>(root, max_values, values);
++    case TYPE_SMALLINT:
++        return join_in_values<TYPE_SMALLINT>(root, max_values, values);
++    case TYPE_INT:
++        return join_in_values<TYPE_INT>(root, max_values, values);
++    case TYPE_BIGINT:
++        return join_in_values<TYPE_BIGINT>(root, max_values, values);
++    default:
++        return false;
++    }
++}
++
++// the keys of a bitset runtime filter (StarRocks builds one for a broadcast join with a dense integer key range)
++template <LogicalType LT>
++bool bitset_values(const RuntimeMembershipFilter* membership, size_t max_values, std::vector<int64_t>* values) {
++    const auto& bitset = down_cast<const RuntimeBitsetFilter<LT>*>(membership)->bitset();
++    if (bitset.min_value() > bitset.max_value()) {
++        return false;
++    }
++    const size_t bits = bitset.value_interval() + 1;
++    if (bits > bitset.size() * 8) {
++        return false;
++    }
++    const uint8_t* data = bitset.data();
++    const int64_t base = static_cast<int64_t>(bitset.min_value());
++    for (size_t b = 0; b < bits; b++) {
++        if ((data[b / 8] & (1u << (b % 8))) != 0) {
++            if (values->size() >= max_values) {
++                return false;
++            }
++            values->push_back(base + static_cast<int64_t>(b));
++        }
++    }
++    return true;
++}
++
++bool bitset_values(const RuntimeFilter* filter, size_t max_values, std::vector<int64_t>* values) {
++    if (filter == nullptr || filter->type() != RuntimeFilterSerializeType::BITSET_FILTER || filter->has_null()) {
++        return false;
++    }
++    const RuntimeMembershipFilter* membership = filter->get_membership_filter();
++    if (membership == nullptr) {
++        return false;
++    }
++    switch (membership->logical_type()) {
++    case TYPE_TINYINT:
++        return bitset_values<TYPE_TINYINT>(membership, max_values, values);
++    case TYPE_SMALLINT:
++        return bitset_values<TYPE_SMALLINT>(membership, max_values, values);
++    case TYPE_INT:
++        return bitset_values<TYPE_INT>(membership, max_values, values);
++    case TYPE_BIGINT:
++        return bitset_values<TYPE_BIGINT>(membership, max_values, values);
++    default:
++        return false;
++    }
++}
++
++void put_u32(std::string* out, uint32_t v) {
++    for (int i = 0; i < 4; i++) {
++        out->push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
++    }
++}
++
++void put_u64(std::string* out, uint64_t v) {
++    for (int i = 0; i < 8; i++) {
++        out->push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
++    }
++}
++
 +} // namespace
++
++std::string encode_flight_runtime_filters(const std::vector<FlightRuntimeInFilter>& filters) {
++    std::string block;
++    put_u32(&block, kFlightRuntimeFilterMagic);
++    put_u32(&block, static_cast<uint32_t>(filters.size()));
++    for (const auto& filter : filters) {
++        put_u32(&block, static_cast<uint32_t>(filter.column.size()));
++        block.append(filter.column);
++        put_u32(&block, static_cast<uint32_t>(filter.values.size()));
++        for (int64_t v : filter.values) {
++            put_u64(&block, static_cast<uint64_t>(v));
++        }
++    }
++    return block;
++}
++
++std::string append_flight_runtime_filters(const std::string& ticket, const std::string& block) {
++    std::string out = ticket;
++    out.push_back(static_cast<char>((kFlightRuntimeFilterField << 3) | 2)); // length-delimited
++    uint64_t len = block.size();
++    while (len >= 0x80) {
++        out.push_back(static_cast<char>((len & 0x7F) | 0x80));
++        len >>= 7;
++    }
++    out.push_back(static_cast<char>(len));
++    out.append(block);
++    return out;
++}
 +
 +// ================================
 +
@@ -423,20 +552,20 @@ index 00000000..4a20166e
 +    return state->desc_tbl().get_tuple_descriptor(_flight_scan_node.tuple_id);
 +}
 +
-+int64_t FlightDataSourceProvider::exchange_buffer_bytes_per_driver() const {
++int64_t FlightDataSourceProvider::int_option(const std::string& key, int64_t def, int64_t min, int64_t max) const {
 +    if (!_flight_scan_node.__isset.options) {
-+        return 0;
++        return def;
 +    }
-+    auto it = _flight_scan_node.options.find("exchange_buffer_mb");
++    auto it = _flight_scan_node.options.find(key);
 +    if (it == _flight_scan_node.options.end()) {
-+        return 0;
++        return def;
 +    }
 +    char* end = nullptr;
-+    long long mb = std::strtoll(it->second.c_str(), &end, 10);
-+    if (end == it->second.c_str() || *end != '\0' || mb <= 0 || mb > 1024) {
-+        return 0;
++    long long v = std::strtoll(it->second.c_str(), &end, 10);
++    if (end == it->second.c_str() || *end != '\0' || v < min || v > max) {
++        return def;
 +    }
-+    return static_cast<int64_t>(mb) * 1024 * 1024;
++    return static_cast<int64_t>(v);
 +}
 +
 +// ================================
@@ -462,6 +591,8 @@ index 00000000..4a20166e
 +    _rows_counter = ADD_COUNTER(_runtime_profile, "RowsRead", TUnit::UNIT);
 +    _bytes_counter = ADD_COUNTER(_runtime_profile, "BytesRead", TUnit::BYTES);
 +    _failover_counter = ADD_COUNTER(_runtime_profile, "FailoverCount", TUnit::UNIT);
++    _runtime_filters_counter = ADD_COUNTER(_runtime_profile, "RuntimeFiltersSent", TUnit::UNIT);
++    _runtime_filter_keys_counter = ADD_COUNTER(_runtime_profile, "RuntimeFilterKeysSent", TUnit::UNIT);
 +}
 +
 +Status FlightDataSource::open(RuntimeState* state) {
@@ -597,8 +728,12 @@ index 00000000..4a20166e
 +        }
 +    }
 +
++    if (!_ticket_ready) {
++        _ticket = _ticket_with_runtime_filters();
++        _ticket_ready = true;
++    }
 +    fl::Ticket ticket;
-+    ticket.ticket = _scan_range.ticket;
++    ticket.ticket = _ticket;
 +    ARROW_ASSIGN_OR_RAISE(auto reader, _client->DoGet(call, ticket));
 +    {
 +        std::lock_guard<std::mutex> l(_reader_lock);
@@ -616,6 +751,76 @@ index 00000000..4a20166e
 +    _column_protos.clear();
 +    _conv_pool.clear();
 +    return arrow::Status::OK();
++}
++
++std::string FlightDataSource::_remote_column(SlotId slot_id) const {
++    const TFlightScanNode& node = _provider->flight_scan_node();
++    for (size_t i = 0; i < _slots.size(); i++) {
++        if (_slots[i]->id() == slot_id) {
++            return i < node.field_names.size() ? node.field_names[i] : _slots[i]->col_name();
++        }
++    }
++    return {};
++}
++
++// The join filters that are ready when the stream starts go to the server with the ticket (protobuf field 15,
++// block "ARF1"), so it can leave out rows this scan would drop anyway. Only exact key sets on integer columns
++// are sent; the BE still evaluates every filter itself, so a server that ignores the block changes nothing.
++std::string FlightDataSource::_ticket_with_runtime_filters() {
++    const int64_t max_keys = _provider->runtime_filter_max_keys();
++    if (max_keys <= 0) {
++        return _scan_range.ticket;
++    }
++    std::vector<FlightRuntimeInFilter> filters;
++    std::unordered_set<std::string> columns;
++    size_t total = 0;
++    auto add = [&](const Expr* probe, auto&& collect) {
++        const auto* ref = dynamic_cast<const ColumnRef*>(probe);
++        if (ref == nullptr || filters.size() >= kFlightMaxRuntimeFilters || !is_integer_key(ref->type().type)) {
++            return;
++        }
++        std::string column = _remote_column(ref->slot_id());
++        if (column.empty() || columns.count(column) > 0) {
++            return;
++        }
++        FlightRuntimeInFilter filter;
++        filter.column = std::move(column);
++        if (!collect(static_cast<size_t>(max_keys), &filter.values) ||
++            total + filter.values.size() > kFlightMaxRuntimeFilterValues) {
++            return;
++        }
++        total += filter.values.size();
++        columns.insert(filter.column);
++        filters.push_back(std::move(filter));
++    };
++    for (ExprContext* ctx : _conjunct_ctxs) {
++        const Expr* root = ctx->root();
++        if (root == nullptr || root->get_num_children() < 1) {
++            continue;
++        }
++        const Expr* probe = root->get_child(0);
++        add(probe, [&](size_t max, std::vector<int64_t>* values) {
++            return join_in_values(probe->type().type, root, max, values);
++        });
++    }
++    if (_runtime_filters != nullptr) {
++        for (const auto& entry : _runtime_filters->descriptors()) {
++            RuntimeFilterProbeDescriptor* desc = entry.second;
++            ExprContext* probe_ctx = desc->probe_expr_ctx();
++            if (probe_ctx == nullptr) {
++                continue;
++            }
++            const RuntimeFilter* rf = desc->runtime_filter(runtime_membership_filter_eval_context.driver_sequence);
++            add(probe_ctx->root(),
++                [&](size_t max, std::vector<int64_t>* values) { return bitset_values(rf, max, values); });
++        }
++    }
++    COUNTER_UPDATE(_runtime_filters_counter, static_cast<int64_t>(filters.size()));
++    COUNTER_UPDATE(_runtime_filter_keys_counter, static_cast<int64_t>(total));
++    if (filters.empty()) {
++        return _scan_range.ticket;
++    }
++    return append_flight_runtime_filters(_scan_range.ticket, encode_flight_runtime_filters(filters));
 +}
 +
 +Status FlightDataSource::_check_schema(const arrow::Schema& schema) {
@@ -809,10 +1014,10 @@ index 00000000..4a20166e
 +} // namespace starrocks::connector
 diff --git a/be/src/connector/flight_connector.h b/be/src/connector/flight_connector.h
 new file mode 100644
-index 00000000..ffbbb748
+index 00000000..24f3c282
 --- /dev/null
 +++ b/be/src/connector/flight_connector.h
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,190 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -829,6 +1034,8 @@ index 00000000..ffbbb748
 +
 +#pragma once
 +
++#include <cstddef>
++#include <cstdint>
 +#include <memory>
 +#include <mutex>
 +#include <string>
@@ -836,6 +1043,7 @@ index 00000000..ffbbb748
 +
 +#include "arrow/status.h"
 +#include "column/vectorized_fwd.h"
++#include "common/global_types.h"
 +#include "common/object_pool.h"
 +#include "connector/connector.h"
 +#include "exec/arrow_to_starrocks_converter.h"
@@ -854,6 +1062,24 @@ index 00000000..ffbbb748
 +} // namespace starrocks
 +
 +namespace starrocks::connector {
++
++// Join runtime filters sent to the Flight server with the ticket: the server reads protobuf field 15 of the
++// ticket (an Any message; the field is unused there) as a little-endian block "ARF1": magic, filter count, per
++// filter the column name (length + UTF-8 bytes) and its keys (count + int64 each). A server that does not know
++// the field ignores it.
++constexpr uint32_t kFlightRuntimeFilterMagic = 0x41524631; // "ARF1"
++constexpr uint32_t kFlightRuntimeFilterField = 15;
++constexpr size_t kFlightMaxRuntimeFilters = 16;
++constexpr size_t kFlightMaxRuntimeFilterValues = 2000000;
++
++struct FlightRuntimeInFilter {
++    std::string column; // name of the remote query's output column
++    std::vector<int64_t> values;
++};
++
++std::string encode_flight_runtime_filters(const std::vector<FlightRuntimeInFilter>& filters);
++// the ticket with `block` appended as field 15
++std::string append_flight_runtime_filters(const std::string& ticket, const std::string& block);
 +
 +// Arrow Flight SQL external catalog (FE catalog type "flight"). The FE plans one Flight SQL query per scan
 +// (GetFlightInfo) and sends every FlightEndpoint as one TFlightScanRange; each data source reads one endpoint
@@ -881,7 +1107,21 @@ index 00000000..ffbbb748
 +    const TFlightScanNode& flight_scan_node() const { return _flight_scan_node; }
 +    // memory limit per driver of the local exchange behind the scan (catalog option flight.exchange_buffer_mb);
 +    // 0 = StarRocks default (local_exchange_buffer_mem_limit_per_driver)
-+    int64_t exchange_buffer_bytes_per_driver() const;
++    int64_t exchange_buffer_bytes_per_driver() const {
++        return int_option("exchange_buffer_mb", 0, 1, 1024) * 1024 * 1024;
++    }
++    // most keys per join filter sent to the server (catalog option flight.runtime_filters.max_keys);
++    // 0 = no runtime filters are sent (also when the FE did not set the option)
++    int64_t runtime_filter_max_keys() const {
++        return int_option("runtime_filter_max_keys", 0, 0, kFlightMaxRuntimeFilterValues);
++    }
++    // longest wait of the scan for its join filters before the stream starts (option flight.runtime_filters.wait_ms);
++    // 0 = the session's runtime_filter_scan_wait_time
++    int64_t runtime_filter_wait_ms() const {
++        return runtime_filter_max_keys() > 0 ? int_option("runtime_filter_wait_ms", 0, 0, 60000) : 0;
++    }
++    // a numeric scan option, `def` when it is missing or outside [min, max]
++    int64_t int_option(const std::string& key, int64_t def, int64_t min, int64_t max) const;
 +
 +private:
 +    ConnectorScanNode* _scan_node;
@@ -918,10 +1158,14 @@ index 00000000..ffbbb748
 +    Status _convert(size_t num_rows, ChunkPtr* chunk);
 +    void _release_stream();
 +    void _init_counters();
++    std::string _remote_column(SlotId slot_id) const;
++    std::string _ticket_with_runtime_filters();
 +
 +    const FlightDataSourceProvider* _provider;
 +    const TFlightScanRange _scan_range;
 +    bool _has_range = false;
++    std::string _ticket; // the range's ticket, with the join filters ready at the first DoGet
++    bool _ticket_ready = false;
 +
 +    RuntimeState* _runtime_state = nullptr;
 +    std::vector<SlotDescriptor*> _slots;
@@ -959,6 +1203,8 @@ index 00000000..ffbbb748
 +    RuntimeProfile::Counter* _rows_counter = nullptr;
 +    RuntimeProfile::Counter* _bytes_counter = nullptr;
 +    RuntimeProfile::Counter* _failover_counter = nullptr;
++    RuntimeProfile::Counter* _runtime_filters_counter = nullptr;
++    RuntimeProfile::Counter* _runtime_filter_keys_counter = nullptr;
 +};
 +
 +} // namespace starrocks::connector
@@ -1018,7 +1264,7 @@ index 03fca8db..841b08d4 100644
              }
          }
 diff --git a/be/src/exec/connector_scan_node.cpp b/be/src/exec/connector_scan_node.cpp
-index da28d6c9..f1bb4077 100644
+index da28d6c9..494f62ba 100644
 --- a/be/src/exec/connector_scan_node.cpp
 +++ b/be/src/exec/connector_scan_node.cpp
 @@ -18,6 +18,8 @@
@@ -1030,7 +1276,23 @@ index da28d6c9..f1bb4077 100644
  #include "exec/pipeline/scan/chunk_buffer_limiter.h"
  #include "exec/pipeline/scan/connector_scan_operator.h"
  #include "exec/stream/scan/stream_scan_operator.h"
-@@ -164,8 +166,20 @@ pipeline::OpFactories ConnectorScanNode::decompose_to_pipeline(pipeline::Pipelin
+@@ -53,6 +55,15 @@ ConnectorScanNode::~ConnectorScanNode() {
+ Status ConnectorScanNode::init(const TPlanNode& tnode, RuntimeState* state) {
+     RETURN_IF_ERROR(ScanNode::init(tnode, state));
+     RETURN_IF_ERROR(_data_source_provider->init(_pool, state));
++    // Arrow Flight: a scan sends the join filters that are ready when its stream starts to the server; a longer
++    // scan wait (catalog option flight.runtime_filters.wait_ms) lets the scans start with them
++    if (auto* flight = dynamic_cast<connector::FlightDataSourceProvider*>(_data_source_provider.get());
++        flight != nullptr) {
++        int64_t wait_ms = flight->runtime_filter_wait_ms();
++        if (wait_ms > _runtime_filter_collector.scan_wait_timeout_ms()) {
++            _runtime_filter_collector.set_scan_wait_timeout_ms(static_cast<int>(wait_ms));
++        }
++    }
+ 
+     const TQueryOptions& query_options = state->query_options();
+     double mem_ratio = config::connector_scan_use_query_mem_ratio;
+@@ -164,8 +175,20 @@ pipeline::OpFactories ConnectorScanNode::decompose_to_pipeline(pipeline::Pipelin
      auto operators = pipeline::decompose_scan_node_to_pipeline(scan_op, this, context);
  
      if (_data_source_provider->insert_local_exchange_operator()) {
