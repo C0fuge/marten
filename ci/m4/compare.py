@@ -3,7 +3,7 @@
 
     compare.py reference --tpch DIR --out FILE.json
         DuckDB answers of q01-q22 on the parquet files (rows + checksum + column types); run before StarRocks starts.
-    compare.py run --path ours|up|jdbc --label L --ref FILE.json --out DIR [--runs 3] [--timeout 900]
+    compare.py run --path ours|ours_rf|up|jdbc --label L --ref FILE.json --out DIR [--runs 3] [--timeout 900]
         creates catalog `cmp` for the path, runs every query --runs times (1st = cold, the rest warm), checks each
         answer against the reference, samples FE / BE resident memory (docker exec sr ps) every second;
         writes DIR/L.json.
@@ -95,9 +95,17 @@ class MemSampler(threading.Thread):
             time.sleep(1)
 
 
+# path ours_rf: ours plus join runtime filters sent with the ticket (docs/UPSTREAM-REVIEW.md); CMP_RF_PROPS
+# ("k=v,k=v") replaces the default
+RF_PROPS = dict(kv.split("=", 1) for kv in os.environ.get(
+    "CMP_RF_PROPS", "flight.runtime_filters.max_keys=4096,flight.runtime_filters.wait_ms=500").split(",") if kv)
+
+
 def make_catalog(conn, path):
-    if path in ("ours", "up"):
-        props = {"type": "flight", "flight.uri": FLIGHT_URI}       # both: no auth, everything else default
+    if path in ("ours", "ours_rf", "up"):
+        props = {"type": "flight", "flight.uri": FLIGHT_URI}       # all: no auth, everything else default
+        if path == "ours_rf":
+            props.update(RF_PROPS)
     else:
         props = {"type": "jdbc", "user": "", "password": "", "jdbc_uri": JDBC_URI,
                  "driver_url": "file:///opt/flight-starrocks/driver.jar", "driver_class": JDBC_DRIVER}
@@ -176,7 +184,7 @@ def run(args):
         total_fe, total_be = max(total_fe, mem.fe), max(total_be, mem.be)
         print(f"{args.label} {q}: {'OK ' if ok else 'BAD'} {times} fe {mem.fe} MB be {mem.be} MB {detail}", flush=True)
     mem.stop = True
-    if args.path == "ours":
+    if args.path in ("ours", "ours_rf"):
         # remote SQL of the join-key-pushdown queries (STATUS Next steps (b)), after the timed runs
         res["explain"] = {}
         for q in EXPLAIN_QUERIES:
@@ -237,7 +245,7 @@ def main():
     ap.add_argument("--tpch")
     ap.add_argument("--out")
     ap.add_argument("--ref")
-    ap.add_argument("--path", choices=["ours", "up", "jdbc"])
+    ap.add_argument("--path", choices=["ours", "ours_rf", "up", "jdbc"])
     ap.add_argument("--label")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--timeout", type=int, default=900)

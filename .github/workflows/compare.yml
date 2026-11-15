@@ -47,7 +47,7 @@ jobs:
         run: |
           [[ "$M4_SERVER_JAR" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
           case "${{ inputs.sf }}" in 1|10) ;; *) echo "::error::sf must be 1 or 10"; exit 1 ;; esac
-          echo "${{ inputs.paths }}" | grep -qxE '(ours|up|jdbc)(,(ours|up|jdbc))*' || { echo "::error::bad paths"; exit 1; }
+          echo "${{ inputs.paths }}" | grep -qxE '(ours|ours_rf|up|jdbc)(,(ours|ours_rf|up|jdbc))*' || { echo "::error::bad paths"; exit 1; }
           echo "${{ inputs.profiles }}" | grep -qxE '(default|speed)(,(default|speed))*' || { echo "::error::bad profiles"; exit 1; }
           [[ "${{ inputs.runs }}${{ inputs.timeout }}" =~ ^[0-9]+$ ]] || { echo "::error::runs/timeout must be numbers"; exit 1; }
       - name: Runner setup
@@ -106,6 +106,11 @@ jobs:
                   fetch be-build-info.txt "starrocks_be-${{ steps.hash.outputs.be }}" /home/runner/sr-out &&
                   grep -qx "commit_hash=$CH" /home/runner/sr-fe-out/fe-build-info.txt &&
                   grep -qx "commit_hash=$CH" /home/runner/sr-out/be-build-info.txt && avail="$avail ours" ;;
+            # ours_rf: the same build with join runtime filters on the ticket (compare.py RF_PROPS)
+            ours_rf) fetch fe-build-info.txt "fe-jars-${{ steps.hash.outputs.fe }}" /home/runner/sr-fe-out &&
+                  fetch be-build-info.txt "starrocks_be-${{ steps.hash.outputs.be }}" /home/runner/sr-out &&
+                  grep -qx "commit_hash=$CH" /home/runner/sr-fe-out/fe-build-info.txt &&
+                  grep -qx "commit_hash=$CH" /home/runner/sr-out/be-build-info.txt && avail="$avail ours_rf" ;;
             up)   fetch up-fe-build-info.txt "up-fe-${{ steps.hash.outputs.up_fe }}" /home/runner/up-fe-out &&
                   fetch be-build-info.txt "up-starrocks_be-${{ steps.hash.outputs.up_be }}" /home/runner/up-be-out &&
                   avail="$avail up" ;;
@@ -160,7 +165,7 @@ jobs:
               # a fresh Flight server per run, the server's own default settings (+ the profile)
               M4_SERVER_DEFAULTS=1 M4_FLIGHT_MEM=6g FLIGHT_JAVA_OPTS="$opts" ci/m4/stack.sh flight "$WORK/m4-assets" flight1
               case $p in
-              ours) SR_VARIANT=ours SR_BE_MEM=5G ci/m4/stack.sh starrocks /home/runner/sr-fe-out /home/runner/sr-out ;;
+              ours|ours_rf) SR_VARIANT=ours SR_BE_MEM=5G ci/m4/stack.sh starrocks /home/runner/sr-fe-out /home/runner/sr-out ;;
               up)   SR_VARIANT=up SR_BE_MEM=5G ci/m4/stack.sh starrocks /home/runner/up-fe-out /home/runner/up-be-out ;;
               jdbc) SR_VARIANT=jdbc SR_BE_MEM=5G ci/m4/stack.sh starrocks /home/runner/up-fe-out ;;
               esac || { echo "::warning::$label: StarRocks did not start"; ci/m4/stack.sh logs "$out/logs/$label" || true; echo "::endgroup::"; continue; }
