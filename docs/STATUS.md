@@ -569,6 +569,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-16 01:45 - FIRST (leaves finish mode for this item): UPSTREAM StarRocks connector changes 10.11-15.11.** upstream `VadimSurpin/arrow-flight-server` (read-only, never push there) branch `feat/starrocks-native-integration` at `28d6ea713b8e`: scan sharing of repeated Flight scans / join branches (`3dc27122b798`, `59dc4b2876be`, `0217443a6315`, `6a8da6b6f9c5`, `c80a87a3e2b2`, `cfaa929746cb`, `0701b6f498d7`, `fc632723a21b` share scans by default), bitset runtime filters sent as IN-filters + final-group aggregate (`0ecca4f9b01e`), long runtime IN-filters as a range (`ea2f83f1a77d`), Flight scans wait 500 ms for runtime filters (`384df3892efd`); findings docs 12-26 (TPC-DS q09/q29/q88) explain the gains. {rule} Measure TPC-H SF1/SF10 before/after on the current kestrel pre-release `server-1.0.0-2c169a53db3b`.
+
 > **DONE 2026-11-06 17:00 UTC: SERVER deafc861cce3 CHECKED, now the m4 default** (m4.yml, compare.yml, stack.sh;
 > `docs/M4-RESULTS.md` 2026-11-06). Every check PASS, no wrong answer (compare SF1 42250112453 / SF10 42250115981:
 > 88/88). Only > 10 % item: SF1 q16 (0.28 → 0.71 s) — a **series** effect since `fl1eb792` (2026-11-03: q16 in m4
