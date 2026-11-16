@@ -295,3 +295,30 @@ block (upstream's server does; kestrel d2e27119fda4 does not). Note for later A/
 
 d2e27119fda4 is the default `server` of compare.yml since 2026-11-16 09:50 UTC (full m4 regression PASS,
 `docs/M4-RESULTS.md` 2026-11-16).
+
+## 2026-11-16: runtime filters on the ticket, server 6f0aa5a026fa (kestrel ITEM 51, reads the block)
+
+Series `4a9848e-flbcef73` (unchanged); `ours_rf` = ours + `flight.runtime_filters.max_keys=4096`, `wait_ms=500`.
+Server `arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar` decodes ticket field 15 (`RuntimeFilters`, asset check in
+`docs/UPSTREAM-REVIEW.md`). SF10, profile default, 22/22 correct in every pass. Sum of warm medians / sum of cold (s):
+
+| run | runner | ours | ours_rf | ours_rf / ours (warm) |
+|---|---|---|---|---|
+| SF10 43899589063 (ours first) | Intel Xeon 8573C | 113.35 / 126.23 | 106.17 / 115.45 | 0.937 |
+| SF10 43899594632 (ours_rf first) | AMD EPYC 7763 | 100.80 / 110.24 | 100.32 / 111.06 | 0.995 |
+
+On d2e27119fda4 (block ignored) the second path was 5–6 % faster in both orders (section above). Here ours_rf is
+faster in **both** orders, also when it runs first, so the order-corrected gain is about 3 % of the TPC-H sum. The
+gain sits in the queries whose large probe side is filtered by a selective join key, and it is the same in both orders
+(it did not exist on d2e27119fda4):
+
+| q | ours → ours_rf, ours first | ours_rf first | on d2e27119fda4 (43809299659 / 43813485840) |
+|---|---|---|---|
+| q21 | 13.85 → 11.51 (−17 %) | 12.72 → 10.69 (−16 %) | 10.34 → 10.22 / 10.76 → 10.12 |
+| q11 | 1.30 → 0.91 (−30 %) | 1.14 → 0.91 (−20 %) | 0.97 → 1.05 / 0.98 → 0.94 |
+| q02 | 1.39 → 1.11 | 1.05 → 1.05 | – |
+| q20 | 3.57 → 3.51 | 3.78 → 3.27 | – |
+
+The other queries move within the run-order effect (q03, q05, q08: the second path faster, as on d2e27119fda4). No
+query got systematically slower. The two runs ran on different runner CPUs, so absolute sums are not comparable
+across runs (nor with the d2e27119fda4 runs on AMD EPYC 9V74). SF1 and m4 S3 1–9 with the option on: see below.
