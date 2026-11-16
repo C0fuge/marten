@@ -21,6 +21,9 @@ on:
       compression:
         description: "flight.compression of every catalog the checks create: none, lz4 or zstd (server cadd1aca9c23+; check 13 compares all three itself)"
         default: "none"
+      runtime_filters:
+        description: "flight.runtime_filters.max_keys of every catalog the checks create (wait_ms 500); 0 = off (connector default); server 6f0aa5a026fa+ reads the block"
+        default: "0"
 
 concurrency:
   group: m4
@@ -44,6 +47,7 @@ jobs:
           [[ "$M4_SERVER_JAR" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
           case "${{ inputs.store }}" in s3|lakefs|iceberg) ;; *) echo "::error::store must be s3, lakefs or iceberg"; exit 1 ;; esac
           case "${{ inputs.compression }}" in none|lz4|zstd) ;; *) echo "::error::compression must be none, lz4 or zstd"; exit 1 ;; esac
+          [[ "${{ inputs.runtime_filters }}" =~ ^[0-9]{1,7}$ ]] || { echo "::error::runtime_filters must be a number"; exit 1; }
       - name: Free disk
         timeout-minutes: 5
         continue-on-error: true
@@ -142,6 +146,7 @@ jobs:
           CHECKS: ${{ inputs.checks }}
           REF_CATALOG: ${{ inputs.ref_catalog }}
           M4_COMPRESSION: ${{ inputs.compression }}
+          M4_RF_MAX_KEYS: ${{ inputs.runtime_filters }}
           SERIES: 4.1.4-${{ steps.hash.outputs.commit_hash }}
         run: |
           # Catalog token: a random dummy value (the server runs open for checks 1-5); it must never show up in

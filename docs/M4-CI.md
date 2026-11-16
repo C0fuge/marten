@@ -173,3 +173,7 @@ build. Prepare a short script/checklist for it in `docs/LOCAL-FINAL-CHECK.md`.
   one setting. Check 13 compares the three modes itself (equality, bytes into the sr container from the host veth
   counters, `sudo tc qdisc … netem` on that veth for the slow link; if `tc` cannot load netem it installs
   `linux-modules-extra-$(uname -r)` once, else the item fails and only the plain-link figures are reported).
+- Input `runtime_filters` (`0` default = off; 2026-11-16): every catalog the checks create gets
+  `flight.runtime_filters.max_keys=<n>` and `flight.runtime_filters.wait_ms=500` (env `M4_RF_MAX_KEYS`), so
+  `m4 checks=1,2,3,4,5,6,7,8,9 runtime_filters=4096` runs the suite with join runtime filters on the ticket (server
+  6f0aa5a026fa+ applies them; older servers ignore the block).

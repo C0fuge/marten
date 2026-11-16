@@ -28,6 +28,11 @@ M4 = os.path.join(REPO, "tests", "m4")
 FLIGHT_URI = os.environ.get("M4_FLIGHT_URI", "grpc://flight1:32010")
 # flight.compression of every catalog the checks create (m4 input `compression`; check 13 sets its own)
 COMPRESSION = os.environ.get("M4_COMPRESSION", "none") or "none"
+# join runtime filters on the ticket for every catalog the checks create (m4 input `runtime_filters` = max_keys;
+# 0 = off, the connector default); wait 500 ms as in compare.py's ours_rf path
+RF_MAX_KEYS = int(os.environ.get("M4_RF_MAX_KEYS", "0") or "0")
+RF_PROPS = {"flight.runtime_filters.max_keys": str(RF_MAX_KEYS), "flight.runtime_filters.wait_ms": "500"} \
+    if RF_MAX_KEYS > 0 else {}
 
 
 # ---------------------------------------------------------------- connections
@@ -161,6 +166,7 @@ def check1(conn, args, res):
         props.append(f'"flight.token" = "{args.token}"')
     if COMPRESSION != "none":
         props.append(f'"flight.compression" = "{COMPRESSION}"')
+    props += [f'"{k}" = "{v}"' for k, v in RF_PROPS.items()]
     sr(conn, "CREATE EXTERNAL CATALOG flight PROPERTIES (" + ", ".join(props) + ")")
     res.add("create catalog", True)
 
@@ -497,6 +503,7 @@ def make_catalogs(conn, args):
         base.append(f'"flight.token" = "{args.token}"')
     if COMPRESSION != "none":
         base.append(f'"flight.compression" = "{COMPRESSION}"')
+    base += [f'"{k}" = "{v}"' for k, v in RF_PROPS.items()]
     for name, extra in (("flight", []), ("flight_c", ['"flight.result_mode" = "complete"']),
                         ("flight_noagg", ['"flight.pushdown.aggregate" = "false"'])):
         sr(conn, f"DROP CATALOG IF EXISTS {name}")
@@ -749,6 +756,7 @@ def catalog(conn, name, uri=None, **props):
     p = {"type": "flight", "flight.uri": uri or FLIGHT_URI}
     if COMPRESSION != "none":
         p["flight.compression"] = COMPRESSION
+    p.update(RF_PROPS)
     p.update({k.replace("__", "."): v for k, v in props.items()})
     sr(conn, f"DROP CATALOG IF EXISTS {name}")
     sr(conn, f"CREATE EXTERNAL CATALOG {name} PROPERTIES (" +
@@ -1475,7 +1483,7 @@ def main():
         pass
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, checks {args.checks}, runner {os.cpu_count()} x {cpu}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, runtime_filters `{RF_MAX_KEYS}`, checks {args.checks}, runner {os.cpu_count()} x {cpu}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "
