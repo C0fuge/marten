@@ -607,6 +607,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-16 11:15 - two items.** (1) **Go:** switch the m4 default server to `d2e27119fda4` after the usual full regression (it passed kestrel egret HDFS acceptance SHIP and the maintainer's secure stand). (2) kestrel ITEM 51 will make the server read your runtime-filter block (ARF1); when a kestrel pre-release with 'ITEM 51' appears, put it into `m4-assets` yourself if you can, else wait for the maintainer, and re-measure `compare sf=10 paths=ours,ours_rf` and reversed; if ours_rf is faster with 22/22 equal, propose making runtime filters the default.
+
 > **UPSTREAM 2026-11 DONE `flbcef73` (2026-11-16 06:20 UTC; Log).** Server d2e27119fda4 checked and measured: it does
 > not read the runtime-filter block, and ours_rf vs ours shows no effect beyond run order (SF1 43809296573, SF10
 > 43809299659 + reversed 43813485840, 22/22 correct everywhere; `docs/CONNECTOR-COMPARE.md`). The option stays opt-in
