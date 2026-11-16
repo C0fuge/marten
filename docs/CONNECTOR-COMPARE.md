@@ -324,5 +324,8 @@ query got systematically slower. The two runs ran on different runner CPUs, so a
 across runs (nor with the d2e27119fda4 runs on AMD EPYC 9V74). m4 S3 1–9 with the option on: PASS (m4 43942242083).
 
 SF1, default / speed, 88/88 correct: **43942255955** (ours_rf first, Intel Xeon 6975P-C) ours 9.97 / 6.44 s warm,
-ours_rf **9.67 / 6.12 s** (0.970 / 0.950); q21 0.93 → 0.60 (default), 0.94 → 0.53 (speed). The ours-first SF1 run
-follows (re-dispatched 2026-11-16 20:40 UTC).
+ours_rf **9.67 / 6.12 s** (0.970 / 0.950); q21 0.93 → 0.60 (default), 0.94 → 0.53 (speed). **43950959245** (ours first, AMD EPYC 9V74) ours 10.38 /
+7.08 s, ours_rf 10.41 / 7.07 s (1.003 / 0.999); q21 0.96 → 0.64, 0.94 → 0.62. So at SF1 the gain is small (0–5 %,
+within the order effect) except q21 (−33 % in every pass); nothing got slower beyond noise. **Verdict:** with a server
+that reads the block, runtime filters help join-heavy queries with a selective build side (q21, q11) and never hurt
+TPC-H; default switch proposed to the maintainer (STATUS Open questions 2026-11-16 20:10).

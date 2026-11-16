@@ -629,16 +629,17 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   9.97 s (default), 6.12 vs 6.44 s (speed); q21 0.93 → 0.60 / 0.94 → 0.53. The ours-first SF1 compare (43942250912) and
   m4 S3 1–9 without RF (43942246171) were **cancelled at start**: m4 and compare share concurrency group `m4` (one
   running + one pending), so 4 requests in one push lose the middle two (dispatch.txt comment fixed). Both re-dispatched
-  at ~20:40 UTC (results for the next session). No patch change (series `flbcef73`).
+  at ~20:40 UTC: compare SF1 ours first **43950959245** 88/88, ours_rf 10.41 vs 10.38 s (default), 7.07 vs 7.08 s
+  (speed), q21 0.96 → 0.64; the m4 run without RF was still pending at session end. No patch change (series
+  `flbcef73`); lock released 20:50 UTC.
 
 ## Next steps
 
 > **ITEM 51 measured 2026-11-16 (Log 19:40):** on server 6f0aa5a026fa runtime filters (ours_rf) are faster in both
 > run orders at SF10 with 22/22 equal (order-corrected ~3 % of the sum; q21 −16 %, q11 −20…−30 %), and m4 S3 1–9 with
 > the option on passes (43942242083). Default switch proposed (Open questions, 2026-11-16 20:10). **Next session:**
-> (1) read the two runs re-dispatched ~20:40 UTC (newest `compare` and `m4` in STATUS-CI): compare SF1
-> `paths=ours,ours_rf` default + speed (pairs with 43942255955, ours_rf first) and m4 S3 1–9 on 6f0aa5a026fa *without*
-> RF (server baseline); add them to the 6f0aa5a026fa section of `docs/CONNECTOR-COMPARE.md` and to the Log. (2) Then wait for the maintainer's
+> (1) read the m4 run dispatched ~20:40 UTC (newest `m4` in STATUS-CI, `git show origin/m4-results:runs/<id>.md`):
+> S3 1–9 on 6f0aa5a026fa *without* RF (server baseline); add it to the Log. SF1 is done (43942255955, 43950959245). (2) Then wait for the maintainer's
 > answer on the default switch (FE-only change in 0002 `FlightProperties` default max_keys 0 → 4096 + tests in 0006,
 > then fe + m4 regression) and on making 6f0aa5a026fa the m4 default (needs the full regression: iceberg 1,11,12,
 > lakefs 1,3,4,10, check 13 in addition to S3 1–9). Otherwise finish mode.
@@ -1036,7 +1037,8 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 - **2026-11-16 20:10 UTC — proposal (maintainer item (2) of 11:15):** kestrel ITEM 51 server 6f0aa5a026fa reads the
   runtime-filter block; ours_rf is faster in both orders at SF10 with 22/22 equal (43899589063: 0.937,
-  43899594632: 0.995 of ours; q21 −16 %, q11 −20…−30 %), m4 S3 1–9 with the option on PASS (43942242083). **Proposal:**
+  43899594632: 0.995 of ours; q21 −16 %, q11 −20…−30 %), SF1 0.95–1.00 in both orders (43942255955, 43950959245; q21
+  −33 %), m4 S3 1–9 with the option on PASS (43942242083). **Proposal:**
   make `flight.runtime_filters.max_keys` default 4096 (`wait_ms` 500) — FE change in patch 0002 (+ test in 0006). Note:
   against a server that ignores the block (d2e27119fda4 and older) the option costs nothing measurable (only the
   ≤ 500 ms wait, measured within noise). Go? And should 6f0aa5a026fa become the m4 default (full regression first)?
