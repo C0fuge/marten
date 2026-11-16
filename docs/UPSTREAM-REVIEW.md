@@ -40,3 +40,21 @@ newest jar there is deafc861cce3, which has no runtime-filter classes). When it 
    `flight.runtime_filters.max_keys=4096` (after; compare.py needs a catalog-property input for this).
 3. m4 S3 1–9 with the option on (answers must not change).
 4. If it helps, make it the default and record the numbers in `docs/CONNECTOR-COMPARE.md`.
+
+## Server `server-1.0.0-d2e27119fda4` (asset check 2026-11-16 05:15 UTC)
+
+The maintainer replaced 2c169a53db3b by d2e27119fda4 (2c169a53db3b + kestrel items 49/50), uploaded to `m4-assets`
+05:09–05:12 UTC. Check against deafc861cce3 (the m4 default):
+
+- The four SHA256SUMS lines (jar, flight-plugins, flight-server-libs, flight-auth) verify; every inner SHA256SUMS of the
+  three tars verifies; no links, setuid/setgid bits, special files or path escapes. Plugins, runtime libs (DuckDB 1.5.6)
+  and LDAP/JWT/ranger jars are **content-identical** to deafc861cce3 (only tar metadata differs).
+- Server jar: every third-party entry identical; 49 new, 72 changed, 1 removed entries, all in
+  `pro.surpin.data.arrowflight.server` (+ `arrowflight.properties`: allocator cap now 75 % of direct memory, HDFS
+  metadata-cache notes). New: `HdfsSaslDataTransfer`, `FileStatsPruner`, `FooterStubCache`, `ParquetFooterReads`,
+  `PeerStreamAdmission`, `StopGate`, `IoPool`, `AccessRecheck`, `DescribeKey`, … No credentials or new URLs; the only
+  new process start is `klist -s` in `HdfsTicketCache` (Kerberos ticket check).
+- **No runtime-filter reader**: no class or string for `RuntimeFilter`/`RuntimeInFilter`, `ARF1`/`ARF2`, bloom
+  filters, and the same classes as in deafc861cce3 touch protobuf `Any` tickets. So this build, like deafc861cce3,
+  ignores field 15: the `ours_rf` pass measures only the 500 ms runtime-filter wait plus the BE-side filtering that
+  StarRocks does anyway, not server-side filtering.
