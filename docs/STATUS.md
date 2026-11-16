@@ -632,17 +632,20 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   at ~20:40 UTC: compare SF1 ours first **43950959245** 88/88, ours_rf 10.41 vs 10.38 s (default), 7.07 vs 7.08 s
   (speed), q21 0.96 → 0.64; the m4 run without RF was still pending at session end. No patch change (series
   `flbcef73`); lock released 20:50 UTC.
+- 2026-11-16 21:40–21:50 UTC (cloud session): read m4 **43950963745** (S3 1–9 on 6f0aa5a026fa, `runtime_filters=0`,
+  server baseline): **all PASS** (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6). Check times are not comparable
+  with the RF run 43942242083 (different runner CPUs: EPYC 7763 vs 9V45). Next-steps item (1) done; item (2) waits for
+  the maintainer's answer (Open questions 2026-11-16 20:10). No CI dispatched, no patch change; lock released.
 
 ## Next steps
 
 > **ITEM 51 measured 2026-11-16 (Log 19:40):** on server 6f0aa5a026fa runtime filters (ours_rf) are faster in both
 > run orders at SF10 with 22/22 equal (order-corrected ~3 % of the sum; q21 −16 %, q11 −20…−30 %), and m4 S3 1–9 with
 > the option on passes (43942242083). Default switch proposed (Open questions, 2026-11-16 20:10). **Next session:**
-> (1) read the m4 run dispatched ~20:40 UTC (newest `m4` in STATUS-CI, `git show origin/m4-results:runs/<id>.md`):
-> S3 1–9 on 6f0aa5a026fa *without* RF (server baseline); add it to the Log. SF1 is done (43942255955, 43950959245). (2) Then wait for the maintainer's
+> ~~(1) read the m4 run without RF~~ done: 43950963745 S3 1–9 PASS (Log 21:40). (2) Wait for the maintainer's
 > answer on the default switch (FE-only change in 0002 `FlightProperties` default max_keys 0 → 4096 + tests in 0006,
 > then fe + m4 regression) and on making 6f0aa5a026fa the m4 default (needs the full regression: iceberg 1,11,12,
-> lakefs 1,3,4,10, check 13 in addition to S3 1–9). Otherwise finish mode.
+> lakefs 1,3,4,10, check 13 in addition to S3 1–9). Otherwise finish mode: stop early unless the maintainer answered.
 
 > ~~**Item (1) DONE 2026-11-16 09:50 UTC: d2e27119fda4 is the m4 default (full regression PASS, Log). Item (2) waiting:
 > no ITEM 51 server in `m4-assets` yet. Next session: finish mode - check `m4-assets` for a server newer than
