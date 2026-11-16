@@ -273,3 +273,22 @@ SF1 run **42250112453**, SF10 run **42250115981** (series `fl1eb792`): 88/88 ans
 profile is now clearly faster at both scales. SF1 q16 0.28 → 0.71 s comes from the 50 000-key IN list of series
 `fl1eb792` (the f06b5834e76e SF1 run was on `fla21c2a`), not from the server (`docs/M4-RESULTS.md`, 2026-11-06).
 deafc861cce3 is now the default `server` of compare.yml.
+
+## 2026-11-16: runtime filters on the ticket, server d2e27119fda4 (ours vs ours_rf)
+
+Series `4a9848e-flbcef73`; `ours_rf` = ours + `flight.runtime_filters.max_keys=4096`, `wait_ms=500`. The server does
+not read the ticket block (`docs/UPSTREAM-REVIEW.md`, asset check), so any difference comes from the 500 ms
+runtime-filter wait (StarRocks applies the join filters in the BE before the probe rows reach the join) or from noise.
+All runs 22/22 correct. Runner 4 vCPU AMD EPYC 9V74. Sum of warm medians / sum of cold (s):
+
+| run | ours default | ours_rf default | ours speed | ours_rf speed |
+|---|---|---|---|---|
+| SF1 43809296573 (ours first) | 10.36 / 14.62 | 10.57 / 14.16 | 7.15 / 10.67 | 7.45 / 10.43 |
+| SF10 43809299659 (ours first) | 87.40 / 97.92 | 82.11 / 89.55 | 45.08 / 52.78 | 43.97 / 52.61 |
+| SF10 43813485840 (ours_rf first) | 83.33 / 91.79 | 88.77 / 102.66 | – | – |
+
+**Verdict:** no measurable effect. In both SF10 default runs the path that ran *second* was faster by 5–6 %, on the
+same join-heavy queries (q03, q07, q08: e.g. q03 6.25 → 5.30 s with ours first, 5.03 vs 7.57 s with ours_rf first),
+so the gap is an order effect on the runner (page cache, MinIO), not the option. SF1 and the speed profile are within
+±4 %. `flight.runtime_filters.max_keys` stays **0 (off) by default**; it can only pay off with a server that reads the
+block (upstream's server does; kestrel d2e27119fda4 does not). Note for later A/B runs: alternate the path order.
