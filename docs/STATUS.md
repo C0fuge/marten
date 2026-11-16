@@ -579,6 +579,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   2026-11-15). No patch changes. Lock released.
 - 2026-11-16 03:40–03:50 UTC (cloud session): server 2c169a53db3b still not in `m4-assets` (newest
   deafc861cce3); measurement blocked, Open questions 2026-11-15 unanswered. No patch changes, no CI. Lock released.
+- 2026-11-16 04:40–04:50 UTC (cloud session): same — server 2c169a53db3b still not in `m4-assets` (65 assets, newest
+  deafc861cce3, uploaded 2026-11-06); measurement blocked, Open questions 2026-11-15 unanswered. No patch changes, no CI. Lock released.
 
 ## Next steps
 
