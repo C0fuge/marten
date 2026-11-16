@@ -58,3 +58,23 @@ The maintainer replaced 2c169a53db3b by d2e27119fda4 (2c169a53db3b + kestrel ite
   filters, and the same classes as in deafc861cce3 touch protobuf `Any` tickets. So this build, like deafc861cce3,
   ignores field 15: the `ours_rf` pass measures only the 500 ms runtime-filter wait plus the BE-side filtering that
   StarRocks does anyway, not server-side filtering.
+
+## Server `server-1.0.0-6f0aa5a026fa` (kestrel ITEM 51; asset check 2026-11-16 15:50 UTC)
+
+Uploaded to `m4-assets` 2026-11-16 15:38 UTC (jar, flight-plugins, flight-server-libs, flight-auth, new SHA256SUMS).
+Check against d2e27119fda4 (the m4 default):
+
+- The four SHA256SUMS lines verify. Plugins, runtime libs and flight-auth are **content-identical** to d2e27119fda4
+  (8 / 125 / 64 files, same SHA-256 per file); no links, setuid/setgid bits, special files or path escapes.
+- Server jar: every third-party entry identical; 2 new, 9 changed, 0 removed entries, all in
+  `pro.surpin.data.arrowflight.server` (`adapters/FlightSqlProducer`, `services/ExecutionService`,
+  `services/ParquetQueryParser` and inner classes; new `services/RuntimeFilters` + `$InFilter`). No new process start,
+  socket or URL string in the changed classes.
+- **Runtime-filter reader present**: `RuntimeFilters.decode` reads ticket field 15 (`TICKET_FIELD = 15`) as a
+  little-endian block: int32 magic `0x41524631` ("ARF1"; `0x41524632` "ARF2" = with bloom filters, which it skips),
+  int32 filter count (0..16), per filter int32 name length (1..256) + UTF-8 name, int32 value count, values as int64;
+  ≤ 2 000 000 values in total, nothing after the block. That is exactly what our `encode_flight_runtime_filters`
+  (patch 0003) writes. Server limits: `MAX_IN_VALUES = 4096` (matches ours_rf's `max_keys=4096`). Log lines:
+  `runtimeFilters={} keys={} applied={}`, `runtimeFilters=ignored reason=notPlainScan`, `runtimeFilters=refused`.
+- Measurement: `compare sf=10 paths=ours,ours_rf profiles=default` and the reversed order, server
+  `arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar` (results in `docs/CONNECTOR-COMPARE.md` / STATUS Log).
