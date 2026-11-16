@@ -321,4 +321,8 @@ gain sits in the queries whose large probe side is filtered by a selective join 
 
 The other queries move within the run-order effect (q03, q05, q08: the second path faster, as on d2e27119fda4). No
 query got systematically slower. The two runs ran on different runner CPUs, so absolute sums are not comparable
-across runs (nor with the d2e27119fda4 runs on AMD EPYC 9V74). SF1 and m4 S3 1–9 with the option on: see below.
+across runs (nor with the d2e27119fda4 runs on AMD EPYC 9V74). m4 S3 1–9 with the option on: PASS (m4 43942242083).
+
+SF1, default / speed, 88/88 correct: **43942255955** (ours_rf first, Intel Xeon 6975P-C) ours 9.97 / 6.44 s warm,
+ours_rf **9.67 / 6.12 s** (0.970 / 0.950); q21 0.93 → 0.60 (default), 0.94 → 0.53 (speed). The ours-first SF1 run
+follows (re-dispatched 2026-11-16 20:40 UTC).

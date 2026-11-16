@@ -625,17 +625,20 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   both orders (no such gain on d2e27119fda4) — written up in `docs/CONNECTOR-COMPARE.md`. New m4 input
   `runtime_filters` (max_keys for every catalog, wait 500 ms; m4.yml, m4.py, M4-CI.md). m4 S3 1–9 on 6f0aa5a026fa with
   `runtime_filters=4096`: **43942242083 PASS** (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6). Also
-  dispatched: m4 S3 1–9 on 6f0aa5a026fa without RF (server baseline) and compare SF1 ours/ours_rf both orders,
-  default + speed (results: see Next steps). No patch change (series `flbcef73`).
+  dispatched compare SF1 both orders, default + speed: **43942255955** (ours_rf first) 88/88 correct, ours_rf 9.67 vs
+  9.97 s (default), 6.12 vs 6.44 s (speed); q21 0.93 → 0.60 / 0.94 → 0.53. The ours-first SF1 compare (43942250912) and
+  m4 S3 1–9 without RF (43942246171) were **cancelled at start**: m4 and compare share concurrency group `m4` (one
+  running + one pending), so 4 requests in one push lose the middle two (dispatch.txt comment fixed). Both re-dispatched
+  at ~20:40 UTC (results for the next session). No patch change (series `flbcef73`).
 
 ## Next steps
 
 > **ITEM 51 measured 2026-11-16 (Log 19:40):** on server 6f0aa5a026fa runtime filters (ours_rf) are faster in both
 > run orders at SF10 with 22/22 equal (order-corrected ~3 % of the sum; q21 −16 %, q11 −20…−30 %), and m4 S3 1–9 with
 > the option on passes (43942242083). Default switch proposed (Open questions, 2026-11-16 20:10). **Next session:**
-> (1) read the runs of 2026-11-16 ~19:43 not yet recorded: m4 S3 1–9 on 6f0aa5a026fa *without* RF (second m4 run of
-> that push; server baseline) and the two compare SF1 runs (`ours,ours_rf` and `ours_rf,ours`, default + speed); add
-> them to the 6f0aa5a026fa section of `docs/CONNECTOR-COMPARE.md` and to the Log. (2) Then wait for the maintainer's
+> (1) read the two runs re-dispatched ~20:40 UTC (newest `compare` and `m4` in STATUS-CI): compare SF1
+> `paths=ours,ours_rf` default + speed (pairs with 43942255955, ours_rf first) and m4 S3 1–9 on 6f0aa5a026fa *without*
+> RF (server baseline); add them to the 6f0aa5a026fa section of `docs/CONNECTOR-COMPARE.md` and to the Log. (2) Then wait for the maintainer's
 > answer on the default switch (FE-only change in 0002 `FlightProperties` default max_keys 0 → 4096 + tests in 0006,
 > then fe + m4 regression) and on making 6f0aa5a026fa the m4 default (needs the full regression: iceberg 1,11,12,
 > lakefs 1,3,4,10, check 13 in addition to S3 1–9). Otherwise finish mode.
