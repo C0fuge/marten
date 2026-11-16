@@ -577,6 +577,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   (cold ccache, Build BE 22:51–00:50), be-ut 43771314581 green 24/24 (2 h 38 min, cold). Server 2c169a53db3b still
   not in `m4-assets` (65 assets, newest deafc861cce3), so the before/after measurement stays blocked (Open questions
   2026-11-15). No patch changes. Lock released.
+- 2026-11-16 03:40–03:50 UTC (cloud session): server 2c169a53db3b still not in `m4-assets` (newest
+  deafc861cce3); measurement blocked, Open questions 2026-11-15 unanswered. No patch changes, no CI. Lock released.
 
 ## Next steps
 
