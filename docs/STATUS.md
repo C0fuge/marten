@@ -602,6 +602,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
     `max_keys` > 0); measured: no TPC-H gain beyond run-order noise.
   - Findings docs 12–26: server-side items (httpfs caching, footer reads, warm-up) are for the kestrel server; TPC-DS
     only. Lock released.
+- 2026-11-16 06:40–06:45 and 07:40–07:45 UTC (cloud sessions): finish mode, nothing to do — no new maintainer item or
+  answer, newest server in `m4-assets` still d2e27119fda4 (69 assets). No CI dispatched, no patch change; lock released.
 
 ## Next steps
 
