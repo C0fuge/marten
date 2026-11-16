@@ -739,3 +739,24 @@ q01/q02 default +10–12 %) are within runner variance (runner CPUs differ: Inte
 S3 run's uniform 1.2–1.7× was runner variance (A/B pair). No wrong answer anywhere.
 
 Full suite green: **deafc861cce3 is the m4 default from 2026-11-06 17:00 UTC** (m4.yml, compare.yml, stack.sh).
+
+## 2026-11-16, CI: server d2e27119fda4 as the m4 default — series `4a9848e-flbcef73`
+
+Server d2e27119fda4 = 2c169a53db3b + kestrel items 49 / 50 (maintainer's go 2026-11-16 11:15 MSK after egret HDFS
+acceptance and the secure stand; asset check in `docs/UPSTREAM-REVIEW.md`). Full regression, assets cache `m4-assets-v21`:
+
+| run | server | store / workflow | checks | result |
+|---|---|---|---|---|
+| 43829093697 | d2e27119fda4 | s3 | 1–9 | PASS (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6); runner AMD EPYC 9V74 |
+| 43829097466 | d2e27119fda4 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10); runner Intel 6975P-C |
+| 43835720199 | d2e27119fda4 | lakefs | 1, 3, 4, 10 | PASS (25/25, 27/27, 46/46, 5/5); runner Intel 6973P-C |
+| 43835723714 | d2e27119fda4 | s3 | 13 | PASS (103/103, compression none/lz4/zstd); runner AMD EPYC 7763 |
+| 43809296573 | d2e27119fda4 | compare SF1 | ours + ours_rf, default + speed | 88/88 answers equal to the DuckDB reference |
+| 43809299659 / 43813485840 | d2e27119fda4 | compare SF10 | ours + ours_rf (both orders) | 88/88 + 44/44 answers correct |
+
+Timings: check 4 (S3) 23 s (deafc861cce3: 30 s in 42229377380, 24 s in the A/B 42243843230, same runner class 9V74);
+check 6 failover: query after the flight2 stop 1.9 s, kill during the read ended 1.2 s later with FailoverCount=3 (no
+member-loss stall). compare warm sums (ours): SF1 10.36 / 7.15 s default / speed (deafc861cce3: 13.80 / 9.30), SF10
+87.40 / 45.08 s (101.05 / 56.45) — no regression; runner CPUs differ between runs. No wrong answer anywhere.
+
+Full suite green: **d2e27119fda4 is the m4 default from 2026-11-16 09:50 UTC** (m4.yml, compare.yml, stack.sh).

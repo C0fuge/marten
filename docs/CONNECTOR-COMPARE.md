@@ -292,3 +292,6 @@ same join-heavy queries (q03, q07, q08: e.g. q03 6.25 → 5.30 s with ours first
 so the gap is an order effect on the runner (page cache, MinIO), not the option. SF1 and the speed profile are within
 ±4 %. `flight.runtime_filters.max_keys` stays **0 (off) by default**; it can only pay off with a server that reads the
 block (upstream's server does; kestrel d2e27119fda4 does not). Note for later A/B runs: alternate the path order.
+
+d2e27119fda4 is the default `server` of compare.yml since 2026-11-16 09:50 UTC (full m4 regression PASS,
+`docs/M4-RESULTS.md` 2026-11-16).
