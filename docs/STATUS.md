@@ -567,6 +567,13 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - 2026-11-15 03:40–03:40, 04:40–04:41, 05:40–05:45, 07:40–07:41, 08:40–08:45, 09:40–09:45, 10:40–10:45, 11:40–11:45, 12:40–12:45, 13:40–13:45, 14:40–14:45, 15:40–15:45, 16:40–16:45, 17:40–17:45, 18:40–18:45, 19:40–19:45, 20:40–20:45 and 21:40–21:45 UTC (cloud sessions): finish mode, nothing to do — no new maintainer item or answer, newest
   server jar in `m4-assets` still deafc861cce3. No CI dispatched, no patch change; lock released.
 
+- 2026-11-15 22:37–00:05 UTC (cloud session): maintainer item "upstream connector changes 10.11-15.11": reviewed the
+  public upstream branch at `28d6ea713b8e` (`docs/UPSTREAM-REVIEW.md`); implemented join runtime filters on the Flight
+  ticket (field 15, `ARF1`; IN-sets + bitsets on integer keys) and a per-scan runtime-filter wait, opt-in
+  `flight.runtime_filters.max_keys` (default 0) / `flight.runtime_filters.wait_ms` (500); series `4a9848e-flbcef73`.
+  FE 43771325687 green (52/52); BE 43771314584 + be-ut 43771314581 still running at the end. Added compare path
+  `ours_rf`. Measurement blocked: server 2c169a53db3b not in `m4-assets` (Open questions). Lock released.
+
 ## Next steps
 
 > **Maintainer, 2026-11-16 01:45 - FIRST (leaves finish mode for this item): UPSTREAM StarRocks connector changes 10.11-15.11.** upstream `VadimSurpin/arrow-flight-server` (read-only, never push there) branch `feat/starrocks-native-integration` at `28d6ea713b8e`: scan sharing of repeated Flight scans / join branches (`3dc27122b798`, `59dc4b2876be`, `0217443a6315`, `6a8da6b6f9c5`, `c80a87a3e2b2`, `cfaa929746cb`, `0701b6f498d7`, `fc632723a21b` share scans by default), bitset runtime filters sent as IN-filters + final-group aggregate (`0ecca4f9b01e`), long runtime IN-filters as a range (`ea2f83f1a77d`), Flight scans wait 500 ms for runtime filters (`384df3892efd`); findings docs 12-26 (TPC-DS q09/q29/q88) explain the gains. {rule} Measure TPC-H SF1/SF10 before/after on the current kestrel pre-release `server-1.0.0-2c169a53db3b`.
@@ -576,7 +583,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > filters sent to the server with the DoGet ticket (protobuf field 15, block `ARF1`: join IN-sets and bitset filters on
 > integer keys) plus a per-scan runtime-filter wait (upstream's 500 ms) — catalog properties
 > `flight.runtime_filters.max_keys` (default 0 = off) / `flight.runtime_filters.wait_ms` (500); patches 0002/0003/0004/
-> 0006/0007, CI: FE 43771325687, BE 43771314584, be-ut 43771314581 (results: see Log). Not taken over: bloom filters
+> 0006/0007, series `4a9848e-flbcef73`, CI: FE 43771325687 **green, 52/52 Flight tests**; BE 43771314584 and be-ut
+> 43771314581 were still compiling at session end (be-ut > 70 min, i.e. a mostly cold ccache) — read them first. Not taken over: bloom filters
 > (`ARF2`), scan sharing (TPC-DS scalar-subquery shapes; no TPC-H query has them). **Blocked:** the server
 > `server-1.0.0-2c169a53db3b` is not in the `m4-assets` release (newest jar deafc861cce3, which has no runtime-filter
 > classes, so the block is ignored there) — before/after TPC-H cannot run until it is uploaded (Open questions).
