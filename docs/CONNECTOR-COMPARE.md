@@ -351,3 +351,7 @@ On the three queries the JDBC catalog can answer (q12, q13, q16): default jdbc 4
 IOError: Flight returned unavailable error ... failed to connect to all addresses` (BE gRPC client), 41 s after the
 server start; the server stayed up (container stats normal, q02–q22 all correct right after). First occurrence in any
 compare or m4 run; repeat dispatched (`compare sf=10 paths=ours profiles=speed`) to see whether it reproduces.
+
+**Repeat (2026-11-17):** compare **44160944676** (`paths=ours profiles=speed`, same series and server, runner Intel
+Xeon 6975P-C): **22/22** correct, 39.35 / 47.83 s (warm / cold), q01 3.31 / 5.35 s, no error. The q01 connect error
+of 44152882031 did not reproduce: treated as transient (runner network / gRPC channel start-up), no BE change.

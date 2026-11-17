@@ -652,16 +652,25 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   server up, next queries fine; first occurrence); jdbc 3/22 as before, on q12/q13/q16 2.3× (default) / 4.2× (speed)
   slower than ours (`docs/CONNECTOR-COMPARE.md` 2026-11-17). Repeat `compare sf=10 paths=ours profiles=speed`
   dispatched at session end (result for the next session). No patch change; lock released.
+- 2026-11-17 19:40–19:55 UTC (cloud session): repeat compare SF10 ours speed **44160944676**: **22/22**, 39.35 /
+  47.83 s warm / cold (Xeon 6975P-C), q01 3.31 s, no error; the q01 connect error of 44152882031 was transient (noted in
+  `docs/CONNECTOR-COMPARE.md`). No patch change, no CI dispatched; finish mode; lock released.
 
 ## Next steps
 
-> **2026-11-17 19:50 UTC: maintainer items (1) and (2) of 2026-11-17 DONE, SF10 re-measured (Log).** Next session:
+> **2026-11-17 19:55 UTC: repeat compare 44160944676 22/22 (q01 error not reproduced, transient). Finish mode.**
+> Next session: stop early unless the maintainer adds an item / answers an Open question, or a server jar newer than
+> 6f0aa5a026fa appears in the `m4-assets` release. If the gRPC "failed to connect to all addresses" error shows up
+> again in any m4 / compare run, analyse it as described in the item below (retry of a DoGet that fails with
+> UNAVAILABLE before any batch, only after asking the maintainer).
+
+> ~~**2026-11-17 19:50 UTC: maintainer items (1) and (2) of 2026-11-17 DONE, SF10 re-measured (Log).** Next session:
 > (1) read the repeat compare (`compare sf=10 paths=ours profiles=speed`, dispatched ~19:50 UTC; run id in
 > `STATUS-CI.md` / branch `m4-results` `compare/<run>.md`). If 22/22: note it in `docs/CONNECTOR-COMPARE.md` (the
 > q01 error was transient) and go to finish mode. If the "failed to connect to all addresses" error comes back:
 > analyse it (BE `flight_connector.cpp` connect / channel reuse per endpoint, `grpc.min_reconnect_backoff_ms`; compare
 > with the server log in the artifact `compare-<run>`), consider one retry of a DoGet that fails with UNAVAILABLE
-> before any batch was read, and ask the maintainer before a BE change (Open questions). Otherwise finish mode.
+> before any batch was read, and ask the maintainer before a BE change (Open questions). Otherwise finish mode.~~ Done 19:55, see above.
 
 > **Maintainer, 2026-11-17 18:30 - answers to 2026-11-16 20:10: GO on both.** (1) Make runtime filters the default: `flight.runtime_filters.max_keys` default 4096, `wait_ms` 500 (FE change in 0002 + test in 0006), then fe + m4 regression. (2) Make `6f0aa5a026fa` the m4 / compare default after the full regression (S3 1-9, iceberg 1,11,12, lakefs 1,3,4,10, check 13). Then re-measure SF10 ours (new default) vs JDBC baseline for the connector comparison doc.
 
