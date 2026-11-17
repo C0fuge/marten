@@ -95,7 +95,8 @@ class MemSampler(threading.Thread):
             time.sleep(1)
 
 
-# path ours_rf: ours plus join runtime filters sent with the ticket (docs/UPSTREAM-REVIEW.md); CMP_RF_PROPS
+# path ours_rf: ours plus explicit join runtime filters on the ticket (docs/UPSTREAM-REVIEW.md; since series fl234f9b
+# path ours already sends them: connector default max_keys 4096, wait_ms 500); CMP_RF_PROPS
 # ("k=v,k=v") replaces the default
 RF_PROPS = dict(kv.split("=", 1) for kv in os.environ.get(
     "CMP_RF_PROPS", "flight.runtime_filters.max_keys=4096,flight.runtime_filters.wait_ms=500").split(",") if kv)

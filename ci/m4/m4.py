@@ -29,10 +29,10 @@ FLIGHT_URI = os.environ.get("M4_FLIGHT_URI", "grpc://flight1:32010")
 # flight.compression of every catalog the checks create (m4 input `compression`; check 13 sets its own)
 COMPRESSION = os.environ.get("M4_COMPRESSION", "none") or "none"
 # join runtime filters on the ticket for every catalog the checks create (m4 input `runtime_filters` = max_keys;
-# 0 = off, the connector default); wait 500 ms as in compare.py's ours_rf path
-RF_MAX_KEYS = int(os.environ.get("M4_RF_MAX_KEYS", "0") or "0")
-RF_PROPS = {"flight.runtime_filters.max_keys": str(RF_MAX_KEYS), "flight.runtime_filters.wait_ms": "500"} \
-    if RF_MAX_KEYS > 0 else {}
+# empty = the connector default (4096 since series fl234f9b, 0 before), 0 = off; wait 500 ms as in compare.py's ours_rf)
+RF_MAX_KEYS = os.environ.get("M4_RF_MAX_KEYS", "").strip()
+RF_PROPS = {"flight.runtime_filters.max_keys": str(int(RF_MAX_KEYS)), "flight.runtime_filters.wait_ms": "500"} \
+    if RF_MAX_KEYS else {}
 
 
 # ---------------------------------------------------------------- connections
@@ -1483,7 +1483,7 @@ def main():
         pass
     with open(os.path.join(args.out, "results.md"), "w") as f:
         f.write(f"# M4 run {run}\n\n{datetime.datetime.utcnow():%Y-%m-%d %H:%M} UTC, series `{args.series}`, "
-                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, runtime_filters `{RF_MAX_KEYS}`, checks {args.checks}, runner {os.cpu_count()} x {cpu}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
+                f"server `{os.environ.get('M4_SERVER_JAR', '?')}`, store `{store_env().get('M4_STORE', 's3')}: {store_env().get('M4_DATA_DIR', 's3://lake/parquet')}`, compression `{COMPRESSION}`, runtime_filters `{RF_MAX_KEYS or 'default'}`, checks {args.checks}, runner {os.cpu_count()} x {cpu}\n\n| # | Check | Result | Items | Time |\n|---|---|---|---|---|\n")
         for r in results:
             nfail = sum(1 for i in r.items if not i[1])
             f.write(f"| {r.num} | {r.title} | {'PASS' if r.ok else 'FAIL'} | {len(r.items) - nfail}/{len(r.items)} | "

@@ -6,14 +6,14 @@ Subject: [PATCH] fe: unit and plan tests for the Arrow Flight catalog
 FlightTypeMapperTest, FlightSqlRendererTest, FlightPropertiesTest, FlightAggregationPushdownRuleTest and
 FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata client).
 ---
- .../flight/FlightPropertiesTest.java          | 159 ++++++
+ .../flight/FlightPropertiesTest.java          | 161 ++++++
  .../flight/FlightSqlMetadataClientTest.java   | 160 ++++++
  .../flight/FlightSqlRendererTest.java         | 151 ++++++
  .../flight/FlightTypeMapperTest.java          | 164 ++++++
  .../flight/MockedFlightSqlMetadataClient.java | 156 ++++++
  .../FlightAggregationPushdownRuleTest.java    |  72 +++
- .../sql/plan/FlightScanPlanTest.java          | 484 ++++++++++++++++++
- 7 files changed, 1346 insertions(+)
+ .../sql/plan/FlightScanPlanTest.java          | 491 ++++++++++++++++++
+ 7 files changed, 1355 insertions(+)
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlMetadataClientTest.java
  create mode 100644 fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightSqlRendererTest.java
@@ -24,10 +24,10 @@ FlightScanPlanTest (EXPLAIN REMOTE SQL against a mocked Flight SQL metadata clie
 
 diff --git a/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
 new file mode 100644
-index 00000000..deb56363
+index 00000000..55e4b6da
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/connector/flight/FlightPropertiesTest.java
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,161 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,8 +99,10 @@ index 00000000..deb56363
 +    @Test
 +    public void testRuntimeFilters() {
 +        FlightProperties p = props("flight.uri", "grpc://h1:8815");
-+        Assertions.assertEquals(0, p.getRuntimeFilterMaxKeys());
++        Assertions.assertEquals(4096, p.getRuntimeFilterMaxKeys());
 +        Assertions.assertEquals(500, p.getRuntimeFilterWaitMs());
++        Assertions.assertEquals(0,
++                props("flight.uri", "grpc://h1:8815", "flight.runtime_filters.max_keys", "0").getRuntimeFilterMaxKeys());
 +        p = props("flight.uri", "grpc://h1:8815", "flight.runtime_filters.max_keys", "100000",
 +                "flight.runtime_filters.wait_ms", "0");
 +        Assertions.assertEquals(100_000, p.getRuntimeFilterMaxKeys());
@@ -922,10 +924,10 @@ index 00000000..01477163
 +}
 diff --git a/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
 new file mode 100644
-index 00000000..746b1bc3
+index 00000000..d23caca2
 --- /dev/null
 +++ b/fe/fe-core/src/test/java/com/starrocks/sql/plan/FlightScanPlanTest.java
-@@ -0,0 +1,484 @@
+@@ -0,0 +1,491 @@
 +// Copyright 2021-present StarRocks, Inc. All rights reserved.
 +//
 +// Licensed under the Apache License, Version 2.0 (the "License");
@@ -1010,8 +1012,15 @@ index 00000000..746b1bc3
 +    }
 +
 +    @Test
-+    public void testNoRuntimeFilterOptionsByDefault() throws Exception {
++    public void testRuntimeFilterOptionsByDefault() throws Exception {
 +        String thrift = getThriftPlan("select b.k from " + T1 + " a join " + T2 + " b on a.id = b.id");
++        Assertions.assertTrue(thrift.contains("exchange_buffer_mb"), thrift);
++        Assertions.assertTrue(thrift.contains("runtime_filter_max_keys"), thrift);
++        Assertions.assertTrue(thrift.contains("4096"), thrift);
++        Assertions.assertTrue(thrift.contains("runtime_filter_wait_ms"), thrift);
++        // a pushed aggregation returns partial aggregates: no runtime filters on that scan's ticket
++        thrift = getThriftPlan("select k, count(*), min(id) from " + T1 + " group by k");
++        Assertions.assertTrue(thrift.contains("__flight_agg_"), thrift);
 +        Assertions.assertTrue(thrift.contains("exchange_buffer_mb"), thrift);
 +        Assertions.assertFalse(thrift.contains("runtime_filter_max_keys"), thrift);
 +    }
