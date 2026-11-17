@@ -639,8 +639,29 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 - 2026-11-17 03:40–03:50, 07:40–07:50, 08:40–08:50, 09:40–09:50, 10:40–10:50, 11:40–11:50, 12:40–12:50, 13:40–13:50 and 14:40–14:50 UTC (cloud sessions): waiting for the maintainer — no answer to the Open question of
   2026-11-16 20:10 (runtime-filter default, 6f0aa5a026fa as m4 default); `m4-assets` unchanged (73 assets, newest
   6f0aa5a026fa). No CI dispatched, no patch change; lock released.
+- 2026-11-17 14:59–16:05 UTC (cloud session, no Log line written then; reconstructed): maintainer's GO (18:30 MSK) item
+  (1): `flight.runtime_filters.max_keys` default 4096 (0002) + tests (0006), series `fl234f9b`; FE **44109685958** 52/52,
+  BE **44109691916**; m4 input `runtime_filters` empty = connector default; INSTALL/M4-CI/UPSTREAM-REVIEW updated.
+  Regression on 6f0aa5a026fa dispatched: S3 1–9 **44111873484**, iceberg 1,11,12 **44111880295**, lakefs 1,3,4,10
+  **44117261733**, check 13 **44121028162**. The lock was not released (taken over at 18:40, > 110 min).
+- 2026-11-17 18:40–19:50 UTC (cloud session): read the four m4 runs: **all PASS** (25/25, 52/52, 27/27, 46/46, 26/26,
+  6/6, 2/2, 14/14, 6/6; 25/25, 22/22, 10/10; 25/25, 27/27, 46/46, 5/5; 25/25, 103/103). Item (2) done:
+  **6f0aa5a026fa is the m4 / compare default** (m4.yml, compare.yml, stack.sh; M4-CI table, M4-RESULTS 2026-11-17).
+  up-fe **44150752848** rebuilt (outputs had expired), compare SF10 ours vs jdbc **44152882031**: ours default 22/22
+  72.54 s warm, speed 35.32 s but **21/22** (q01 run 3: BE gRPC "failed to connect to all addresses" at endpoint 2,
+  server up, next queries fine; first occurrence); jdbc 3/22 as before, on q12/q13/q16 2.3× (default) / 4.2× (speed)
+  slower than ours (`docs/CONNECTOR-COMPARE.md` 2026-11-17). Repeat `compare sf=10 paths=ours profiles=speed`
+  dispatched at session end (result for the next session). No patch change; lock released.
 
 ## Next steps
+
+> **2026-11-17 19:50 UTC: maintainer items (1) and (2) of 2026-11-17 DONE, SF10 re-measured (Log).** Next session:
+> (1) read the repeat compare (`compare sf=10 paths=ours profiles=speed`, dispatched ~19:50 UTC; run id in
+> `STATUS-CI.md` / branch `m4-results` `compare/<run>.md`). If 22/22: note it in `docs/CONNECTOR-COMPARE.md` (the
+> q01 error was transient) and go to finish mode. If the "failed to connect to all addresses" error comes back:
+> analyse it (BE `flight_connector.cpp` connect / channel reuse per endpoint, `grpc.min_reconnect_backoff_ms`; compare
+> with the server log in the artifact `compare-<run>`), consider one retry of a DoGet that fails with UNAVAILABLE
+> before any batch was read, and ask the maintainer before a BE change (Open questions). Otherwise finish mode.
 
 > **Maintainer, 2026-11-17 18:30 - answers to 2026-11-16 20:10: GO on both.** (1) Make runtime filters the default: `flight.runtime_filters.max_keys` default 4096, `wait_ms` 500 (FE change in 0002 + test in 0006), then fe + m4 regression. (2) Make `6f0aa5a026fa` the m4 / compare default after the full regression (S3 1-9, iceberg 1,11,12, lakefs 1,3,4,10, check 13). Then re-measure SF10 ours (new default) vs JDBC baseline for the connector comparison doc.
 

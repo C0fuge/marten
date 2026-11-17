@@ -329,3 +329,25 @@ ours_rf **9.67 / 6.12 s** (0.970 / 0.950); q21 0.93 → 0.60 (default), 0.94 →
 within the order effect) except q21 (−33 % in every pass); nothing got slower beyond noise. **Verdict:** with a server
 that reads the block, runtime filters help join-heavy queries with a selective build side (q21, q11) and never hurt
 TPC-H; default switch proposed to the maintainer (STATUS Open questions 2026-11-16 20:10).
+
+## 2026-11-17: new defaults (runtime filters on, server 6f0aa5a026fa) vs the JDBC baseline, SF10
+
+Series `4a9848e-fl234f9b` (runtime filters on the ticket by default: `max_keys` 4096, `wait_ms` 500), server
+`arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar` (m4 default since 2026-11-17), compare **44152882031**
+(`paths=ours,jdbc profiles=default,speed`, up-fe rebuilt for the JDBC driver: 44150752848), runner AMD EPYC 9V45.
+Sum of warm medians / sum of cold (s):
+
+| path | default | speed |
+|---|---|---|
+| ours | **22/22**, 72.54 / 81.88 | 21/22 (see below), 35.32 / 42.26 |
+| jdbc (stock 4.0.17 + JDBC adapter) | 3/22 (DECIMAL columns refused at analysis, as before) | 3/22 |
+
+On the three queries the JDBC catalog can answer (q12, q13, q16): default jdbc 4.74 + 6.47 + 1.89 = **13.10 s** vs ours
+2.00 + 3.03 + 0.68 = **5.71 s** (2.3×); speed 12.49 s vs 2.97 s (4.2×). Earlier SF10 ours sums for orientation
+(different runner CPUs, not comparable 1:1): d2e27119fda4 87.40 / 45.08 s (EPYC 9V74), 6f0aa5a026fa with RF opt-in
+100.32–106.17 s default (Xeon 8573C / EPYC 7763).
+
+**One error:** speed pass, q01 run 3 (runs 1–2 correct, 4.73 / 3.05 s): `Flight endpoint 2 at grpc+tcp://flight1:32010:
+IOError: Flight returned unavailable error ... failed to connect to all addresses` (BE gRPC client), 41 s after the
+server start; the server stayed up (container stats normal, q02–q22 all correct right after). First occurrence in any
+compare or m4 run; repeat dispatched (`compare sf=10 paths=ours profiles=speed`) to see whether it reproduces.
