@@ -636,7 +636,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   server baseline): **all PASS** (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6). Check times are not comparable
   with the RF run 43942242083 (different runner CPUs: EPYC 7763 vs 9V45). Next-steps item (1) done; item (2) waits for
   the maintainer's answer (Open questions 2026-11-16 20:10). No CI dispatched, no patch change; lock released.
-- 2026-11-17 03:40–03:50 UTC (cloud session): waiting for the maintainer — no answer to the Open question of
+- 2026-11-17 03:40–03:50 and 07:40–07:50 UTC (cloud sessions): waiting for the maintainer — no answer to the Open question of
   2026-11-16 20:10 (runtime-filter default, 6f0aa5a026fa as m4 default); `m4-assets` unchanged (73 assets, newest
   6f0aa5a026fa). No CI dispatched, no patch change; lock released.
 
