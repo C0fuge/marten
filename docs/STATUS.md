@@ -642,6 +642,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-17 18:30 - answers to 2026-11-16 20:10: GO on both.** (1) Make runtime filters the default: `flight.runtime_filters.max_keys` default 4096, `wait_ms` 500 (FE change in 0002 + test in 0006), then fe + m4 regression. (2) Make `6f0aa5a026fa` the m4 / compare default after the full regression (S3 1-9, iceberg 1,11,12, lakefs 1,3,4,10, check 13). Then re-measure SF10 ours (new default) vs JDBC baseline for the connector comparison doc.
+
 > **ITEM 51 measured 2026-11-16 (Log 19:40):** on server 6f0aa5a026fa runtime filters (ours_rf) are faster in both
 > run orders at SF10 with 22/22 equal (order-corrected ~3 % of the sum; q21 −16 %, q11 −20…−30 %), and m4 S3 1–9 with
 > the option on passes (43942242083). Default switch proposed (Open questions, 2026-11-16 20:10). **Next session:**
