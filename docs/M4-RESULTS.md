@@ -760,3 +760,22 @@ member-loss stall). compare warm sums (ours): SF1 10.36 / 7.15 s default / speed
 87.40 / 45.08 s (101.05 / 56.45) — no regression; runner CPUs differ between runs. No wrong answer anywhere.
 
 Full suite green: **d2e27119fda4 is the m4 default from 2026-11-16 09:50 UTC** (m4.yml, compare.yml, stack.sh).
+
+## 2026-11-17, CI: server 6f0aa5a026fa as the m4 default — series `4a9848e-fl234f9b` (runtime filters on by default)
+
+Server 6f0aa5a026fa = d2e27119fda4 + kestrel ITEM 51 (reads the ticket's runtime-filter block). Maintainer's go
+2026-11-17 for both the runtime-filter default (`flight.runtime_filters.max_keys` 4096, `wait_ms` 500; FE 44109685958
+52/52, BE 44109691916) and this server as the default after the full regression. Assets cache `m4-assets-v21`, input
+`runtime_filters` empty (= connector default, on):
+
+| run | server | store / workflow | checks | result |
+|---|---|---|---|---|
+| 44111873484 | 6f0aa5a026fa | s3 | 1–9 | PASS (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6); runner AMD EPYC 7763 |
+| 44111880295 | 6f0aa5a026fa | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10); runner AMD EPYC 9V45 |
+| 44117261733 | 6f0aa5a026fa | lakefs | 1, 3, 4, 10 | PASS (25/25, 27/27, 46/46, 5/5); runner AMD EPYC 9V45 |
+| 44121028162 | 6f0aa5a026fa | s3 | 13 | PASS (103/103, compression none/lz4/zstd); runner AMD EPYC 9V45 |
+
+Check 4 (S3) 29 s on EPYC 7763 (d2e27119fda4: 23 s on 9V74; runner classes differ). Earlier on this server: S3 1–9
+with the option explicitly on 43942242083 and off 43950963745, both PASS. No wrong answer anywhere.
+
+Full suite green: **6f0aa5a026fa is the m4 default from 2026-11-17 18:55 UTC** (m4.yml, compare.yml, stack.sh).
