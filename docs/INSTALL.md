@@ -98,3 +98,9 @@ decodes them. It costs CPU on both sides, so turn it on only where the link, not
 measures both: on a 1 Gbit link with 10 ms delay a wide scan ran ~1.9× faster with `lz4` and ~1.7× with `zstd`, at 48 % /
 32 % of the bytes; on a fast local link both were slower than `none`; `lz4` is the cheaper choice, `zstd` saves more bytes). The FE's metadata and statistics calls never ask for it. A server that does not know the header sends
 uncompressed streams, which the BE reads as before.
+
+Join runtime filters: by default (`"flight.runtime_filters.max_keys" = "4096"`) a Flight scan on the probe side of a
+join waits up to `"flight.runtime_filters.wait_ms"` (default `500`) for the join's IN-set / bitset filters on integer
+keys and sends those with at most that many keys to the server with the ticket, so the server can drop rows before
+streaming them (kestrel server 6f0aa5a026fa or later; an older server ignores them, the BE filters the rows anyway).
+`"0"` turns this off; scans with a pushed aggregation never send them.

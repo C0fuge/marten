@@ -1043,7 +1043,7 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
-- **2026-11-16 20:10 UTC — proposal (maintainer item (2) of 11:15):** kestrel ITEM 51 server 6f0aa5a026fa reads the
+- ~~**2026-11-16 20:10 UTC — proposal (maintainer item (2) of 11:15):**~~ answered 2026-11-17 18:30 MSK: GO on both (Next steps). Original: kestrel ITEM 51 server 6f0aa5a026fa reads the
   runtime-filter block; ours_rf is faster in both orders at SF10 with 22/22 equal (43899589063: 0.937,
   43899594632: 0.995 of ours; q21 −16 %, q11 −20…−30 %), SF1 0.95–1.00 in both orders (43942255955, 43950959245; q21
   −33 %), m4 S3 1–9 with the option on PASS (43942242083). **Proposal:**
@@ -1051,7 +1051,7 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
   against a server that ignores the block (d2e27119fda4 and older) the option costs nothing measurable (only the
   ≤ 500 ms wait, measured within noise). Go? And should 6f0aa5a026fa become the m4 default (full regression first)?
 
-- **2026-11-16 06:25 UTC (no decision needed to continue):** kestrel d2e27119fda4 does not read the ticket's
+- ~~**2026-11-16 06:25 UTC (no decision needed to continue):**~~ settled by the 2026-11-17 GO (option kept, default on). Original: kestrel d2e27119fda4 does not read the ticket's
   runtime-filter block (field 15, `ARF1`), so ours' opt-in `flight.runtime_filters.max_keys` cannot help on it (measured:
   no effect). Keep the option (opt-in, default off) for a server that reads the block, or drop it from the series?
   Should d2e27119fda4 replace deafc861cce3 as the m4/compare default (full regression first, as for deafc861cce3)?

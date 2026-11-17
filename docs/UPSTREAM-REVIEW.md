@@ -17,7 +17,7 @@ taken over; no upstream code is copied into this repository (CLAUDE.md).
 
 ## Our implementation (patches 0002/0003/0004/0006/0007)
 
-- Catalog properties: `flight.runtime_filters.max_keys` (0 = off, default; max 1 000 000), `flight.runtime_filters.wait_ms`
+- Catalog properties: `flight.runtime_filters.max_keys` (default 4096 since series `fl234f9b`, 2026-11-17; was 0; 0 = off; max 1 000 000), `flight.runtime_filters.wait_ms`
   (default 500, 0–60 000). The FE passes both as `TFlightScanNode.options` (`runtime_filter_max_keys`,
   `runtime_filter_wait_ms`) only for scans without a pushed aggregation. No thrift change.
 - BE: at the first DoGet of a range the data source collects the filters that are ready (at most 16, ≤ max_keys keys
