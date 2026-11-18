@@ -398,3 +398,20 @@ Default profile, SF10, ours (series `fl234f9b`), queries q01/q04/q14/q15, 5 runs
 - **With `-DduckDbPreserveInsertionOrder=true` the regression is gone** (44314013220: 5f02e5b35611 1.23 s, 36f3302321ba
   1.25 s vs 1.32 s on 6f0aa5a026fa; q04 also back). Cause: kestrel item 54 (balanced profile without insertion order
   on remote dirs) makes the full `part` scan slower for this query.
+
+## 2026-11-18: server 06d6468b17c5 (kestrel item 57, q14 fix) vs 6f0aa5a026fa, SF10 ours
+
+Compare **44326063071** (series `fl234f9b`, runtime filters on), both servers in one job (AMD EPYC 9V74, order
+6f0aa5a026fa → 06d6468b17c5), 3 runs per query, all 22 TPC-H queries, profiles default and speed. **22/22 correct in
+all four runs.** Sums of warm medians (s):
+
+| profile | 6f0aa5a026fa | 06d6468b17c5 | Δ |
+|---|---|---|---|
+| default | 78.89 | 78.43 | −0.6 % |
+| speed | 44.17 | 42.41 | −4.0 % |
+
+- Default profile: **q14 1.42 → 1.39 s** (36f3302321ba was ~2×), q15 2.44 → 2.55 (+4.5 %), q04 3.20 → 3.13; largest
+  slower query > 1 s: q06 1.16 → 1.24 (+7 %). Speed profile: largest slower query > 1 s q13 2.13 → 2.34 (+9.9 %),
+  q15 +5 %; q09 −14 %, q08 −14 %. **No query or sum > 10 % slower.**
+- Start-up line: 06d6468b17c5 default profile `profile=balanced duckDbSharedDatabase=true` without
+  `duckDbPreserveInsertionOrder=false` (36f3302321ba had it); speed profile keeps `duckDbPreserveInsertionOrder=false`.
