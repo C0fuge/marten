@@ -78,3 +78,19 @@ Check against d2e27119fda4 (the m4 default):
   `runtimeFilters={} keys={} applied={}`, `runtimeFilters=ignored reason=notPlainScan`, `runtimeFilters=refused`.
 - Measurement: `compare sf=10 paths=ours,ours_rf profiles=default` and the reversed order, server
   `arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar` (results in `docs/CONNECTOR-COMPARE.md` / STATUS Log).
+
+## Server `server-1.0.0-36f3302321ba` (kestrel items 49–56; asset check 2026-11-18 09:25 UTC)
+
+Uploaded to `m4-assets` 2026-11-18 09:13 UTC (jar, flight-plugins, flight-server-libs, flight-auth, new SHA256SUMS;
+77 assets). Check against 6f0aa5a026fa (the m4 default):
+
+- The eight SHA256SUMS lines of both servers verify. Plugins, runtime libs and flight-auth are **content-identical**
+  to 6f0aa5a026fa (125 / 64 / 8 files, same SHA-256 per file); no links, setuid/setgid bits, special files or path
+  escapes.
+- Server jar (59 130 entries): every third-party entry identical; 2 new (`ClusterService$WriteBatch`,
+  `QueryPlanner$CachedCluster`), 54 changed, 0 removed, all in `pro.surpin.data.arrowflight.server` (DuckDbAdapter /
+  DuckDbSizing / HostLimits / ResourceProfile, ClusterService, DistributedComplete and the merges, ExecutionService,
+  ParquetQueryParser, QueryPlanner, HazelcastAdapter, InternalCallAuthenticator) plus `arrowflight.properties` (only a
+  comment: `preserve_insertion_order` is false under `resourceProfile=speed` and under balanced on a remote data dir).
+  No new process start, socket, URL or class-loader reference in the changed classes (the only new hits are
+  `RuntimeException` and `SocketAddress`). `RuntimeFilters` is byte-identical (ARF1 reader unchanged).
