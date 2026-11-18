@@ -671,6 +671,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-18 12:20 - NEW SERVER BUILD `server-1.0.0-36f3302321ba` (kestrel items 49-56: memory budget + caps, balanced shared DuckDB, distributed big aggregates / GROUP BY, dc tails and scan stream limit, balanced no insertion order on remote dirs; egret HDFS acceptance SHIP) is in this repo's test assets.** Run the full regression on it (as for the last default switch; CI tiers: fast while iterating, full at the end), compare times with the current default server on the same runner class, and if 22/22 everywhere with no regression > 10 %, make it the default server. Report pass/fail per check and any wrong answer (critical).
+
 > **2026-11-17 19:55 UTC: repeat compare 44160944676 22/22 (q01 error not reproduced, transient). Finish mode.**
 > Next session: stop early unless the maintainer adds an item / answers an Open question, or a server jar newer than
 > 6f0aa5a026fa appears in the `m4-assets` release. If the gRPC "failed to connect to all addresses" error shows up
