@@ -94,3 +94,17 @@ Uploaded to `m4-assets` 2026-11-18 09:13 UTC (jar, flight-plugins, flight-server
   comment: `preserve_insertion_order` is false under `resourceProfile=speed` and under balanced on a remote data dir).
   No new process start, socket, URL or class-loader reference in the changed classes (the only new hits are
   `RuntimeException` and `SocketAddress`). `RuntimeFilters` is byte-identical (ARF1 reader unchanged).
+
+## Server `server-1.0.0-06d6468b17c5` (kestrel item 57; asset check 2026-11-18 14:35 UTC)
+
+Uploaded to `m4-assets` 2026-11-18 14:15–14:24 UTC (jar, flight-plugins, flight-server-libs, flight-auth, new
+SHA256SUMS). Check against 36f3302321ba (the build it fixes):
+
+- The SHA256SUMS lines of both servers verify. Plugins, runtime libs and flight-auth are **content-identical** to
+  36f3302321ba (125 / 64 / 8 files, same SHA-256 per file; hence also to 6f0aa5a026fa); no links, setuid/setgid bits,
+  special files or path escapes.
+- Server jar (56 275 file entries): 0 new, 0 removed, 3 changed — `adapters/ResourceProfile`, `ResourceProfile$Builder`
+  and `arrowflight.properties` (comment only: `duckDbPreserveInsertionOrder` empty = true; the "false under balanced on
+  a remote data dir" clause is gone, false remains only for `resourceProfile=speed` per the maintainer's note). No new
+  process start, socket, URL or class-loader reference. This is exactly the q14 cause found by the 2026-11-18 bisect.
+
