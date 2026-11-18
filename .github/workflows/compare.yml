@@ -2,6 +2,9 @@
 # Flight server, one after the other on one runner: ours (4.1.4 + this series), up (the upstream native fork on
 # 4.0, outputs of up-fe / up-be) and jdbc (stock 4.0.17 + the upstream JDBC adapter driver from up-fe).
 # Manual only: `compare sf=1 paths=ours,up,jdbc profiles=default,speed` in ci/dispatch.txt.
+# Bisecting server builds: `server=<jar1>,<jar2>,...` runs them one after the other in this job (same runner CPU),
+# `queries=q04,q14` limits the TPC-H set, `server_log=q14` puts the server's log lines of those queries into the result,
+# `server_opts=-Dname=value,...` adds JVM options to every server start.
 # Results: artifact compare-<run> and branch m4-results (compare/<run>.md).
 name: compare
 on:
