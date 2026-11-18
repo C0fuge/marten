@@ -28,6 +28,9 @@ on:
       queries:
         description: "comma-separated TPC-H query subset, e.g. q04,q14,q15 (empty: all 22)"
         default: ""
+      server_opts:
+        description: "extra Flight server JVM options for every run, e.g. -DduckDbPreserveInsertionOrder=true (-Dname=value, comma-separated)"
+        default: ""
       server_log:
         description: "queries whose Flight server log lines (duckdb=sizing, resourceProfile, executionPath, plan) go into the result"
         default: ""
@@ -54,6 +57,7 @@ jobs:
           for j in ${CMP_SERVERS//,/ }; do
             [[ "$j" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
           done
+          [[ "${{ inputs.server_opts }}" =~ ^(-D[A-Za-z0-9._]+=[A-Za-z0-9._]+(,-D[A-Za-z0-9._]+=[A-Za-z0-9._]+)*)?$ ]] || { echo "::error::bad server_opts"; exit 1; }
           for q in "${{ inputs.queries }}" "${{ inputs.server_log }}"; do
             [[ "$q" =~ ^(q?[0-9]{1,2}(,q?[0-9]{1,2})*)?$ ]] || { echo "::error::bad query list"; exit 1; }
           done
@@ -179,6 +183,7 @@ jobs:
               [ "$nsrv" = 1 ] || label=$label-$tag
               echo "::group::$label"
               opts=; [ "$prof" = default ] || opts="-DresourceProfile=$prof"
+              sopts="${{ inputs.server_opts }}"; opts="$opts ${sopts//,/ }"
               ci/m4/stack.sh stop sr flight1
               # a fresh Flight server per run, the server's own default settings (+ the profile)
               M4_SERVER_DEFAULTS=1 M4_FLIGHT_MEM=6g FLIGHT_JAVA_OPTS="$opts" ci/m4/stack.sh flight "$WORK/m4-assets" flight1
@@ -202,7 +207,7 @@ jobs:
         run: |
           out=$RUNNER_TEMP/cmp; mkdir -p "$out"
           {
-            echo "# Connector comparison run $GITHUB_RUN_ID (SF${{ inputs.sf }}, server ${{ inputs.server }}${{ inputs.queries && format(', queries {0}', inputs.queries) || '' }})"
+            echo "# Connector comparison run $GITHUB_RUN_ID (SF${{ inputs.sf }}, server ${{ inputs.server }}${{ inputs.queries && format(', queries {0}', inputs.queries) || '' }}${{ inputs.server_opts && format(', server options {0}', inputs.server_opts) || '' }})"
             echo
             echo "Paths with outputs:${CMP_PATHS:-}; profiles ${{ inputs.profiles }}; ${{ inputs.runs }} runs per query; runner $(nproc) vCPU ($(grep -m1 '^model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')), $(free -g | awk '/Mem/ {print $2}') GB"
             echo
