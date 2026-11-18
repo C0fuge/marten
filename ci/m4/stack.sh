@@ -157,7 +157,7 @@ minio)
     MINIO_ROOT_USER=$MINIO_ROOT_USER MINIO_ROOT_PASSWORD=$MINIO_ROOT_PASSWORD python3 - "${M4_TPCH_DIR:-$A/x/sf1/tpch}" "$REPO_ROOT/tests/m4/data/types" <<'PY'
 import os, sys, time, boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 # Single PUTs, no multipart: run 39656873818 failed with "ClientDisconnected" on UploadPart against MinIO.
 try:
     cfg = Config(s3={"addressing_style": "path"}, request_checksum_calculation="when_required",
@@ -173,15 +173,16 @@ for src in sys.argv[1:]:
     for root, _, files in os.walk(src):
         for f in files:
             p = os.path.join(root, f)
-            # the fallback MinIO image sometimes drops a PUT right after start ("ClientDisconnected", m4 40294023782)
-            for attempt in range(3):
+            # the fallback MinIO image sometimes drops a PUT right after start ("ClientDisconnected", m4 40294023782;
+            # ConnectionClosedError, a BotoCoreError, in compare 44296982348)
+            for attempt in range(5):
                 try:
                     with open(p, "rb") as fh:
                         s3.put_object(Bucket="lake", Key=f"parquet/{schema}/{os.path.relpath(p, src)}", Body=fh,
                                       ContentLength=os.path.getsize(p))
                     break
-                except ClientError as e:
-                    if attempt == 2:
+                except (ClientError, BotoCoreError) as e:
+                    if attempt == 4:
                         raise
                     print(f"retry {p}: {e}")
                     time.sleep(2 * (attempt + 1))
