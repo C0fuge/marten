@@ -1,0 +1,119 @@
+{
+ "path": "ours",
+ "label": "sf10-ours-default-f4feb0d5e404",
+ "version": "4.1.4-4a9848e-fl234f9b",
+ "catalog": {
+  "type": "flight",
+  "flight.uri": "grpc://flight1:32010"
+ },
+ "queries": {
+  "q01": {
+   "ok": true,
+   "times": [
+    5.997,
+    2.89,
+    2.754,
+    2.795,
+    2.775
+   ],
+   "cold": 5.997,
+   "warm_median": 2.785,
+   "fe_peak_mb": 511,
+   "be_peak_mb": 246,
+   "detail": ""
+  },
+  "q04": {
+   "ok": true,
+   "times": [
+    4.414,
+    3.647,
+    3.011,
+    2.919,
+    3.273
+   ],
+   "cold": 4.414,
+   "warm_median": 3.142,
+   "fe_peak_mb": 531,
+   "be_peak_mb": 378,
+   "detail": ""
+  },
+  "q14": {
+   "ok": true,
+   "times": [
+    1.457,
+    1.404,
+    1.368,
+    1.301,
+    1.361
+   ],
+   "cold": 1.457,
+   "warm_median": 1.365,
+   "fe_peak_mb": 533,
+   "be_peak_mb": 469,
+   "detail": ""
+  },
+  "q15": {
+   "ok": true,
+   "times": [
+    2.424,
+    2.783,
+    2.302,
+    2.419,
+    2.24
+   ],
+   "cold": 2.424,
+   "warm_median": 2.361,
+   "fe_peak_mb": 577,
+   "be_peak_mb": 364,
+   "detail": ""
+  }
+ },
+ "selected": [
+  "q01",
+  "q04",
+  "q14",
+  "q15"
+ ],
+ "server": "arrow-flight-server-1.0.0-f4feb0d5e404-linux.jar",
+ "started": "2026-11-18T13:36:39Z",
+ "tables": [
+  "customer",
+  "lineitem",
+  "nation",
+  "orders",
+  "part",
+  "partsupp",
+  "region",
+  "supplier"
+ ],
+ "setup_s": 0.61,
+ "server_log": {
+  "startup": [
+   "[main] INFO pro.surpin.data.arrowflight.server.ServerModule - node=flight1 resourceProfile profile=balanced duckDbSharedDatabase=true",
+   "[main] INFO pro.surpin.data.arrowflight.server.ServerModule - node=flight1 duckdb=sizing threads=4 memoryLimit=1075MiB coreThreads=4 connections=2 budgetMiB=2790 limitsBudgetMiB=2150 cores=4 memoryMiB=6144 heapMiB=1536 directMiB=1536"
+  ],
+  "q14": [
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=a0d033d4-v node=flight1 executionPath=duckdb-aggregation pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:16.944743381Z\",\"qid\":\"a0d033d4-v\",\"node\":\"flight1\",\"query_digest\":\"38269d2f5e4e23b239b47b54f4141b6ebb049acdd9e1512ae99b54829aadb2f0\",\"execution_path\":\"duckdb-aggregation\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=c5e9cdd4-u node=flight1 executionPath=footer-count pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:16.950927709Z\",\"qid\":\"c5e9cdd4-u\",\"node\":\"flight1\",\"query_digest\":\"e8b8d6d565a7bcc73365fe0457696da3bace1a457b9d93581509b681ade46dae\",\"execution_path\":\"footer-count\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=4e69ec23-x node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:17.832546443Z\",\"qid\":\"4e69ec23-x\",\"node\":\"flight1\",\"query_digest\":\"e413fefcddab7a186e2285819a6e3d569ae23c03f535ef8775afaa86cb6ba6fc\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=51912fc5-w node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:18.300334852Z\",\"qid\":\"51912fc5-w\",\"node\":\"flight1\",\"query_digest\":\"b8341adc81e908c10d0f0845bdcaba5f5c5e9b8038bb3ee58ac426a76549d8a4\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=4e69ec23-z node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:19.197726372Z\",\"qid\":\"4e69ec23-z\",\"node\":\"flight1\",\"query_digest\":\"e413fefcddab7a186e2285819a6e3d569ae23c03f535ef8775afaa86cb6ba6fc\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=51912fc5-y node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:19.703073624Z\",\"qid\":\"51912fc5-y\",\"node\":\"flight1\",\"query_digest\":\"b8341adc81e908c10d0f0845bdcaba5f5c5e9b8038bb3ee58ac426a76549d8a4\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=4e69ec23-11 node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:20.618108035Z\",\"qid\":\"4e69ec23-11\",\"node\":\"flight1\",\"query_digest\":\"e413fefcddab7a186e2285819a6e3d569ae23c03f535ef8775afaa86cb6ba6fc\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=51912fc5-10 node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:21.075268209Z\",\"qid\":\"51912fc5-10\",\"node\":\"flight1\",\"query_digest\":\"b8341adc81e908c10d0f0845bdcaba5f5c5e9b8038bb3ee58ac426a76549d8a4\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=4e69ec23-13 node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:21.927824373Z\",\"qid\":\"4e69ec23-13\",\"node\":\"flight1\",\"query_digest\":\"e413fefcddab7a186e2285819a6e3d569ae23c03f535ef8775afaa86cb6ba6fc\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=51912fc5-12 node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:22.387403022Z\",\"qid\":\"51912fc5-12\",\"node\":\"flight1\",\"query_digest\":\"b8341adc81e908c10d0f0845bdcaba5f5c5e9b8038bb3ee58ac426a76549d8a4\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=4e69ec23-15 node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:23.274568733Z\",\"qid\":\"4e69ec23-15\",\"node\":\"flight1\",\"query_digest\":\"e413fefcddab7a186e2285819a6e3d569ae23c03f535ef8775afaa86cb6ba6fc\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}",
+   "[execution-path-log] INFO pro.surpin.data.arrowflight.server.metrics.ExecutionPathRecorder - qid=51912fc5-14 node=flight1 executionPath=duckdb-scan pushdownEvidence=true success=true event={\"schema_version\":\"1.0.0\",\"timestamp\":\"2026-11-18T13:37:23.745698340Z\",\"qid\":\"51912fc5-14\",\"node\":\"flight1\",\"query_digest\":\"b8341adc81e908c10d0f0845bdcaba5f5c5e9b8038bb3ee58ac426a76549d8a4\",\"execution_path\":\"duckdb-scan\",\"pushdown_evidence\":true,\"success\":true,\"fallback_target\":null,\"reason\":null,\"failure_reason\":null}"
+  ]
+ },
+ "explain": {
+  "q14": [
+   "SELECT \"l_partkey\", \"l_extendedprice\", \"l_discount\", \"l_shipdate\" FROM \"tpch\".\"lineitem\" WHERE (\"l_shipdate\" >= DATE '1995-09-01') AND (\"l_shipdate\" < DATE '1995-10-01')",
+   "SELECT \"p_partkey\", \"p_type\" FROM \"tpch\".\"part\" WHERE (\"p_partkey\" IS NOT NULL)"
+  ]
+ },
+ "fe_peak_mb": 577,
+ "be_peak_mb": 469,
+ "finished": "2026-11-18T13:37:39Z"
+}
