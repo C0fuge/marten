@@ -779,3 +779,24 @@ Check 4 (S3) 29 s on EPYC 7763 (d2e27119fda4: 23 s on 9V74; runner classes diffe
 with the option explicitly on 43942242083 and off 43950963745, both PASS. No wrong answer anywhere.
 
 Full suite green: **6f0aa5a026fa is the m4 default from 2026-11-17 18:55 UTC** (m4.yml, compare.yml, stack.sh).
+
+## 2026-11-18, CI: server 36f3302321ba (kestrel items 49–56) — full regression PASS, timing regression on q14, NOT the default
+
+Server 36f3302321ba (maintainer, 2026-11-18; asset check in `docs/UPSTREAM-REVIEW.md`), series `4a9848e-fl234f9b`,
+runtime filters on by default, assets cache `m4-assets-v21`:
+
+| run | server | store / workflow | checks | result |
+|---|---|---|---|---|
+| 44274880025 | 36f3302321ba | s3 | 1–9 | PASS (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6); runner AMD EPYC 9V74 |
+| 44274884058 | 36f3302321ba | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10); runner AMD EPYC 9V74 |
+| 44278549074 | 36f3302321ba | lakefs | 1, 3, 4, 10 | PASS (25/25, 27/27, 46/46, 5/5); runner AMD EPYC 9V74 |
+| 44281751422 | 36f3302321ba | s3 | 13 | PASS (25/25, 103/103); runner AMD EPYC 7763 |
+| 44285073710 | 36f3302321ba | compare SF10 ours | default, speed | 22/22, 22/22; Xeon 6975P-C |
+| 44296978591 | 6f0aa5a026fa | compare SF10 ours | default, speed | 22/22, 22/22; EPYC 9V74 (baseline; its 36f3302321ba pair 44296982348 died in MinIO setup) |
+| 44300586688 | 36f3302321ba | compare SF10 ours | default, speed | 22/22, 22/22; EPYC 7763 |
+
+No wrong answer anywhere. Timing on the same runner class (details `docs/CONNECTOR-COMPARE.md` 2026-11-18): default
+profile EPYC 7763 (vs 6f0aa5a026fa 43899594632 `ours_rf` = today's defaults) sum −3.3 %, but **q14 1.79 → 3.62 s
+(+102 %)**, q15 +18 %, q04 +11 %; speed profile Xeon 6975P-C (vs 44160944676) sum +1.3 %, q10 +11 %. q14 in the default
+profile is slower on 36f3302321ba on every runner (2.32 / 3.62 s vs 1.30–2.01 s on 6f0aa5a026fa). The rule (no single
+query > 1 s more than 10 % slower) is not met: **6f0aa5a026fa stays the m4 default**; reported to the maintainer.

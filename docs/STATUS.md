@@ -677,10 +677,25 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   6f0aa5a026fa regression are within noise but the runner CPUs differ (7763 / 9V45 then), so they are no timing
   comparison. Timing run dispatched: compare SF10 ours default+speed on 36f3302321ba **44285073710** (running at
   session end). Default NOT switched yet (waits for the timing comparison). No patch change; lock released.
+- 2026-11-18 11:40–12:35 UTC (cloud session): server 36f3302321ba timing. Compare 44285073710 (36f3302321ba, Xeon
+  6975P-C): 22/22 both profiles, 76.08 / 39.90 s. Baseline 6f0aa5a026fa 44296978591 (EPYC 9V74) 22/22, 80.71 / 43.83 s;
+  its 36f3302321ba pair 44296982348 died in MinIO setup (quay.io pull failed, fallback MinIO closed a PUT with
+  `ConnectionClosedError`, which the retry did not catch) — fixed in `ci/m4/stack.sh` (retry also on BotoCoreError, 5
+  attempts); re-run 44300586688 (EPYC 7763) 22/22, 96.99 / 54.78 s. Same-CPU pairs: default 7763 vs 43899594632 `ours_rf`
+  sum −3.3 % but **q14 +102 %** (1.79 → 3.62 s), q15 +18 %, q04 +11 %; speed 6975P-C vs 44160944676 sum +1.3 %, q10 +11 %.
+  Rule not met: **6f0aa5a026fa stays the default**; maintainer notified, Open question added. Docs: M4-RESULTS,
+  CONNECTOR-COMPARE, M4-CI asset row. No patch change; lock released.
 
 ## Next steps
 
-> **2026-11-18 10:55 UTC: server 36f3302321ba regression — functional part DONE, all PASS** (S3 1–9 44274880025,
+> **2026-11-18 12:35 UTC: server 36f3302321ba timing DONE — regression, NOT made the default.** All answers correct
+> (22/22 in 44285073710, 44300586688), but in the default profile TPC-H q14 is ~2× slower than on 6f0aa5a026fa on the
+> same CPU (EPYC 7763: 1.79 → 3.62 s; also q15 +18 %, q04 +11 %; sum −3.3 %), speed profile on par (+1.3 %, q10 +11 %).
+> `docs/CONNECTOR-COMPARE.md` 2026-11-18. m4 / compare default stays 6f0aa5a026fa. **Next session: finish mode** —
+> stop early unless the maintainer answers the Open question of 2026-11-18 12:35 (switch anyway, or wait for a fixed
+> server) or a newer server appears in `m4-assets` (then: asset check, full regression, same-CPU timing pairs).
+
+> ~~**2026-11-18 10:55 UTC: server 36f3302321ba regression — functional part DONE, all PASS** (S3 1–9 44274880025,
 > iceberg 1,11,12 44274884058, lakefs 1,3,4,10 44278549074, check 13 44281751422; 22/22 TPC-H everywhere, no wrong
 > answer; Log). **Next session:** (1) read compare **44285073710** (SF10 ours default+speed on 36f3302321ba;
 > `git show origin/m4-results:compare/44285073710.md`): 22/22 in both profiles? note its runner CPU. (2) Get a baseline
@@ -689,7 +704,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 > 6f0aa5a026fa compares: 44152882031, 44160944676 Xeon 6975P-C). (3) If no query sum or single query (> 1 s) is > 10 %
 > slower on 36f3302321ba: make it the m4 / compare default (m4.yml, compare.yml, ci/m4/stack.sh, M4-CI.md table and
 > §7 text, M4-RESULTS entry, CONNECTOR-COMPARE note) and report to the maintainer; otherwise report the regression in
-> Open questions and keep 6f0aa5a026fa.
+> Open questions and keep 6f0aa5a026fa.~~ Done 12:35, see above.
 
 > **Maintainer, 2026-11-18 12:20 - NEW SERVER BUILD `server-1.0.0-36f3302321ba` (kestrel items 49-56: memory budget + caps, balanced shared DuckDB, distributed big aggregates / GROUP BY, dc tails and scan stream limit, balanced no insertion order on remote dirs; egret HDFS acceptance SHIP) is in this repo's test assets.** Run the full regression on it (as for the last default switch; CI tiers: fast while iterating, full at the end), compare times with the current default server on the same runner class, and if 22/22 everywhere with no regression > 10 %, make it the default server. Report pass/fail per check and any wrong answer (critical).
 
@@ -1107,6 +1122,13 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
   No patch change.
 
 ## Open questions for the maintainer
+
+- **2026-11-18 12:35 UTC — server 36f3302321ba:** full m4 regression PASS, no wrong answer, but a timing regression in
+  the server's default profile: SF10 q14 1.79 → 3.62 s (+102 %) on the same runner CPU (EPYC 7763, compare 43899594632
+  vs 44300586688), q14 slower on every runner (2.32 / 3.62 s vs 1.30–2.01 s on 6f0aa5a026fa); also q15 +18 %, q04 +11 %.
+  The query sum is 3 % faster (q08 −17 %, q05 −12 %); the speed profile is on par (+1.3 %). Per your rule 6f0aa5a026fa
+  stays the default. Switch anyway, or wait for a server build that fixes q14 (q14 = lineitem ⋈ part, 1 month of
+  l_shipdate, `sum(case when p_type like 'PROMO%' ...)`)?
 
 - ~~**2026-11-16 20:10 UTC — proposal (maintainer item (2) of 11:15):**~~ answered 2026-11-17 18:30 MSK: GO on both (Next steps). Original: kestrel ITEM 51 server 6f0aa5a026fa reads the
   runtime-filter block; ours_rf is faster in both orders at SF10 with 22/22 equal (43899589063: 0.937,

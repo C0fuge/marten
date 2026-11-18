@@ -355,3 +355,18 @@ compare or m4 run; repeat dispatched (`compare sf=10 paths=ours profiles=speed`)
 **Repeat (2026-11-17):** compare **44160944676** (`paths=ours profiles=speed`, same series and server, runner Intel
 Xeon 6975P-C): **22/22** correct, 39.35 / 47.83 s (warm / cold), q01 3.31 / 5.35 s, no error. The q01 connect error
 of 44152882031 did not reproduce: treated as transient (runner network / gRPC channel start-up), no BE change.
+
+## 2026-11-18: server 36f3302321ba vs 6f0aa5a026fa, SF10 ours (series `fl234f9b`, runtime filters on)
+
+Same runner class pairs (warm medians, s):
+
+| profile | CPU | 6f0aa5a026fa | 36f3302321ba | sum | > 1 s queries > 10 % slower |
+|---|---|---|---|---|---|
+| default | EPYC 7763 | 43899594632 (`ours_rf`) 100.32 | 44300586688 97.00 | −3.3 % | **q14 1.79 → 3.62 (+102 %)**, q15 3.25 → 3.83 (+18 %), q04 4.05 → 4.50 (+11 %) |
+| speed | Xeon 6975P-C | 44160944676 39.35 | 44285073710 39.88 | +1.3 % | q10 1.84 → 2.05 (+11 %) |
+
+Faster on 36f3302321ba (default, 7763): q08 −17 %, q05 −12 %, q03/q07/q09 −10…−11 %. Unpaired runs: 6f0aa5a026fa
+EPYC 9V74 44296978591 80.71 / 43.83 s (default / speed); 36f3302321ba Xeon 6975P-C 44285073710 76.08 / 39.90 s.
+q14 default profile across all runs: 6f0aa5a026fa 1.30 (9V45), 1.61 (9V74), 1.79–1.83 (7763), 1.93–2.01 (8573C);
+36f3302321ba 2.32 (6975P-C), 3.62 (7763) — a server-side regression in the default profile only (speed: 0.66 → 0.69 s).
+All answers correct (22/22 in every run).
