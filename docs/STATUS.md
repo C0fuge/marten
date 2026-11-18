@@ -688,6 +688,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-18 15:50 - answer to 12:35: WAIT for a fixed server (6f0aa5a026fa stays default); help find the cause first.** Kestrel builds between them are now in `m4-assets`: `f4feb0d5e404` (kestrel items 52(a), 53 = balanced on the node's shared DuckDB, 55(b)) and `5f02e5b35611` (+ 52(b), 54 / balanced without insertion order on remote dirs, 55(a), 55(c), memory budget cap) - `36f3302321ba` adds item 56 only. Run q14 (and q15, q04) in the default profile, same-CPU pairs, on 6f0aa5a026fa / f4feb0d5e404 / 5f02e5b35611 / 36f3302321ba and name the first build where q14 doubles; also capture the server log lines for q14 (`duckdb=sizing`, `resourceProfile`, the plan / executionPath lines). Write the result into Open questions; kestrel ITEM 57 fixes it.
+
 > **2026-11-18 12:35 UTC: server 36f3302321ba timing DONE — regression, NOT made the default.** All answers correct
 > (22/22 in 44285073710, 44300586688), but in the default profile TPC-H q14 is ~2× slower than on 6f0aa5a026fa on the
 > same CPU (EPYC 7763: 1.79 → 3.62 s; also q15 +18 %, q04 +11 %; sum −3.3 %), speed profile on par (+1.3 %, q10 +11 %).
