@@ -118,13 +118,35 @@ def make_catalog(conn, path):
 EXPLAIN_QUERIES = ["q12", "q14", "q17", "q19"]
 
 
+def selected(args):
+    qs = [f"q{i:02d}" for i in range(1, 23)]
+    if args.queries:
+        want = {f"q{int(x.strip().lstrip('qQ')):02d}" for x in args.queries.split(",") if x.strip()}
+        qs = [q for q in qs if q in want]
+    return qs
+
+
+def server_log(since, until, pattern, container="flight1"):
+    """Lines of the Flight server's container log written between two unix times that match pattern."""
+    try:
+        p = subprocess.run(["docker", "logs", "--since", f"{since:.3f}", "--until", f"{until:.3f}", container],
+                           capture_output=True, text=True, timeout=60)
+        lines = (p.stdout + p.stderr).splitlines()
+    except Exception as e:
+        return [f"(docker logs failed: {type(e).__name__}: {e})"]
+    rx = re.compile(pattern)
+    return [ln[:600] for ln in lines if rx.search(ln)][:120]
+
+
 def run(args):
     ref = json.load(open(args.ref))
+    log_qs = set(selected(argparse.Namespace(queries=args.server_log_queries))) if args.server_log_queries else set()
     conn = m4.sr_connect()
     m4.sr(conn, f"SET query_timeout = {args.timeout}")
     version = m4.sr(conn, "SELECT current_version()")[0][0]
     props = make_catalog(conn, args.path)
     res = {"path": args.path, "label": args.label, "version": version, "catalog": props, "queries": {},
+           "selected": selected(args), "server": os.environ.get("CMP_SERVER", ""),
            "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     t0 = time.time()
     try:
@@ -137,12 +159,14 @@ def run(args):
         json.dump(res, open(os.path.join(args.out, f"{args.label}.json"), "w"), indent=1)
         print(res["error"])
         return
+    if log_qs:   # server start-up lines (resource profile, DuckDB sizing) before the first query
+        res["server_log"] = {"startup": server_log(0, time.time(), r"duckdb=sizing|resourceProfile|[Pp]rofile|memory budget")}
     mem = MemSampler()
     mem.start()
     total_fe = total_be = 0
-    for i in range(1, 23):
-        q = f"q{i:02d}"
+    for q in selected(args):
         exp = ref["queries"][q]
+        q_t0 = time.time()
         sql = sr_sql(query_sql(q))
         mem.reset()
         times, ok, detail = [], None, ""
@@ -177,6 +201,9 @@ def run(args):
                     only = [r for r in rows if r not in exp["rows"]][:2]
                     detail += f" | first differing: {only}"
             ok = good if ok is None else (ok and good)
+        if q in log_qs:
+            time.sleep(1.5)      # the server writes some lines (executionPath) asynchronously
+            res.setdefault("server_log", {})[q] = server_log(q_t0 - 0.5, time.time(), args.server_log_re)
         time.sleep(1.2)
         warm = [t for t in times[1:] if t is not None]
         res["queries"][q] = {"ok": bool(ok), "times": times, "cold": times[0] if times else None,
@@ -188,7 +215,7 @@ def run(args):
     if args.path in ("ours", "ours_rf"):
         # remote SQL of the join-key-pushdown queries (STATUS Next steps (b)), after the timed runs
         res["explain"] = {}
-        for q in EXPLAIN_QUERIES:
+        for q in [x for x in EXPLAIN_QUERIES if x in selected(args)]:
             try:
                 plan = "\n".join(r[0] for r in m4.sr(conn, "EXPLAIN " + sr_sql(query_sql(q))))
                 res["explain"][q] = re.findall(r"REMOTE SQL:\s*(.*)", plan)
@@ -211,16 +238,18 @@ def report(args):
     for r in rs:
         qs = r.get("queries", {})
         n = sum(1 for v in qs.values() if v["ok"])
-        allw = all(v["warm_median"] is not None for v in qs.values()) and len(qs) == 22
+        allw = all(v["warm_median"] is not None for v in qs.values()) and len(qs) == len(r.get("selected", qs) or qs)
         sw = sum(v["warm_median"] or 0 for v in qs.values())
         sc = sum(v["cold"] or 0 for v in qs.values())
-        L.append(f"| {r['label']} | {r['path']} | {n}/22{'' if 'error' not in r else ' (' + r['error'][:120] + ')'} | "
+        L.append(f"| {r['label']} | {r['path']} | {n}/{len(r.get('selected') or range(22))}{'' if 'error' not in r else ' (' + r['error'][:120] + ')'} | "
                  f"{sw:.2f}{'' if allw else ' (incomplete)'} | {sc:.2f} | {r.get('fe_peak_mb', '-')} | "
                  f"{r.get('be_peak_mb', '-')} | {r.get('version', '')} |")
     L += ["", "Per query: warm median / cold (s), `x` = wrong answer or error", "",
           "| q | " + " | ".join(r["label"] for r in rs) + " |", "|---|" + "---|" * len(rs)]
     for i in range(1, 23):
         q = f"q{i:02d}"
+        if not any(q in r.get("queries", {}) for r in rs):
+            continue
         cells = []
         for r in rs:
             v = r.get("queries", {}).get(q)
@@ -233,9 +262,13 @@ def report(args):
                 L.append(f"- {r['label']} {q}: {v['detail']}")
     for r in rs:
         for q, sqls in r.get("explain", {}).items():
-            if q == EXPLAIN_QUERIES[0]:
+            if f"REMOTE SQL ({r['label']}):" not in L:
                 L += ["", f"REMOTE SQL ({r['label']}):", ""]
             L += [f"- {q}: " + " | ".join(f"`{x}`" for x in sqls)]
+    for r in rs:
+        for q, lines in r.get("server_log", {}).items():
+            L += ["", f"<details><summary>Server log {r['label']} {q} ({len(lines)} matching lines)</summary>", "",
+                  "```"] + [x.replace("```", "'''") for x in lines] + ["```", "", "</details>"]
     open(args.out, "w").write("\n".join(L) + "\n")
     print("\n".join(L))
 
@@ -250,6 +283,9 @@ def main():
     ap.add_argument("--label")
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--timeout", type=int, default=900)
+    ap.add_argument("--queries", default="", help="comma-separated subset, e.g. q04,q14 (default: all 22)")
+    ap.add_argument("--server-log-queries", default="", help="queries whose server log lines go into the result")
+    ap.add_argument("--server-log-re", default=r"duckdb=sizing|resourceProfile|executionPath|plan")
     ap.add_argument("files", nargs="*")
     args = ap.parse_args()
     {"reference": reference, "run": run, "report": report}[args.mode](args)

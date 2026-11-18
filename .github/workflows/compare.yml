@@ -17,7 +17,7 @@ on:
         description: "comma-separated server profiles: default (no tuning flags), speed (-DresourceProfile=speed)"
         default: "default"
       server:
-        description: "Flight server jar asset of release m4-assets"
+        description: "Flight server jar asset(s) of release m4-assets; several (comma-separated) run one after the other in this job (same runner CPU)"
         default: "arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar"
       runs:
         description: "runs per query (1st = cold)"
@@ -25,6 +25,12 @@ on:
       timeout:
         description: "StarRocks query_timeout (s) per query"
         default: "900"
+      queries:
+        description: "comma-separated TPC-H query subset, e.g. q04,q14,q15 (empty: all 22)"
+        default: ""
+      server_log:
+        description: "queries whose Flight server log lines (duckdb=sizing, resourceProfile, executionPath, plan) go into the result"
+        default: ""
 
 concurrency:
   group: m4
@@ -40,12 +46,17 @@ jobs:
     timeout-minutes: 355
     env:
       GH_TOKEN: ${{ github.token }}
-      M4_SERVER_JAR: ${{ inputs.server }}
+      CMP_SERVERS: ${{ inputs.server }}
     steps:
       - uses: actions/checkout@v4
       - name: Check inputs
         run: |
-          [[ "$M4_SERVER_JAR" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
+          for j in ${CMP_SERVERS//,/ }; do
+            [[ "$j" =~ ^arrow-flight-server-[A-Za-z0-9.-]+\.jar$ ]] || { echo "::error::bad server jar name"; exit 1; }
+          done
+          for q in "${{ inputs.queries }}" "${{ inputs.server_log }}"; do
+            [[ "$q" =~ ^(q?[0-9]{1,2}(,q?[0-9]{1,2})*)?$ ]] || { echo "::error::bad query list"; exit 1; }
+          done
           case "${{ inputs.sf }}" in 1|10) ;; *) echo "::error::sf must be 1 or 10"; exit 1 ;; esac
           echo "${{ inputs.paths }}" | grep -qxE '(ours|ours_rf|up|jdbc)(,(ours|ours_rf|up|jdbc))*' || { echo "::error::bad paths"; exit 1; }
           echo "${{ inputs.profiles }}" | grep -qxE '(default|speed)(,(default|speed))*' || { echo "::error::bad profiles"; exit 1; }
@@ -122,7 +133,8 @@ jobs:
           echo "paths with outputs:$avail"
           [ -n "$avail" ] || { echo "::error::no path has its build outputs"; exit 1; }
       - name: Download m4 assets
-        run: ci/m4/stack.sh assets "$WORK/m4-assets"
+        # every jar is checked here (download once, digests); the Compare step switches x/server.jar per server
+        run: for j in ${CMP_SERVERS//,/ }; do ci/m4/stack.sh assets "$WORK/m4-assets" "$j"; done
       # duckdb 1.4.1 has no wheel for the runner's default Python (pip built it from source: 18 min in run 41447501206)
       - uses: actions/setup-python@v5
         with:
@@ -156,9 +168,15 @@ jobs:
       - name: Compare
         run: |
           out=$RUNNER_TEMP/cmp; mkdir -p "$out/logs"
+          nsrv=$(echo "${CMP_SERVERS//,/ }" | wc -w)
           for prof in $(echo "${{ inputs.profiles }}" | tr , ' '); do
+           for jar in ${CMP_SERVERS//,/ }; do
+            ci/m4/stack.sh stop sr flight1
+            ci/m4/stack.sh assets "$WORK/m4-assets" "$jar" > /dev/null
+            tag=${jar#arrow-flight-server-*-}; tag=${tag%.jar}; tag=${tag%-linux}
             for p in $CMP_PATHS; do
               label=sf${{ inputs.sf }}-$p-$prof
+              [ "$nsrv" = 1 ] || label=$label-$tag
               echo "::group::$label"
               opts=; [ "$prof" = default ] || opts="-DresourceProfile=$prof"
               ci/m4/stack.sh stop sr flight1
@@ -169,12 +187,14 @@ jobs:
               up)   SR_VARIANT=up SR_BE_MEM=5G ci/m4/stack.sh starrocks /home/runner/up-fe-out /home/runner/up-be-out ;;
               jdbc) SR_VARIANT=jdbc SR_BE_MEM=5G ci/m4/stack.sh starrocks /home/runner/up-fe-out ;;
               esac || { echo "::warning::$label: StarRocks did not start"; ci/m4/stack.sh logs "$out/logs/$label" || true; echo "::endgroup::"; continue; }
-              python3 ci/m4/compare.py run --path "$p" --label "$label" --ref "$RUNNER_TEMP/ref.json" --out "$out" \
-                --runs "${{ inputs.runs }}" --timeout "${{ inputs.timeout }}" || echo "::warning::$label: harness error"
+              CMP_SERVER=$jar python3 ci/m4/compare.py run --path "$p" --label "$label" --ref "$RUNNER_TEMP/ref.json" --out "$out" \
+                --runs "${{ inputs.runs }}" --timeout "${{ inputs.timeout }}" --queries "${{ inputs.queries }}" \
+                --server-log-queries "${{ inputs.server_log }}" || echo "::warning::$label: harness error"
               ci/m4/stack.sh logs "$out/logs/$label" || true
               docker stats --no-stream || true
               echo "::endgroup::"
             done
+           done
           done
           ci/m4/stack.sh stop sr flight1
       - name: Report
@@ -182,7 +202,7 @@ jobs:
         run: |
           out=$RUNNER_TEMP/cmp; mkdir -p "$out"
           {
-            echo "# Connector comparison run $GITHUB_RUN_ID (SF${{ inputs.sf }}, server ${{ inputs.server }})"
+            echo "# Connector comparison run $GITHUB_RUN_ID (SF${{ inputs.sf }}, server ${{ inputs.server }}${{ inputs.queries && format(', queries {0}', inputs.queries) || '' }})"
             echo
             echo "Paths with outputs:${CMP_PATHS:-}; profiles ${{ inputs.profiles }}; ${{ inputs.runs }} runs per query; runner $(nproc) vCPU ($(grep -m1 '^model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ *//')), $(free -g | awk '/Mem/ {print $2}') GB"
             echo
