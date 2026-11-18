@@ -695,6 +695,8 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
 
 ## Next steps
 
+> **Maintainer, 2026-11-18 17:20 - NEW SERVER BUILD `server-1.0.0-06d6468b17c5` (kestrel item 57: balanced keeps the file order on remote data dirs again - the q14 regression found here; otherwise = 36f3302321ba) is in this repo's test assets.** Confirm q14 / q15 / q04 in the default profile against 6f0aa5a026fa (same-CPU pairs) and run the full regression; if 22/22 everywhere with no regression > 10 %, make it the default server.
+
 > **2026-11-18 13:45 UTC: q14 bisect DONE (maintainer item of 15:50 MSK), result in Open questions.** First build with
 > the q14 regression: **5f02e5b35611** (f4feb0d5e404 on par); cause: `duckDbPreserveInsertionOrder=false` of kestrel
 > item 54 (with `-DduckDbPreserveInsertionOrder=true` 5f02e5b35611 / 36f3302321ba are as fast as 6f0aa5a026fa).
