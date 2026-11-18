@@ -685,10 +685,25 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   sum −3.3 % but **q14 +102 %** (1.79 → 3.62 s), q15 +18 %, q04 +11 %; speed 6975P-C vs 44160944676 sum +1.3 %, q10 +11 %.
   Rule not met: **6f0aa5a026fa stays the default**; maintainer notified, Open question added. Docs: M4-RESULTS,
   CONNECTOR-COMPARE, M4-CI asset row. No patch change; lock released.
+- 2026-11-18 12:52–13:50 UTC (cloud session): maintainer item of 2026-11-18 15:50 MSK (q14 bisect). `compare.yml` /
+  `compare.py`: several server jars in one job (same CPU), `queries` subset, `server_log` (server log lines per query
+  via `docker logs --since/--until` + start-up lines), `server_opts`. Runs: **44308739571** (9V74) and **44308743880**
+  (9V45, reversed order) — q14 doubles from **5f02e5b35611** on, f4feb0d5e404 on par; **44314013220** (9V45, with
+  `-DduckDbPreserveInsertionOrder=true`) — regression gone. All answers correct. Result in Open questions and
+  `docs/CONNECTOR-COMPARE.md`. No patch change; lock released.
+
 
 ## Next steps
 
-> **Maintainer, 2026-11-18 15:50 - answer to 12:35: WAIT for a fixed server (6f0aa5a026fa stays default); help find the cause first.** Kestrel builds between them are now in `m4-assets`: `f4feb0d5e404` (kestrel items 52(a), 53 = balanced on the node's shared DuckDB, 55(b)) and `5f02e5b35611` (+ 52(b), 54 / balanced without insertion order on remote dirs, 55(a), 55(c), memory budget cap) - `36f3302321ba` adds item 56 only. Run q14 (and q15, q04) in the default profile, same-CPU pairs, on 6f0aa5a026fa / f4feb0d5e404 / 5f02e5b35611 / 36f3302321ba and name the first build where q14 doubles; also capture the server log lines for q14 (`duckdb=sizing`, `resourceProfile`, the plan / executionPath lines). Write the result into Open questions; kestrel ITEM 57 fixes it.
+> **2026-11-18 13:45 UTC: q14 bisect DONE (maintainer item of 15:50 MSK), result in Open questions.** First build with
+> the q14 regression: **5f02e5b35611** (f4feb0d5e404 on par); cause: `duckDbPreserveInsertionOrder=false` of kestrel
+> item 54 (with `-DduckDbPreserveInsertionOrder=true` 5f02e5b35611 / 36f3302321ba are as fast as 6f0aa5a026fa).
+> Runs 44308739571, 44308743880, 44314013220; `docs/CONNECTOR-COMPARE.md` 2026-11-18 bisect. 6f0aa5a026fa stays the
+> default. **Next session: finish mode** — stop early unless the maintainer answers or a newer server (kestrel ITEM 57)
+> appears in `m4-assets`; then asset check, full regression, and same-CPU timing in one job, e.g.
+> `compare sf=10 paths=ours profiles=default,speed server=<6f0aa5a026fa jar>,<new jar>` (both orders, two requests).
+
+> ~~**Maintainer, 2026-11-18 15:50 - answer to 12:35: WAIT for a fixed server (6f0aa5a026fa stays default); help find the cause first.** Kestrel builds between them are now in `m4-assets`: `f4feb0d5e404` (kestrel items 52(a), 53 = balanced on the node's shared DuckDB, 55(b)) and `5f02e5b35611` (+ 52(b), 54 / balanced without insertion order on remote dirs, 55(a), 55(c), memory budget cap) - `36f3302321ba` adds item 56 only. Run q14 (and q15, q04) in the default profile, same-CPU pairs, on 6f0aa5a026fa / f4feb0d5e404 / 5f02e5b35611 / 36f3302321ba and name the first build where q14 doubles; also capture the server log lines for q14 (`duckdb=sizing`, `resourceProfile`, the plan / executionPath lines). Write the result into Open questions; kestrel ITEM 57 fixes it.~~ Done 13:45 UTC, see above.
 
 > **2026-11-18 12:35 UTC: server 36f3302321ba timing DONE — regression, NOT made the default.** All answers correct
 > (22/22 in 44285073710, 44300586688), but in the default profile TPC-H q14 is ~2× slower than on 6f0aa5a026fa on the
@@ -1125,7 +1140,21 @@ Done 2026-10-23: server `int4b` (cluster fixes B5 / ticket secret) is the m4 def
 
 ## Open questions for the maintainer
 
-- **2026-11-18 12:35 UTC — server 36f3302321ba:** full m4 regression PASS, no wrong answer, but a timing regression in
+- **2026-11-18 13:45 UTC — q14 bisect (your item of 15:50 MSK):** the first build where q14 doubles is **5f02e5b35611**
+  (SF10 default profile, all four builds in one job per runner: q14 6f0aa5a026fa / f4feb0d5e404 / 5f02e5b35611 /
+  36f3302321ba = 1.51 / 1.48 / **2.43** / **2.41** s on EPYC 9V74 (44308739571), 1.29 / 1.25 / **1.99** / **1.96** s on 9V45
+  in reverse order (44308743880); q04 +5–6 %, q15 noise; all answers correct). Start-up difference: 5f02e5b35611 adds
+  `duckDbPreserveInsertionOrder=false` (and `memoryLimit` 1075 → 1024 MiB); `duckdb=sizing threads=4 coreThreads=4
+  connections=2 budgetMiB=2790 limitsBudgetMiB=2150` otherwise equal. q14's execution paths are the same (two
+  `duckdb-scan`); the slower one is the full `part` scan (`SELECT p_partkey, p_type FROM part WHERE p_partkey IS NOT
+  NULL`), which now ends 1.2–1.7 s after the lineitem scan instead of 0.4–0.7 s. **With
+  `-DduckDbPreserveInsertionOrder=true` the regression is gone** (44314013220, 9V45: 1.23 / 1.25 s vs 1.32 s on
+  6f0aa5a026fa, q04 back too) → kestrel item 54 (balanced without insertion order on remote dirs) is the cause, for
+  ITEM 57. Full log lines: `git show origin/m4-results:compare/44308739571.md` (sections "Server log"). Nothing to
+  decide here unless you want 36f3302321ba as the default with `-DduckDbPreserveInsertionOrder=true` set in m4 /
+  compare (needs the full regression again).
+
+- ~~**2026-11-18 12:35 UTC — server 36f3302321ba:**~~ answered 2026-11-18 15:50 MSK: wait for a fixed server; bisect done (above). Original: full m4 regression PASS, no wrong answer, but a timing regression in
   the server's default profile: SF10 q14 1.79 → 3.62 s (+102 %) on the same runner CPU (EPYC 7763, compare 43899594632
   vs 44300586688), q14 slower on every runner (2.32 / 3.62 s vs 1.30–2.01 s on 6f0aa5a026fa); also q15 +18 %, q04 +11 %.
   The query sum is 3 % faster (q08 −17 %, q05 −12 %); the speed profile is on par (+1.3 %). Per your rule 6f0aa5a026fa

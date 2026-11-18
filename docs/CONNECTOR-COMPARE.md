@@ -370,3 +370,31 @@ EPYC 9V74 44296978591 80.71 / 43.83 s (default / speed); 36f3302321ba Xeon 6975P
 q14 default profile across all runs: 6f0aa5a026fa 1.30 (9V45), 1.61 (9V74), 1.79–1.83 (7763), 1.93–2.01 (8573C);
 36f3302321ba 2.32 (6975P-C), 3.62 (7763) — a server-side regression in the default profile only (speed: 0.66 → 0.69 s).
 All answers correct (22/22 in every run).
+
+## 2026-11-18: q14 bisect over the kestrel builds 6f0aa5a026fa → f4feb0d5e404 → 5f02e5b35611 → 36f3302321ba
+
+Default profile, SF10, ours (series `fl234f9b`), queries q01/q04/q14/q15, 5 runs each; all four servers in one job
+(same runner CPU; `compare.yml` now takes several `server` jars, `queries`, `server_log`, `server_opts`). Warm medians (s):
+
+| run (CPU, order) | q | 6f0aa5a026fa | f4feb0d5e404 | 5f02e5b35611 | 36f3302321ba |
+|---|---|---|---|---|---|
+| 44308739571 (EPYC 9V74, old → new) | q14 | 1.51 | 1.48 | **2.43** | **2.41** |
+| | q04 / q15 | 3.39 / 2.54 | 3.64 / 2.56 | 3.67 / 2.68 | 3.57 / 2.57 |
+| 44308743880 (EPYC 9V45, new → old) | q14 | 1.29 | 1.25 | **1.99** | **1.96** |
+| | q04 / q15 | 2.81 / 2.14 | 2.84 / 2.19 | 2.99 / 2.18 | 3.03 / 2.21 |
+| 44314013220 (EPYC 9V45, `-DduckDbPreserveInsertionOrder=true`) | q14 | 1.32 | 1.36 | 1.23 | 1.25 |
+| | q04 / q15 | 3.30 / 2.25 | 3.14 / 2.36 | 2.94 / 2.27 | 2.95 / 2.30 |
+
+- **First build where q14 regresses: `5f02e5b35611`** (+59–64 %; f4feb0d5e404 is on par with 6f0aa5a026fa). q04 +5–6 %
+  on 5f02e5b35611, q15 within noise, q01 unchanged. All answers correct.
+- Server start-up lines (`resourceProfile`, `duckdb=sizing`), default profile on the 4-vCPU runner, 6 GB container:
+  6f0aa5a026fa `profile=balanced`, `memoryLimit=1075MiB`; f4feb0d5e404 adds `duckDbSharedDatabase=true`;
+  **5f02e5b35611 and 36f3302321ba add `duckDbPreserveInsertionOrder=false`** and `memoryLimit=1024MiB`; otherwise the same
+  (`threads=4 coreThreads=4 connections=2 budgetMiB=2790 limitsBudgetMiB=2150 heapMiB=1536 directMiB=1536`).
+- executionPath lines of q14 are the same on all builds: two `duckdb-scan` DoGets per run, lineitem
+  (`SELECT l_partkey, l_extendedprice, l_discount, l_shipdate ... WHERE l_shipdate` in one month) and part
+  (`SELECT p_partkey, p_type FROM part WHERE p_partkey IS NOT NULL`, 2 M rows). On 5f02e5b35611 / 36f3302321ba the part
+  scan ends 1.2–1.7 s after the lineitem scan (6f0aa5a026fa / f4feb0d5e404: 0.4–0.7 s); the lineitem scan is unchanged.
+- **With `-DduckDbPreserveInsertionOrder=true` the regression is gone** (44314013220: 5f02e5b35611 1.23 s, 36f3302321ba
+  1.25 s vs 1.32 s on 6f0aa5a026fa; q04 also back). Cause: kestrel item 54 (balanced profile without insertion order
+  on remote dirs) makes the full `part` scan slower for this query.
