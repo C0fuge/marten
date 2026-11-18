@@ -21,7 +21,7 @@ on:
         default: "default"
       server:
         description: "Flight server jar asset(s) of release m4-assets; several (comma-separated) run one after the other in this job (same runner CPU)"
-        default: "arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar"
+        default: "arrow-flight-server-1.0.0-06d6468b17c5-linux.jar"
       runs:
         description: "runs per query (1st = cold)"
         default: "3"

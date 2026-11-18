@@ -14,7 +14,7 @@ on:
         default: ""
       server:
         description: "Flight server jar asset of release m4-assets (int1 = first server build, int2 = with the M4 server fixes, int4 = DuckDB 1.4.5 + S3/lakeFS plugins, int4b = int4 + cluster fixes, int6 = + Iceberg/Hive catalogs, int7 = int6b + stand fixes, arrow-flight-server-1.0.0-<commit>-linux.jar = server repo CI builds (default: 0e457de30f25 = final server build, 1e7b43a4e0c7 + JWT fix; a9e43ca5e296 before))"
-        default: "arrow-flight-server-1.0.0-6f0aa5a026fa-linux.jar"
+        default: "arrow-flight-server-1.0.0-06d6468b17c5-linux.jar"
       store:
         description: "data store of the Flight server: s3 (MinIO, s3://lake/parquet), lakefs (lakeFS 1.38.0 on MinIO, lakefs://m4lake/main/parquet; int4+) or iceberg (s3 + Iceberg REST catalog, schema ice; int6+)"
         default: "s3"
@@ -102,7 +102,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-v21
+          key: m4-assets-v22
       - name: Download m4 assets
         run: ci/m4/stack.sh assets /home/runner/m4-assets
       - name: Save m4 assets
@@ -110,7 +110,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /home/runner/m4-assets
-          key: m4-assets-v21
+          key: m4-assets-v22
       - name: Delete older m4 assets caches
         # obsolete m4-assets-v* (~4 GB each) push the BE ccache out of the 10 GB cache budget
         if: always() && steps.assets.outcome == 'success'

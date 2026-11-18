@@ -800,3 +800,21 @@ profile EPYC 7763 (vs 6f0aa5a026fa 43899594632 `ours_rf` = today's defaults) sum
 (+102 %)**, q15 +18 %, q04 +11 %; speed profile Xeon 6975P-C (vs 44160944676) sum +1.3 %, q10 +11 %. q14 in the default
 profile is slower on 36f3302321ba on every runner (2.32 / 3.62 s vs 1.30–2.01 s on 6f0aa5a026fa). The rule (no single
 query > 1 s more than 10 % slower) is not met: **6f0aa5a026fa stays the m4 default**; reported to the maintainer.
+
+## 2026-11-18, CI: server 06d6468b17c5 as the m4 default — series `4a9848e-fl234f9b`
+
+Server 06d6468b17c5 = 36f3302321ba + kestrel item 57 (balanced keeps the file order on remote data dirs again: the
+q14 fix; asset check in `docs/UPSTREAM-REVIEW.md`). Maintainer's item of 2026-11-18 17:20 MSK; runtime filters on by
+default, assets cache `m4-assets-v21` during the regression (`v22` from the switch on, with the new jar inside):
+
+| run | server | store / workflow | checks | result |
+|---|---|---|---|---|
+| 44326063071 | 6f0aa5a026fa, 06d6468b17c5 | compare SF10 ours (one job) | default, speed | 22/22 in all four runs; EPYC 9V74; sums default −0.6 %, speed −4.0 %; q14 1.42 → 1.39 s |
+| 44326069040 | 06d6468b17c5 | s3 | 1–9 | PASS (25/25, 52/52, 27/27, 46/46, 26/26, 6/6, 2/2, 14/14, 6/6); runner AMD EPYC 7763 |
+| 44330978160 | 06d6468b17c5 | iceberg | 1, 11, 12 | PASS (25/25, 22/22, 10/10); runner Xeon 6975P-C |
+| 44335633098 | 06d6468b17c5 | lakefs | 1, 3, 4, 10 | PASS (25/25, 27/27, 46/46, 5/5); runner AMD EPYC 9V45 |
+| 44339957571 | 06d6468b17c5 | s3 | 13 | PASS (25/25, 103/103, compression none/lz4/zstd); runner Xeon 6975P-C |
+
+No wrong answer; no query (> 1 s) or sum more than 10 % slower than 6f0aa5a026fa on the same CPU (largest: speed q13
++9.9 %, default q06 +7 %; `docs/CONNECTOR-COMPARE.md` 2026-11-18). Full suite green: **06d6468b17c5 is the m4 /
+compare default from 2026-11-18 17:10 UTC** (m4.yml, compare.yml, stack.sh; assets cache key `m4-assets-v22`).
