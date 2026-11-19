@@ -707,7 +707,7 @@ and 0004 are only built as part of the whole series (0002 alone has no reference
   `M4_SERVER_JAR`; m4 assets cache key `m4-assets-v21` → `v22`: v21 was saved 2026-11-16 without the 06d6468b17c5 jar,
   so every run re-downloaded all assets). Docs: M4-CI asset rows + §7 default list, M4-RESULTS entry, M4 milestone row.
   No patch change, no build dispatched; the next m4 run fills the `v22` cache. Lock released.
-- 2026-11-18 after 17:15 to 2026-11-19 18:40–18:45 UTC (cloud sessions): finish mode, nothing to do — no new maintainer
+- 2026-11-18 after 17:15 to 2026-11-19 21:40–21:45 UTC (cloud sessions): finish mode, nothing to do — no new maintainer
   item or answer, newest server jar in `m4-assets` still 06d6468b17c5 (89 assets). No CI dispatched, no patch change; lock released.
 
 ## Next steps
